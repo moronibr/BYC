@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/etcd-io/bbolt"
 	"github.com/youngchain/internal/core/block"
+	"go.etcd.io/bbolt"
 )
 
 // DB represents the blockchain database
