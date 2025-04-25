@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/youngchain/internal/config"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/mining"
@@ -24,7 +24,7 @@ var (
 	// Mining configuration
 	miningType    = flag.String("type", "solo", "Mining type (solo, pool)")
 	poolAddress   = flag.String("pool", "", "Pool address (required for pool mining)")
-	walletAddress = flag.String("wallet", "", "Wallet address to receive mining rewards")
+	walletAddress = flag.String("wallet", "", "Wallet address to receive mining rewards (required for pool mining)")
 	threads       = flag.Int("threads", runtime.NumCPU(), "Number of mining threads")
 	coinType      = flag.String("coin", "leah", "Coin type to mine (leah, shiblum, shiblon)")
 
@@ -39,7 +39,7 @@ var (
 
 	// Network state
 	networkServer *network.Server
-	transactions  []block.Transaction
+	transactions  []*block.Transaction
 	txMutex       sync.RWMutex
 	latestBlock   *block.Block
 	blockMutex    sync.RWMutex
@@ -53,14 +53,14 @@ func main() {
 		log.Fatal("Invalid mining type. Must be 'solo' or 'pool'")
 	}
 
-	// Validate pool address for pool mining
-	if *miningType == "pool" && *poolAddress == "" {
-		log.Fatal("Pool address is required for pool mining")
-	}
-
-	// Validate wallet address
-	if *walletAddress == "" {
-		log.Fatal("Wallet address is required")
+	// Validate pool address and wallet address for pool mining
+	if *miningType == "pool" {
+		if *poolAddress == "" {
+			log.Fatal("Pool address is required for pool mining")
+		}
+		if *walletAddress == "" {
+			log.Fatal("Wallet address is required for pool mining")
+		}
 	}
 
 	// Parse coin type
@@ -78,7 +78,11 @@ func main() {
 
 	// Initialize network connection
 	host, port := parseAddress(*nodeAddress)
-	networkServer = network.NewServer(host, port, 10)
+	cfg := &config.Config{
+		ListenAddr: fmt.Sprintf("%s:%d", host, port),
+		MaxPeers:   10,
+	}
+	networkServer = network.NewServer(cfg)
 	if err := networkServer.Start(); err != nil {
 		log.Fatalf("Failed to start network server: %v", err)
 	}
@@ -88,13 +92,7 @@ func main() {
 	go handleNetworkMessages()
 
 	// Initialize mining with initial block
-	latestBlock = &block.Block{
-		Version:      1,
-		PreviousHash: make([]byte, 32),
-		Type:         block.GoldenBlock,
-		Timestamp:    time.Now().Unix(),
-		Difficulty:   calculateInitialDifficulty(),
-	}
+	latestBlock = block.NewBlock([]byte{}, block.GetInitialDifficulty(block.GoldenBlock))
 	miner := mining.NewMiner(latestBlock)
 
 	// Start mining threads
@@ -150,7 +148,7 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 				}
 
 				// Clear transaction pool
-				transactions = []block.Transaction{}
+				transactions = []*block.Transaction{}
 
 				// Update merkle root
 				currentBlock.UpdateMerkleRoot()
@@ -165,7 +163,7 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 			target := miner.CalculateTarget(coinType)
 			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
 				// Found a valid block!
-				currentBlock.Nonce = nonce
+				currentBlock.Header.Nonce = nonce
 				currentBlock.Hash = hash
 
 				// Update statistics
@@ -178,13 +176,7 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 
 				// Create new block for next mining round
 				blockMutex.Lock()
-				latestBlock = &block.Block{
-					Version:      1,
-					PreviousHash: currentBlock.Hash,
-					Type:         block.GoldenBlock,
-					Timestamp:    time.Now().Unix(),
-					Difficulty:   calculateInitialDifficulty(),
-				}
+				latestBlock = block.NewBlock(currentBlock.Hash, block.GetInitialDifficulty(block.GoldenBlock))
 				blockMutex.Unlock()
 
 				log.Printf("Thread %d found a valid block! Hash: %x", threadID, hash)
@@ -199,14 +191,9 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 				lastReport = time.Now()
 			}
 
-			// Increment nonce for next iteration
 			nonce += uint64(*threads)
 		}
 	}
-}
-
-func calculateInitialDifficulty() uint64 {
-	return 1 << 32 // Start with a relatively low difficulty
 }
 
 func parseAddress(address string) (string, int) {
@@ -219,81 +206,29 @@ func parseAddress(address string) (string, int) {
 	return parts[0], port
 }
 
-// handleNetworkMessages processes incoming network messages
 func handleNetworkMessages() {
-	for msg := range networkServer.MessageChan {
-		switch msg.Command {
-		case network.BlockMsg:
-			// Process new block
-			var blockMsg network.BlockMessage
-			err := json.Unmarshal(msg.Payload, &blockMsg)
-			if err != nil {
-				log.Printf("Failed to unmarshal block message: %v", err)
-				continue
-			}
-
-			// Update latest block
-			blockMutex.Lock()
-			latestBlock = blockMsg.Block
-			blockMutex.Unlock()
-
-			log.Printf("Received new block: %x", latestBlock.Hash)
-
-		case network.TxMsg:
-			// Process new transaction
-			var txMsg network.TransactionMessage
-			err := json.Unmarshal(msg.Payload, &txMsg)
-			if err != nil {
-				log.Printf("Failed to unmarshal transaction message: %v", err)
-				continue
-			}
-
-			// Add transaction to pool
-			txMutex.Lock()
-			transactions = append(transactions, txMsg.Transaction)
-			txMutex.Unlock()
-
-			log.Printf("Received new transaction: %x", txMsg.Transaction.CalculateHash())
-		}
-	}
+	// TODO: Implement network message handling
+	// - Handle incoming blocks
+	// - Handle incoming transactions
+	// - Handle mining pool messages
 }
 
-// submitBlock submits a mined block to the network
 func submitBlock(block *block.Block) {
-	// Create block message
-	blockMsg := network.BlockMessage{
-		Block:     block,
-		BlockType: block.Type,
-	}
-
-	// Serialize message
-	payload, err := json.Marshal(blockMsg)
-	if err != nil {
-		log.Printf("Failed to marshal block message: %v", err)
-		return
-	}
-
-	// Create network message
-	msg := network.NewMessage(network.BlockMsg, payload)
-
-	// Broadcast message
-	networkServer.BroadcastMessage(msg)
-
-	log.Printf("Submitted block to network: %x", block.Hash)
+	// TODO: Implement block submission
+	// - For solo mining: broadcast to network
+	// - For pool mining: submit to pool
 }
 
 func reportStats() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {
-		select {
-		case <-ticker.C:
-			statsMutex.RLock()
-			duration := time.Since(startTime)
-			fmt.Printf("\rHashrate: %.2f H/s | Blocks found: %d | Running time: %v",
-				hashrate, blocksFound, duration.Round(time.Second))
-			statsMutex.RUnlock()
-		}
+		<-ticker.C
+		statsMutex.RLock()
+		uptime := time.Since(startTime).Seconds()
+		log.Printf("Hashrate: %.2f H/s, Blocks found: %d, Uptime: %.0f seconds",
+			hashrate, blocksFound, uptime)
+		statsMutex.RUnlock()
 	}
 }

@@ -1,7 +1,9 @@
 package network
 
 import (
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/youngchain/internal/core/block"
@@ -29,10 +31,8 @@ const (
 
 // Message represents a network message
 type Message struct {
-	Magic     uint32      `json:"magic"`
-	Command   MessageType `json:"command"`
-	Payload   []byte      `json:"payload"`
-	Timestamp int64       `json:"timestamp"`
+	Type MessageType     `json:"type"`
+	Data json.RawMessage `json:"data"`
 }
 
 // VersionMessage represents a version message
@@ -61,27 +61,56 @@ type TransactionMessage struct {
 }
 
 // NewMessage creates a new network message
-func NewMessage(command MessageType, payload []byte) *Message {
-	return &Message{
-		Magic:     NetworkMagic,
-		Command:   command,
-		Payload:   payload,
-		Timestamp: time.Now().Unix(),
-	}
-}
-
-// Serialize serializes the message to JSON
-func (m *Message) Serialize() ([]byte, error) {
-	return json.Marshal(m)
-}
-
-// Deserialize deserializes the message from JSON
-func DeserializeMessage(data []byte) (*Message, error) {
-	var msg Message
-	err := json.Unmarshal(data, &msg)
+func NewMessage(msgType MessageType, data interface{}) (*Message, error) {
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
 	}
+
+	return &Message{
+		Type: msgType,
+		Data: jsonData,
+	}, nil
+}
+
+// SerializeBinary serializes a message to binary format
+func SerializeBinary(msg *Message) ([]byte, error) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %v", err)
+	}
+
+	// Create buffer for length (4 bytes) + data
+	buffer := make([]byte, 4+len(data))
+
+	// Write length (4 bytes)
+	binary.LittleEndian.PutUint32(buffer[0:4], uint32(len(data)))
+
+	// Write data
+	copy(buffer[4:], data)
+
+	return buffer, nil
+}
+
+// DeserializeBinary deserializes a message from binary format
+func DeserializeBinary(data []byte) (*Message, error) {
+	if len(data) < 4 { // Minimum length for data length (4)
+		return nil, fmt.Errorf("message too short")
+	}
+
+	// Read length
+	length := binary.LittleEndian.Uint32(data[0:4])
+
+	if len(data) < 4+int(length) {
+		return nil, fmt.Errorf("message too short for payload")
+	}
+
+	// Read data
+	var msg Message
+	if err := json.Unmarshal(data[4:4+length], &msg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal message: %v", err)
+	}
+
 	return &msg, nil
 }
 

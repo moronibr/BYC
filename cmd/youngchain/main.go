@@ -62,7 +62,8 @@ func main() {
 
 // createGenesisBlock creates the genesis block for either chain
 func createGenesisBlock(blockType block.BlockType) *block.Block {
-	genesis := block.NewBlock(blockType, []byte{})
+	// Create genesis block with empty previous hash and initial difficulty
+	genesis := block.NewBlock([]byte{}, block.GetInitialDifficulty(blockType))
 
 	// Add genesis message
 	var message string
@@ -73,7 +74,7 @@ func createGenesisBlock(blockType block.BlockType) *block.Block {
 	}
 
 	// Create genesis transaction
-	tx := block.Transaction{
+	tx := &block.Transaction{
 		Version: 1,
 		Inputs:  []block.TxInput{},
 		Outputs: []block.TxOutput{
