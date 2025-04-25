@@ -2,6 +2,7 @@ package block
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"time"
 
@@ -42,6 +43,7 @@ type Transaction struct {
 	LockTime   uint32
 	CoinType   coin.CoinType
 	CrossBlock bool
+	Signature  []byte
 }
 
 // TxInput represents a transaction input
@@ -121,4 +123,54 @@ func (b *Block) UpdateMerkleRoot() {
 
 	merkleRoot := sha256.Sum256(combined)
 	b.MerkleRoot = merkleRoot[:]
+}
+
+// CalculateHash calculates the hash of a transaction
+func (tx *Transaction) CalculateHash() []byte {
+	// Serialize transaction data
+	data := make([]byte, 0)
+
+	// Add version
+	versionBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(versionBytes, tx.Version)
+	data = append(data, versionBytes...)
+
+	// Add inputs
+	for _, input := range tx.Inputs {
+		data = append(data, input.PreviousTx...)
+		indexBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(indexBytes, input.OutputIndex)
+		data = append(data, indexBytes...)
+		data = append(data, input.Script...)
+		seqBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(seqBytes, input.Sequence)
+		data = append(data, seqBytes...)
+	}
+
+	// Add outputs
+	for _, output := range tx.Outputs {
+		valueBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(valueBytes, output.Value)
+		data = append(data, valueBytes...)
+		data = append(data, output.Script...)
+	}
+
+	// Add lock time
+	lockTimeBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lockTimeBytes, tx.LockTime)
+	data = append(data, lockTimeBytes...)
+
+	// Add coin type
+	data = append(data, []byte(tx.CoinType)...)
+
+	// Add cross block flag
+	if tx.CrossBlock {
+		data = append(data, 1)
+	} else {
+		data = append(data, 0)
+	}
+
+	// Calculate hash
+	hash := sha256.Sum256(data)
+	return hash[:]
 }
