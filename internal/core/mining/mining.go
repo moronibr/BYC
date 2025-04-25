@@ -54,7 +54,7 @@ func (m *Miner) StopMining() {
 
 // mine performs the actual mining
 func (m *Miner) mine(coinType coin.CoinType) {
-	target := m.calculateTarget(coinType)
+	target := m.CalculateTarget(coinType)
 	nonce := uint64(0)
 
 	for m.IsMining {
@@ -62,7 +62,7 @@ func (m *Miner) mine(coinType coin.CoinType) {
 		case <-m.StopChan:
 			return
 		default:
-			hash := m.calculateHash(nonce)
+			hash := m.CalculateHash(nonce)
 			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
 				m.CurrentBlock.Nonce = nonce
 				m.CurrentBlock.Hash = hash
@@ -74,8 +74,8 @@ func (m *Miner) mine(coinType coin.CoinType) {
 	}
 }
 
-// calculateTarget calculates the target based on coin type
-func (m *Miner) calculateTarget(coinType coin.CoinType) *big.Int {
+// CalculateTarget calculates the target based on coin type
+func (m *Miner) CalculateTarget(coinType coin.CoinType) *big.Int {
 	var difficulty uint64
 	switch coinType {
 	case coin.Leah:
@@ -93,8 +93,8 @@ func (m *Miner) calculateTarget(coinType coin.CoinType) *big.Int {
 	return target
 }
 
-// calculateHash calculates the hash for mining
-func (m *Miner) calculateHash(nonce uint64) []byte {
+// CalculateHash calculates the hash for mining
+func (m *Miner) CalculateHash(nonce uint64) []byte {
 	header := make([]byte, 80)
 	binary.LittleEndian.PutUint32(header[0:4], m.CurrentBlock.Version)
 	copy(header[4:36], m.CurrentBlock.PreviousHash)
