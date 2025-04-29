@@ -112,19 +112,19 @@ BYC modernizes these principles by:
 
 1. **Ephraim**
    - Created when a Golden Block is completed
-   - Limited supply: 11 million
+   - Limited supply: 15 million
    - Cannot be transferred between chains
    - Used for governance and staking
 
 2. **Manasseh**
    - Created when a Silver Block is completed
-   - Limited supply: 11 million
+   - Limited supply: 15 million
    - Cannot be transferred between chains
    - Used for governance and staking
 
 3. **Joseph**
    - Created by combining 1 Ephraim + 1 Manasseh
-   - Limited supply: 11 million
+   - Limited supply: 3 million
    - Used for cross-chain governance
    - Highest value special coin
 
