@@ -103,7 +103,7 @@ func (db *DB) GetBlock(hash []byte) (*block.Block, error) {
 }
 
 // SaveUTXO saves a UTXO to the database
-func (db *DB) SaveUTXO(txHash []byte, outputIndex uint32, output block.TxOutput) error {
+func (db *DB) SaveUTXO(txHash []byte, outputIndex uint32, utxo *block.UTXO) error {
 	return db.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("utxo"))
 		if bucket == nil {
@@ -115,8 +115,8 @@ func (db *DB) SaveUTXO(txHash []byte, outputIndex uint32, output block.TxOutput)
 		copy(key, txHash)
 		binary.LittleEndian.PutUint32(key[len(txHash):], outputIndex)
 
-		// Serialize output
-		data, err := json.Marshal(output)
+		// Serialize UTXO
+		data, err := json.Marshal(utxo)
 		if err != nil {
 			return fmt.Errorf("failed to serialize UTXO: %v", err)
 		}
@@ -126,8 +126,8 @@ func (db *DB) SaveUTXO(txHash []byte, outputIndex uint32, output block.TxOutput)
 }
 
 // GetUTXO retrieves a UTXO by transaction hash and output index
-func (db *DB) GetUTXO(txHash []byte, outputIndex uint32) (*block.TxOutput, error) {
-	var output block.TxOutput
+func (db *DB) GetUTXO(txHash []byte, outputIndex uint32) (*block.UTXO, error) {
+	var utxo block.UTXO
 
 	err := db.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("utxo"))
@@ -145,14 +145,14 @@ func (db *DB) GetUTXO(txHash []byte, outputIndex uint32) (*block.TxOutput, error
 			return fmt.Errorf("UTXO not found")
 		}
 
-		return json.Unmarshal(data, &output)
+		return json.Unmarshal(data, &utxo)
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &output, nil
+	return &utxo, nil
 }
 
 // DeleteUTXO removes a UTXO from the database
@@ -173,22 +173,21 @@ func (db *DB) DeleteUTXO(txHash []byte, outputIndex uint32) error {
 }
 
 // SaveMempoolTx saves a transaction to the mempool
-func (db *DB) SaveMempoolTx(tx block.Transaction) error {
-	return db.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte("mempool"))
+func (db *DB) SaveMempoolTx(transaction block.Transaction) error {
+	return db.db.Update(func(dbtx *bbolt.Tx) error {
+		bucket := dbtx.Bucket([]byte("mempool"))
 		if bucket == nil {
 			return fmt.Errorf("mempool bucket not found")
 		}
 
 		// Serialize transaction
-		data, err := json.Marshal(tx)
+		data, err := json.Marshal(transaction)
 		if err != nil {
 			return fmt.Errorf("failed to serialize transaction: %v", err)
 		}
 
 		// Use transaction hash as key
-		txHash := tx.CalculateHash()
-		return bucket.Put(txHash, data)
+		return bucket.Put(transaction.Hash(), data)
 	})
 }
 
@@ -296,4 +295,22 @@ func (db *DB) GetChainState() (uint64, []byte, error) {
 	}
 
 	return height, bestBlockHash, nil
+}
+
+// StoreTransaction stores a transaction in the database
+func (db *DB) StoreTransaction(blockTx *block.Transaction) error {
+	return db.db.Update(func(dbtx *bbolt.Tx) error {
+		bucket := dbtx.Bucket([]byte("transactions"))
+		if bucket == nil {
+			return fmt.Errorf("transactions bucket not found")
+		}
+
+		data, err := json.Marshal(blockTx)
+		if err != nil {
+			return err
+		}
+
+		// Use transaction hash as key
+		return bucket.Put(blockTx.Hash(), data)
+	})
 }

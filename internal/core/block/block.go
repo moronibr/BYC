@@ -56,6 +56,7 @@ type Transaction struct {
 	CoinType   coin.CoinType `json:"coin_type"`
 	CrossBlock bool          `json:"cross_block"`
 	Signature  []byte        `json:"signature"`
+	Timestamp  time.Time     `json:"timestamp"`
 }
 
 // TxInput represents a transaction input
@@ -239,6 +240,7 @@ func NewTransaction(coinType coin.CoinType) *Transaction {
 		CoinType:   coinType,
 		CrossBlock: false,
 		Signature:  make([]byte, 0),
+		Timestamp:  time.Now(),
 	}
 }
 
@@ -312,6 +314,7 @@ func (tx *Transaction) Copy() *Transaction {
 		CoinType:   tx.CoinType,
 		CrossBlock: tx.CrossBlock,
 		Signature:  make([]byte, len(tx.Signature)),
+		Timestamp:  tx.Timestamp,
 	}
 
 	// Copy inputs
@@ -374,4 +377,117 @@ func (tx *Transaction) UnmarshalJSON(data []byte) error {
 		tx.Signature = signature
 	}
 	return nil
+}
+
+// Size returns the size of the transaction in bytes
+func (tx *Transaction) Size() int {
+	size := 4 // Version
+	size += 1 // VarInt for input count
+	for _, input := range tx.Inputs {
+		size += len(input.PreviousTx)
+		size += 4 // OutputIndex
+		size += len(input.Script)
+		size += 4 // Sequence
+	}
+	size += 1 // VarInt for output count
+	for _, output := range tx.Outputs {
+		size += 8 // Value
+		size += len(output.Script)
+		size += len(string(output.CoinType))
+	}
+	size += 4 // LockTime
+	size += len(string(tx.CoinType))
+	size += 1 // CrossBlock
+	size += len(tx.Signature)
+	size += 8 // Timestamp
+	return size
+}
+
+// Hash returns the hash of the transaction
+func (tx *Transaction) Hash() []byte {
+	// Create a byte slice to hold the serialized transaction
+	data := make([]byte, 0, tx.Size())
+
+	// Add version
+	versionBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(versionBytes, tx.Version)
+	data = append(data, versionBytes...)
+
+	// Add inputs
+	inputCountBytes := make([]byte, 1)
+	inputCountBytes[0] = byte(len(tx.Inputs))
+	data = append(data, inputCountBytes...)
+
+	for _, input := range tx.Inputs {
+		data = append(data, input.PreviousTx...)
+		outputIndexBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(outputIndexBytes, input.OutputIndex)
+		data = append(data, outputIndexBytes...)
+		data = append(data, input.Script...)
+		sequenceBytes := make([]byte, 4)
+		binary.LittleEndian.PutUint32(sequenceBytes, input.Sequence)
+		data = append(data, sequenceBytes...)
+	}
+
+	// Add outputs
+	outputCountBytes := make([]byte, 1)
+	outputCountBytes[0] = byte(len(tx.Outputs))
+	data = append(data, outputCountBytes...)
+
+	for _, output := range tx.Outputs {
+		valueBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(valueBytes, output.Value)
+		data = append(data, valueBytes...)
+		data = append(data, output.Script...)
+		data = append(data, string(output.CoinType)...)
+	}
+
+	// Add lock time
+	lockTimeBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lockTimeBytes, tx.LockTime)
+	data = append(data, lockTimeBytes...)
+
+	// Add coin type
+	data = append(data, string(tx.CoinType)...)
+
+	// Add cross block flag
+	if tx.CrossBlock {
+		data = append(data, 1)
+	} else {
+		data = append(data, 0)
+	}
+
+	// Add signature
+	data = append(data, tx.Signature...)
+
+	// Add timestamp
+	timestampBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.UnixNano()))
+	data = append(data, timestampBytes...)
+
+	// Calculate hash
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
+// IsMature checks if the transaction is mature
+func (tx *Transaction) IsMature() bool {
+	// A transaction is mature if it's at least 1 hour old
+	return time.Since(tx.Timestamp) >= time.Hour
+}
+
+// IsLockTimeValid checks if the transaction's lock time is valid
+func (tx *Transaction) IsLockTimeValid() bool {
+	// If lock time is 0, it's always valid
+	if tx.LockTime == 0 {
+		return true
+	}
+
+	// If lock time is a timestamp, check if it's in the past
+	if tx.LockTime < 500000000 {
+		return uint32(time.Now().Unix()) >= tx.LockTime
+	}
+
+	// If lock time is a block height, it's always valid (block height validation is done elsewhere)
+	return true
 }

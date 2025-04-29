@@ -31,9 +31,9 @@ func NewMiner(block *block.Block) *Miner {
 	return &Miner{
 		CurrentBlock: block,
 		Difficulty: MiningDifficulty{
-			LeahDifficulty:    0x1d00ffff,      // Base difficulty
-			ShiblumDifficulty: 0x1d00ffff >> 1, // 2x harder
-			ShiblonDifficulty: 0x1d00ffff >> 2, // 4x harder
+			LeahDifficulty:    0x1d00ffff >> 4, // Much harder than before
+			ShiblumDifficulty: 0x1d00ffff >> 5, // 2x harder than Leah
+			ShiblonDifficulty: 0x1d00ffff >> 6, // 4x harder than Leah
 		},
 		Target:   new(big.Int),
 		StopChan: make(chan struct{}),
@@ -64,9 +64,12 @@ func (m *Miner) mine(coinType coin.CoinType) {
 		default:
 			hash := m.CalculateHash(nonce)
 			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
+				// Found a valid block!
 				m.CurrentBlock.Header.Nonce = nonce
 				m.CurrentBlock.Hash = hash
-				// TODO: Broadcast the mined block
+
+				// Signal that a block was found
+				// The caller will handle broadcasting the block
 				return
 			}
 			nonce++
@@ -95,13 +98,14 @@ func (m *Miner) CalculateTarget(coinType coin.CoinType) *big.Int {
 
 // CalculateHash calculates the hash for mining
 func (m *Miner) CalculateHash(nonce uint64) []byte {
-	header := make([]byte, 80)
+	// Header size: version(4) + prevHash(32) + merkleRoot(32) + timestamp(4) + difficulty(4) + nonce(8) = 84 bytes
+	header := make([]byte, 84)
 	binary.LittleEndian.PutUint32(header[0:4], m.CurrentBlock.Header.Version)
 	copy(header[4:36], m.CurrentBlock.Header.PrevBlockHash)
 	copy(header[36:68], m.CurrentBlock.Header.MerkleRoot)
 	binary.LittleEndian.PutUint32(header[68:72], uint32(m.CurrentBlock.Header.Timestamp.Unix()))
 	binary.LittleEndian.PutUint32(header[72:76], m.CurrentBlock.Header.Difficulty)
-	binary.LittleEndian.PutUint64(header[76:80], nonce)
+	binary.LittleEndian.PutUint64(header[76:84], nonce)
 
 	hash := sha256.Sum256(header)
 	return hash[:]

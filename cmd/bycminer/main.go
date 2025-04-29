@@ -30,6 +30,7 @@ var (
 
 	// Network configuration
 	nodeAddress = flag.String("node", "localhost:8333", "BYC node address to connect to")
+	minerPort   = flag.Int("port", 8334, "Port for the miner to listen on")
 
 	// Statistics
 	hashrate    float64
@@ -77,9 +78,8 @@ func main() {
 	}
 
 	// Initialize network connection
-	host, port := parseAddress(*nodeAddress)
 	cfg := &config.Config{
-		ListenAddr: fmt.Sprintf("%s:%d", host, port),
+		ListenAddr: fmt.Sprintf(":%d", *minerPort),
 		MaxPeers:   10,
 	}
 	networkServer = network.NewServer(cfg)
@@ -136,24 +136,30 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 			currentBlock := latestBlock
 			blockMutex.RUnlock()
 
-			// Update miner's current block
-			miner.CurrentBlock = currentBlock
+			if currentBlock == nil {
+				// No block to mine yet, wait a bit
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
+			// Create a copy of the block to avoid race conditions
+			blockCopy := currentBlock.Copy()
 
 			// Add pending transactions to block
 			txMutex.Lock()
 			if len(transactions) > 0 {
 				// Add transactions to block
 				for _, tx := range transactions {
-					currentBlock.AddTransaction(tx)
+					blockCopy.AddTransaction(tx)
 				}
 
-				// Clear transaction pool
-				transactions = []*block.Transaction{}
-
 				// Update merkle root
-				currentBlock.UpdateMerkleRoot()
+				blockCopy.UpdateMerkleRoot()
 			}
 			txMutex.Unlock()
+
+			// Update miner's current block
+			miner.CurrentBlock = blockCopy
 
 			// Calculate hash
 			hash := miner.CalculateHash(nonce)
@@ -163,8 +169,8 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 			target := miner.CalculateTarget(coinType)
 			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
 				// Found a valid block!
-				currentBlock.Header.Nonce = nonce
-				currentBlock.Hash = hash
+				blockCopy.Header.Nonce = nonce
+				blockCopy.Hash = hash
 
 				// Update statistics
 				statsMutex.Lock()
@@ -172,26 +178,29 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 				statsMutex.Unlock()
 
 				// Submit block to network
-				submitBlock(currentBlock)
+				submitBlock(blockCopy)
 
-				// Create new block for next mining round
-				blockMutex.Lock()
-				latestBlock = block.NewBlock(currentBlock.Hash, block.GetInitialDifficulty(block.GoldenBlock))
-				blockMutex.Unlock()
+				// Clear transaction pool after successful mining
+				txMutex.Lock()
+				transactions = []*block.Transaction{}
+				txMutex.Unlock()
 
-				log.Printf("Thread %d found a valid block! Hash: %x", threadID, hash)
+				// Reset nonce for next block
+				nonce = uint64(threadID)
+			} else {
+				// Increment nonce by 1 for next attempt
+				// This ensures we don't miss any potential nonce values
+				nonce++
 			}
 
 			// Report hashrate every second
 			if time.Since(lastReport) >= time.Second {
 				statsMutex.Lock()
 				hashrate = float64(hashes) / time.Since(lastReport).Seconds()
-				statsMutex.Unlock()
 				hashes = 0
 				lastReport = time.Now()
+				statsMutex.Unlock()
 			}
-
-			nonce += uint64(*threads)
 		}
 	}
 }
@@ -214,9 +223,22 @@ func handleNetworkMessages() {
 }
 
 func submitBlock(block *block.Block) {
-	// TODO: Implement block submission
-	// - For solo mining: broadcast to network
-	// - For pool mining: submit to pool
+	// Create block message
+	blockMsg := &network.BlockMessage{
+		Block:     block,
+		BlockType: "golden", // Use string literal for block type
+	}
+
+	// Create network message
+	msg, err := network.NewMessage(network.BlockMsg, blockMsg)
+	if err != nil {
+		log.Printf("Error creating block message: %v", err)
+		return
+	}
+
+	// Send message to network
+	networkServer.MessageChan <- msg
+	log.Printf("Submitted block with hash: %x", block.Hash)
 }
 
 func reportStats() {

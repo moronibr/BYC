@@ -34,9 +34,9 @@ const (
 
 // Supply limits
 const (
-	MaxEphraimSupply  = 11_000_000
-	MaxManassehSupply = 11_000_000
-	MaxJosephSupply   = 11_000_000
+	MaxEphraimSupply  = 15_000_000
+	MaxManassehSupply = 15_000_000
+	MaxJosephSupply   = 3_000_000
 )
 
 // Coin represents a basic coin in the system

@@ -1,6 +1,85 @@
-# Brigham Young Chain (Young Chain)
+# Brigham Young Chain (BYC)
 
-A dual-blockchain system inspired by the Nephite monetary system, featuring parallel Golden and Silver blockchains with unique mining mechanics and special coins.
+Brigham Young Chain is a blockchain implementation with a unique three-tier mining system featuring Leah, Shiblum, and Shiblon coins.
+
+## Quick Start
+
+### Download Binaries
+
+Download the appropriate binary for your operating system from the [releases page](https://github.com/yourusername/byc/releases).
+
+### Running a BYC Node
+
+To run a BYC node:
+
+```bash
+# Linux/macOS
+./bycnode_linux_amd64_0.1.0 -type full -port 8333
+
+# Windows
+bycnode_windows_amd64_0.1.0.exe -type full -port 8333
+```
+
+Options:
+- `-type`: Node type (full, miner, light)
+- `-port`: Port to listen on (default: 8333)
+
+### Running a BYC Miner
+
+To run a BYC miner:
+
+```bash
+# Linux/macOS
+./bycminer_linux_amd64_0.1.0 -node localhost:8333 -coin leah -threads 4
+
+# Windows
+bycminer_windows_amd64_0.1.0.exe -node localhost:8333 -coin leah -threads 4
+```
+
+Options:
+- `-node`: BYC node address to connect to (default: localhost:8333)
+- `-coin`: Coin type to mine (leah, shiblum, shiblon)
+- `-threads`: Number of mining threads (default: number of CPU cores)
+- `-type`: Mining type (solo, pool)
+- `-pool`: Pool address (required for pool mining)
+- `-wallet`: Wallet address to receive mining rewards (required for pool mining)
+
+## Building from Source
+
+If you prefer to build from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/byc.git
+cd byc
+
+# Build the node
+go build -o bycnode ./cmd/youngchain
+
+# Build the miner
+go build -o bycminer ./cmd/bycminer
+```
+
+## Development
+
+### Prerequisites
+
+- Go 1.16 or higher
+- Git
+
+### Project Structure
+
+- `cmd/`: Command-line applications
+  - `youngchain/`: BYC node implementation
+  - `bycminer/`: BYC miner implementation
+- `internal/`: Internal packages
+  - `core/`: Core blockchain functionality
+  - `network/`: Network communication
+  - `storage/`: Data storage
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Features
 
@@ -99,9 +178,6 @@ go run cmd/youngchain/main.go -type=light -port=8335
 
 ## Contributing
 Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
-
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 - Inspired by the Nephite monetary system
