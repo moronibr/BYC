@@ -31,9 +31,9 @@ func NewMiner(block *block.Block) *Miner {
 	return &Miner{
 		CurrentBlock: block,
 		Difficulty: MiningDifficulty{
-			LeahDifficulty:    0x1d00ffff >> 4, // Much harder than before
-			ShiblumDifficulty: 0x1d00ffff >> 5, // 2x harder than Leah
-			ShiblonDifficulty: 0x1d00ffff >> 6, // 4x harder than Leah
+			LeahDifficulty:    0x1d00ffff,      // Base difficulty
+			ShiblumDifficulty: 0x1d00ffff << 1, // 2x harder than Leah
+			ShiblonDifficulty: 0x1d00ffff << 2, // 4x harder than Leah
 		},
 		Target:   new(big.Int),
 		StopChan: make(chan struct{}),
