@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/types"
 )
 
 var (
@@ -56,23 +57,23 @@ type UTXO struct {
 
 // TransactionPool manages pending transactions
 type TransactionPool struct {
-	transactions map[string]*Transaction
-	utxoSet      map[string]*UTXO
+	transactions map[string]*types.Transaction
+	utxoSet      map[string]*types.UTXO
 	maxSize      int
 }
 
 // NewTransactionPool creates a new transaction pool
 func NewTransactionPool(maxSize int) *TransactionPool {
 	return &TransactionPool{
-		transactions: make(map[string]*Transaction),
-		utxoSet:      make(map[string]*UTXO),
+		transactions: make(map[string]*types.Transaction),
+		utxoSet:      make(map[string]*types.UTXO),
 		maxSize:      maxSize,
 	}
 }
 
 // CreateTransaction creates a new transaction
-func CreateTransaction(inputs []*Input, outputs []*Output, fee uint64, coinType coin.CoinType) *Transaction {
-	return &Transaction{
+func CreateTransaction(inputs []*types.Input, outputs []*types.Output, fee uint64, coinType coin.CoinType) *types.Transaction {
+	return &types.Transaction{
 		Version:  1,
 		Inputs:   inputs,
 		Outputs:  outputs,
@@ -116,7 +117,7 @@ func (tx *Transaction) CalculateHash() []byte {
 }
 
 // Validate validates a transaction
-func (tx *Transaction) Validate(utxoSet map[string]*UTXO) error {
+func (tp *TransactionPool) Validate(tx *types.Transaction) error {
 	// Check basic structure
 	if len(tx.Inputs) == 0 || len(tx.Outputs) == 0 {
 		return fmt.Errorf("%w: empty inputs or outputs", ErrInvalidTransaction)
@@ -132,14 +133,14 @@ func (tx *Transaction) Validate(utxoSet map[string]*UTXO) error {
 		utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
 
 		// Check if UTXO exists
-		utxo, exists := utxoSet[utxoKey]
+		utxo, exists := tp.utxoSet[utxoKey]
 		if !exists {
 			return fmt.Errorf("%w: UTXO not found", ErrInvalidTransaction)
 		}
 
 		// Check if already spent
 		if spentOutputs[utxoKey] {
-			return fmt.Errorf("%w: double spend detected", ErrDoubleSpend)
+			return fmt.Errorf("%w: double spend detected", ErrInvalidTransaction)
 		}
 
 		// Check coin type
@@ -162,21 +163,21 @@ func (tx *Transaction) Validate(utxoSet map[string]*UTXO) error {
 
 	// Check if inputs cover outputs plus fee
 	if totalInput < totalOutput+tx.Fee {
-		return fmt.Errorf("%w: insufficient funds", ErrInsufficientFunds)
+		return fmt.Errorf("%w: insufficient funds", ErrInvalidTransaction)
 	}
 
 	return nil
 }
 
 // AddToPool adds a transaction to the pool
-func (tp *TransactionPool) AddToPool(tx *Transaction) error {
+func (tp *TransactionPool) AddToPool(tx *types.Transaction) error {
 	// Check pool size
 	if len(tp.transactions) >= tp.maxSize {
 		return fmt.Errorf("transaction pool full")
 	}
 
 	// Validate transaction
-	if err := tx.Validate(tp.utxoSet); err != nil {
+	if err := tp.Validate(tx); err != nil {
 		return err
 	}
 
@@ -201,23 +202,23 @@ func (tp *TransactionPool) RemoveFromPool(txHash []byte) {
 }
 
 // GetTransaction gets a transaction from the pool
-func (tp *TransactionPool) GetTransaction(txHash []byte) *Transaction {
+func (tp *TransactionPool) GetTransaction(txHash []byte) *types.Transaction {
 	return tp.transactions[string(txHash)]
 }
 
-// GetUTXO gets a UTXO from the set
-func (tp *TransactionPool) GetUTXO(txHash []byte, index uint32) *UTXO {
+// GetUTXO gets a UTXO from the pool
+func (tp *TransactionPool) GetUTXO(txHash []byte, index uint32) *types.UTXO {
 	utxoKey := fmt.Sprintf("%x:%d", txHash, index)
 	return tp.utxoSet[utxoKey]
 }
 
-// AddUTXO adds a UTXO to the set
-func (tp *TransactionPool) AddUTXO(utxo *UTXO) {
+// AddUTXO adds a UTXO to the pool
+func (tp *TransactionPool) AddUTXO(utxo *types.UTXO) {
 	utxoKey := fmt.Sprintf("%x:%d", utxo.TxHash, utxo.TxIndex)
 	tp.utxoSet[utxoKey] = utxo
 }
 
-// RemoveUTXO removes a UTXO from the set
+// RemoveUTXO removes a UTXO from the pool
 func (tp *TransactionPool) RemoveUTXO(txHash []byte, index uint32) {
 	utxoKey := fmt.Sprintf("%x:%d", txHash, index)
 	delete(tp.utxoSet, utxoKey)

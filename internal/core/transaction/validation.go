@@ -1,376 +1,147 @@
 package transaction
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/coin"
-	"github.com/youngchain/internal/storage"
+	"github.com/youngchain/internal/core/types"
 )
 
-var (
-	ErrInvalidSignature    = errors.New("invalid transaction signature")
-	ErrInsufficientFunds   = errors.New("insufficient funds")
-	ErrInvalidInput        = errors.New("invalid input")
-	ErrInvalidOutput       = errors.New("invalid output")
-	ErrInvalidCoinType     = errors.New("invalid coin type")
-	ErrInvalidFee          = errors.New("invalid fee")
-	ErrInvalidScript       = errors.New("invalid script")
-	ErrDoubleSpend         = errors.New("double spend detected")
-	ErrTransactionTooLarge = errors.New("transaction too large")
-	ErrInvalidCrossChain   = errors.New("invalid cross-chain transaction")
-	ErrInvalidMaturity     = errors.New("transaction not mature")
-	ErrInvalidLockTime     = errors.New("invalid lock time")
-)
-
-// Validator handles transaction validation
-type Validator struct {
-	db *storage.DB
+// ValidationError represents a transaction validation error
+type ValidationError struct {
+	Code    int
+	Message string
 }
 
-// NewValidator creates a new transaction validator
-func NewValidator(db *storage.DB) *Validator {
-	return &Validator{
-		db: db,
-	}
+func (e *ValidationError) Error() string {
+	return e.Message
 }
 
 // ValidateTransaction validates a transaction
-func (v *Validator) ValidateTransaction(tx *block.Transaction, mempool *Mempool) error {
-	// Check transaction size
-	if err := v.validateSize(tx); err != nil {
-		return err
-	}
-
-	// Check for double spends
-	if err := v.checkDoubleSpend(tx, mempool); err != nil {
+func ValidateTransaction(tx *types.Transaction, utxoGetter UTXOGetter) error {
+	// Validate basic structure
+	if err := validateBasicStructure(tx); err != nil {
 		return err
 	}
 
 	// Validate inputs
-	if err := v.validateInputs(tx); err != nil {
+	if err := validateInputs(tx, utxoGetter); err != nil {
 		return err
 	}
 
 	// Validate outputs
-	if err := v.validateOutputs(tx); err != nil {
-		return err
-	}
-
-	// Validate signatures
-	if err := v.validateSignatures(tx); err != nil {
-		return err
-	}
-
-	// Validate coin types
-	if err := v.validateCoinTypes(tx); err != nil {
+	if err := validateOutputs(tx); err != nil {
 		return err
 	}
 
 	// Validate fee
-	if err := v.validateFee(tx); err != nil {
-		return err
-	}
-
-	// Validate scripts
-	if err := v.validateScripts(tx); err != nil {
-		return err
-	}
-
-	// Validate cross-chain rules
-	if err := v.validateCrossChain(tx); err != nil {
-		return err
-	}
-
-	// Validate maturity
-	if err := v.validateMaturity(tx); err != nil {
-		return err
-	}
-
-	// Validate lock time
-	if err := v.validateLockTime(tx); err != nil {
+	if err := validateFee(tx); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// validateSize checks if the transaction size is within limits
-func (v *Validator) validateSize(tx *block.Transaction) error {
-	// TODO: Implement size validation based on network rules
-	// For now, use a simple size check
-	if tx.Size() > 100*1024 { // 100KB limit
-		return ErrTransactionTooLarge
-	}
-	return nil
+// UTXOGetter defines the interface for getting UTXOs
+type UTXOGetter interface {
+	GetUTXO(txHash []byte, index uint32) (*types.UTXO, error)
 }
 
-// checkDoubleSpend checks if any input is already spent
-func (v *Validator) checkDoubleSpend(tx *block.Transaction, mempool *Mempool) error {
-	// Check against mempool
-	if mempool != nil {
-		for _, input := range tx.Inputs {
-			if mempool.IsInputSpent(&input) {
-				return ErrDoubleSpend
-			}
-		}
+// validateBasicStructure validates the basic structure of a transaction
+func validateBasicStructure(tx *types.Transaction) error {
+	if tx == nil {
+		return &ValidationError{Code: 1, Message: "transaction is nil"}
 	}
 
-	// Check against blockchain
-	// TODO: Implement blockchain double spend check
-	return nil
-}
-
-// validateInputs validates transaction inputs
-func (v *Validator) validateInputs(tx *block.Transaction) error {
 	if len(tx.Inputs) == 0 {
-		return ErrInvalidInput
+		return &ValidationError{Code: 2, Message: "transaction has no inputs"}
 	}
 
-	for _, input := range tx.Inputs {
-		// Check if input exists in UTXO set
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err != nil {
-			return fmt.Errorf("input not found: %v", err)
-		}
-
-		// Check if input is spent
-		if utxo.IsSpent {
-			return ErrDoubleSpend
-		}
-
-		// Check if input is mature
-		if !utxo.IsMature() {
-			return ErrInvalidMaturity
-		}
-	}
-
-	return nil
-}
-
-// validateOutputs validates transaction outputs
-func (v *Validator) validateOutputs(tx *block.Transaction) error {
 	if len(tx.Outputs) == 0 {
-		return ErrInvalidOutput
+		return &ValidationError{Code: 3, Message: "transaction has no outputs"}
 	}
 
-	for _, output := range tx.Outputs {
-		// Check if output amount is valid
-		if output.Value <= 0 {
-			return ErrInvalidOutput
+	return nil
+}
+
+// validateInputs validates the inputs of a transaction
+func validateInputs(tx *types.Transaction, utxoGetter UTXOGetter) error {
+	var totalInput uint64
+	spentUTXOs := make(map[string]bool)
+
+	for _, input := range tx.Inputs {
+		// Check for double spend within the transaction
+		key := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
+		if spentUTXOs[key] {
+			return &ValidationError{Code: 4, Message: "double spend detected"}
+		}
+		spentUTXOs[key] = true
+
+		// Get and validate UTXO
+		utxo, err := utxoGetter.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+		if err != nil {
+			return &ValidationError{Code: 5, Message: fmt.Sprintf("failed to get UTXO: %v", err)}
 		}
 
-		// Check if output script is valid
-		if len(output.Script) == 0 {
-			return ErrInvalidScript
+		if utxo == nil {
+			return &ValidationError{Code: 6, Message: "UTXO not found"}
+		}
+
+		if utxo.IsSpent {
+			return &ValidationError{Code: 7, Message: "UTXO is already spent"}
+		}
+
+		// Validate signature
+		if !validateSignature(input, utxo) {
+			return &ValidationError{Code: 8, Message: "invalid signature"}
+		}
+
+		totalInput += utxo.Value
+	}
+
+	// Check if inputs are sufficient
+	var totalOutput uint64
+	for _, output := range tx.Outputs {
+		totalOutput += output.Value
+	}
+
+	if totalInput < totalOutput+tx.Fee {
+		return &ValidationError{Code: 9, Message: "insufficient funds"}
+	}
+
+	return nil
+}
+
+// validateOutputs validates the outputs of a transaction
+func validateOutputs(tx *types.Transaction) error {
+	for _, output := range tx.Outputs {
+		if output.Value == 0 {
+			return &ValidationError{Code: 10, Message: "output value cannot be zero"}
+		}
+
+		if len(output.ScriptPubKey) == 0 {
+			return &ValidationError{Code: 11, Message: "output script cannot be empty"}
+		}
+
+		if len(output.Address) == 0 {
+			return &ValidationError{Code: 12, Message: "output address cannot be empty"}
 		}
 	}
 
 	return nil
 }
 
-// validateSignatures validates transaction signatures
-func (v *Validator) validateSignatures(tx *block.Transaction) error {
+// validateFee validates the transaction fee
+func validateFee(tx *types.Transaction) error {
+	if tx.Fee < 0 {
+		return &ValidationError{Code: 13, Message: "fee cannot be negative"}
+	}
+
+	// TODO: Add more fee validation rules
+	return nil
+}
+
+// validateSignature validates the signature of a transaction input
+func validateSignature(input *types.Input, utxo *types.UTXO) bool {
 	// TODO: Implement signature validation
-	// For now, just check if signature exists
-	if len(tx.Signature) == 0 {
-		return ErrInvalidSignature
-	}
-	return nil
-}
-
-// validateCoinTypes validates coin types in the transaction
-func (v *Validator) validateCoinTypes(tx *block.Transaction) error {
-	// Check if all inputs have the same coin type
-	inputCoinType := tx.CoinType
-	for _, input := range tx.Inputs {
-		// Get the UTXO for this input to check its coin type
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err != nil {
-			return fmt.Errorf("failed to get UTXO: %v", err)
-		}
-		if utxo.CoinType != inputCoinType {
-			return ErrInvalidCoinType
-		}
-	}
-
-	// Check if all outputs have the same coin type
-	outputCoinType := tx.Outputs[0].CoinType
-	for _, output := range tx.Outputs {
-		if output.CoinType != outputCoinType {
-			return ErrInvalidCoinType
-		}
-	}
-
-	// Check if cross-chain rules are followed
-	if inputCoinType != outputCoinType {
-		// Only Antion can cross chains
-		if inputCoinType != coin.Antion && outputCoinType != coin.Antion {
-			return ErrInvalidCrossChain
-		}
-	}
-
-	return nil
-}
-
-// validateFee validates transaction fee
-func (v *Validator) validateFee(tx *block.Transaction) error {
-	// Calculate input amount
-	var inputAmount uint64
-	for _, input := range tx.Inputs {
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err != nil {
-			return fmt.Errorf("failed to get UTXO: %v", err)
-		}
-		inputAmount += utxo.Value
-	}
-
-	// Calculate output amount
-	var outputAmount uint64
-	for _, output := range tx.Outputs {
-		outputAmount += output.Value
-	}
-
-	// Calculate fee
-	fee := inputAmount - outputAmount
-	if fee < 0 {
-		return ErrInvalidFee
-	}
-
-	// Check if fee meets minimum requirement
-	minFee := v.calculateMinFee(tx)
-	if fee < minFee {
-		return ErrInvalidFee
-	}
-
-	return nil
-}
-
-// calculateMinFee calculates the minimum fee for a transaction
-func (v *Validator) calculateMinFee(tx *block.Transaction) uint64 {
-	// Base fee
-	baseFee := uint64(1000) // 0.00001 BYC
-
-	// Size fee
-	sizeFee := uint64(tx.Size()) * 10 // 0.0000001 BYC per byte
-
-	// Priority fee (for transactions with unconfirmed inputs)
-	priorityFee := uint64(0)
-	for _, input := range tx.Inputs {
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err == nil && !utxo.IsSpent && !utxo.IsConfirmed {
-			priorityFee += 1000 // 0.00001 BYC per unconfirmed input
-		}
-	}
-
-	return baseFee + sizeFee + priorityFee
-}
-
-// validateScripts validates transaction scripts
-func (v *Validator) validateScripts(tx *block.Transaction) error {
-	// TODO: Implement script validation
-	// For now, just check if scripts exist
-	for _, input := range tx.Inputs {
-		if len(input.Script) == 0 {
-			return ErrInvalidScript
-		}
-	}
-
-	for _, output := range tx.Outputs {
-		if len(output.Script) == 0 {
-			return ErrInvalidScript
-		}
-	}
-
-	return nil
-}
-
-// validateCrossChain validates cross-chain transaction rules
-func (v *Validator) validateCrossChain(tx *block.Transaction) error {
-	// Check if all inputs have the same coin type
-	inputCoinType := tx.CoinType
-	for _, input := range tx.Inputs {
-		// Get the UTXO for this input to check its coin type
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err != nil {
-			return fmt.Errorf("failed to get UTXO: %v", err)
-		}
-		if utxo.CoinType != inputCoinType {
-			return ErrInvalidCrossChain
-		}
-	}
-
-	// Check if all outputs have the same coin type
-	outputCoinType := tx.Outputs[0].CoinType
-	for _, output := range tx.Outputs {
-		if output.CoinType != outputCoinType {
-			return ErrInvalidCrossChain
-		}
-	}
-
-	// If input and output coin types are different, this is a cross-chain transaction
-	if inputCoinType != outputCoinType {
-		// Only Antion can cross chains
-		if inputCoinType != coin.Antion && outputCoinType != coin.Antion {
-			return ErrInvalidCrossChain
-		}
-
-		// Check if cross-chain fee is paid
-		if !v.hasCrossChainFee(tx) {
-			return ErrInvalidFee
-		}
-	}
-
-	return nil
-}
-
-// hasCrossChainFee checks if a cross-chain transaction has the required fee
-func (v *Validator) hasCrossChainFee(tx *block.Transaction) bool {
-	// Calculate input amount
-	var inputAmount uint64
-	for _, input := range tx.Inputs {
-		utxo, err := v.db.GetUTXO(input.PreviousTx, input.OutputIndex)
-		if err != nil {
-			return false
-		}
-		inputAmount += utxo.Value
-	}
-
-	// Calculate output amount
-	var outputAmount uint64
-	for _, output := range tx.Outputs {
-		outputAmount += output.Value
-	}
-
-	// Calculate fee
-	fee := inputAmount - outputAmount
-
-	// Cross-chain fee is 0.1% of the transaction amount
-	minCrossChainFee := outputAmount / 1000
-	if outputAmount%1000 != 0 {
-		minCrossChainFee++
-	}
-
-	return fee >= minCrossChainFee
-}
-
-// validateMaturity validates transaction maturity
-func (v *Validator) validateMaturity(tx *block.Transaction) error {
-	// Check if transaction is mature
-	if !tx.IsMature() {
-		return ErrInvalidMaturity
-	}
-
-	return nil
-}
-
-// validateLockTime validates transaction lock time
-func (v *Validator) validateLockTime(tx *block.Transaction) error {
-	// Check if lock time is valid
-	if !tx.IsLockTimeValid() {
-		return ErrInvalidLockTime
-	}
-
-	return nil
+	return true
 }

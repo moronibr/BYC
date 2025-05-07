@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/youngchain/internal/core/transaction"
+	"github.com/youngchain/internal/core/types"
 )
 
 const (
@@ -41,7 +41,7 @@ func (tb *TransactionBroadcaster) AddPeer(addr string) error {
 }
 
 // BroadcastTransaction broadcasts a transaction to all peers
-func (tb *TransactionBroadcaster) BroadcastTransaction(tx *transaction.Transaction) error {
+func (tb *TransactionBroadcaster) BroadcastTransaction(tx *types.Transaction) error {
 	data, err := json.Marshal(tx)
 	if err != nil {
 		return fmt.Errorf("failed to marshal transaction: %v", err)
@@ -94,7 +94,7 @@ func (tb *TransactionBroadcaster) handleConnection(conn net.Conn) {
 			return
 		}
 
-		var tx transaction.Transaction
+		var tx types.Transaction
 		if err := json.Unmarshal(buf[:n], &tx); err != nil {
 			fmt.Printf("Failed to unmarshal transaction: %v\n", err)
 			continue

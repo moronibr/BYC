@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/types"
 )
 
 // BlockType represents the type of block
@@ -42,9 +43,9 @@ func (h *BlockHeader) String() string {
 
 // Block represents a blockchain block
 type Block struct {
-	Header       BlockHeader    `json:"header"`
-	Transactions []*Transaction `json:"transactions"`
-	Hash         []byte         `json:"hash"`
+	Header       BlockHeader          `json:"header"`
+	Transactions []*types.Transaction `json:"transactions"`
+	Hash         []byte               `json:"hash"`
 }
 
 // Transaction represents a transaction in the block
@@ -83,12 +84,12 @@ func NewBlock(prevBlockHash []byte, difficulty uint32) *Block {
 			Timestamp:     time.Now(),
 			Difficulty:    difficulty,
 		},
-		Transactions: make([]*Transaction, 0),
+		Transactions: make([]*types.Transaction, 0),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *Transaction) {
+func (b *Block) AddTransaction(tx *types.Transaction) {
 	b.Transactions = append(b.Transactions, tx)
 }
 
@@ -152,7 +153,7 @@ func (b *Block) Copy() *Block {
 			Difficulty:    b.Header.Difficulty,
 			Nonce:         b.Header.Nonce,
 		},
-		Transactions: make([]*Transaction, len(b.Transactions)),
+		Transactions: make([]*types.Transaction, len(b.Transactions)),
 		Hash:         make([]byte, len(b.Hash)),
 	}
 
@@ -215,19 +216,19 @@ func (b *Block) UpdateMerkleRoot() {
 
 // GetInitialDifficulty returns the initial difficulty for a block type
 func GetInitialDifficulty(blockType BlockType) uint32 {
+	return calculateInitialDifficulty(blockType)
+}
+
+// calculateInitialDifficulty calculates the initial difficulty for a block type
+func calculateInitialDifficulty(blockType BlockType) uint32 {
 	switch blockType {
 	case GoldenBlock:
-		return 0x1d00ffff // Initial difficulty for golden block
+		return 0x1d00ffff // Bitcoin's initial difficulty
 	case SilverBlock:
-		return 0x1d00ffff // Initial difficulty for silver block
+		return 0x1d00ffff / 2 // Half of Bitcoin's initial difficulty
 	default:
 		return 0x1d00ffff
 	}
-}
-
-// calculateInitialDifficulty sets the initial difficulty based on block type
-func calculateInitialDifficulty(blockType BlockType) uint32 {
-	return GetInitialDifficulty(blockType)
 }
 
 // NewTransaction creates a new transaction

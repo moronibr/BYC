@@ -10,6 +10,7 @@ import (
 
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/transaction"
+	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/network"
 	"github.com/youngchain/internal/storage"
 	"go.etcd.io/bbolt"
@@ -33,7 +34,7 @@ func main() {
 	// Initialize stores
 	txStore := storage.NewTransactionStore(db)
 	historyStore := storage.NewTransactionHistoryStore(db)
-	feeCalculator := transaction.NewFeeCalculator()
+	feeCalculator := transaction.NewEnhancedFeeCalculator()
 
 	// Initialize network
 	broadcaster := network.NewTransactionBroadcaster()
@@ -82,6 +83,17 @@ func main() {
 		coinType := coin.CoinType(os.Args[3])
 		showHistory(historyStore, address, coinType)
 
+	case "estimate-fee":
+		if len(os.Args) < 3 {
+			printUsage()
+			return
+		}
+		amount, err := strconv.ParseUint(os.Args[2], 10, 64)
+		if err != nil {
+			log.Fatalf("Invalid amount: %v", err)
+		}
+		estimateFee(feeCalculator, amount)
+
 	default:
 		printUsage()
 	}
@@ -92,26 +104,35 @@ func printUsage() {
 	fmt.Println("  send <amount> <to_address> <coin_type>")
 	fmt.Println("  balance <address> <coin_type>")
 	fmt.Println("  history <address> <coin_type>")
+	fmt.Println("  estimate-fee <amount>")
 }
 
 func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.TransactionHistoryStore,
-	feeCalculator *transaction.FeeCalculator, broadcaster *network.TransactionBroadcaster,
+	feeCalculator *transaction.EnhancedFeeCalculator, broadcaster *network.TransactionBroadcaster,
 	amount uint64, toAddress string, coinType coin.CoinType) {
 
 	// Create transaction
-	inputs := []*transaction.Input{
+	inputs := []*types.Input{
 		// TODO: Select appropriate UTXOs
 	}
-	outputs := []*transaction.Output{
+	outputs := []*types.Output{
 		{
 			Value:   amount,
 			Address: toAddress,
 		},
 	}
 
+	// Create transaction with current timestamp
+	tx := &types.Transaction{
+		Version:  1,
+		Inputs:   inputs,
+		Outputs:  outputs,
+		LockTime: uint32(time.Now().Add(1 * time.Hour).Unix()), // Standard priority
+		CoinType: coinType,
+	}
+
 	// Calculate fee
-	tx := transaction.CreateTransaction(inputs, outputs, 0, coinType)
-	fee := feeCalculator.CalculateFee(tx)
+	fee := feeCalculator.CalculateEnhancedFee(tx)
 	tx.Fee = fee
 
 	// Save transaction
@@ -138,6 +159,7 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 	}
 
 	fmt.Printf("Transaction sent: %x\n", tx.CalculateHash())
+	fmt.Printf("Fee: %d\n", fee)
 }
 
 func showBalance(txStore *storage.TransactionStore, address string, coinType coin.CoinType) {
@@ -165,4 +187,42 @@ func showHistory(historyStore *storage.TransactionHistoryStore, address string, 
 		}
 		fmt.Println()
 	}
+}
+
+func estimateFee(feeCalculator *transaction.EnhancedFeeCalculator, amount uint64) {
+	// Create a sample transaction for fee estimation
+	inputs := []*types.Input{
+		{
+			PreviousTxHash:  make([]byte, 32),
+			PreviousTxIndex: 0,
+			ScriptSig:       make([]byte, 100), // Typical script size
+			Sequence:        0xffffffff,
+		},
+	}
+	outputs := []*types.Output{
+		{
+			Value:        amount,
+			ScriptPubKey: make([]byte, 25), // Typical P2PKH script size
+			Address:      "sample_address",
+		},
+	}
+
+	// Create transaction with current timestamp
+	tx := &types.Transaction{
+		Version:  1,
+		Inputs:   inputs,
+		Outputs:  outputs,
+		LockTime: uint32(time.Now().Add(1 * time.Hour).Unix()), // Standard priority
+		CoinType: coin.Leah,
+	}
+
+	// Calculate fee
+	fee := feeCalculator.CalculateEnhancedFee(tx)
+	size := feeCalculator.CalculateTransactionSize(tx)
+
+	// Show fee breakdown
+	fmt.Printf("Estimated fee for %d coins:\n", amount)
+	fmt.Printf("  Base fee: %d\n", fee)
+	fmt.Printf("  Fee rate: %.2f sat/byte\n", float64(fee)/float64(size))
+	fmt.Printf("  Priority: Standard (1 hour)\n")
 }

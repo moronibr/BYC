@@ -159,3 +159,32 @@ func (ths *TransactionHistoryStore) UpdateStatus(txHash []byte, status string, b
 		})
 	})
 }
+
+// GetPendingTransactions gets all pending transactions
+func (ths *TransactionHistoryStore) GetPendingTransactions() ([]*TransactionHistory, error) {
+	var pending []*TransactionHistory
+
+	err := ths.db.View(func(dbTx *bbolt.Tx) error {
+		// Get history bucket
+		bucket := dbTx.Bucket([]byte(historyBucket))
+		if bucket == nil {
+			return fmt.Errorf("bucket not found")
+		}
+
+		// Iterate over all history entries
+		return bucket.ForEach(func(k, v []byte) error {
+			var entry TransactionHistory
+			if err := json.Unmarshal(v, &entry); err != nil {
+				return err
+			}
+
+			if entry.Status == "pending" {
+				pending = append(pending, &entry)
+			}
+
+			return nil
+		})
+	})
+
+	return pending, err
+}

@@ -107,8 +107,8 @@ func TestFieldConstructors(t *testing.T) {
 	}
 
 	for _, field := range fields {
-		if field == nil {
-			t.Error("Field constructor returned nil")
+		if field.Type == 0 {
+			t.Error("Field constructor returned invalid field type")
 		}
 	}
 }
