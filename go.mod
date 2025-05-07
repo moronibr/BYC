@@ -4,6 +4,7 @@ go 1.24.1
 
 require (
 	github.com/stretchr/testify v1.10.0
+	github.com/tyler-smith/go-bip39 v1.1.0
 	go.etcd.io/bbolt v1.3.10
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.21.0
