@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/youngchain/internal/config"
-	"github.com/youngchain/internal/consensus"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/transaction"
 	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/interfaces"
+	"github.com/youngchain/internal/network/messages"
 	"github.com/youngchain/internal/storage"
 )
 
@@ -62,8 +64,10 @@ type ChainState struct {
 	Timestamp     time.Time
 }
 
-// Server represents a network server for node communication
+// Server implements both BlockChain and Network interfaces
 type Server struct {
+	mu sync.RWMutex
+
 	// Server configuration
 	config *config.Config
 
@@ -78,24 +82,24 @@ type Server struct {
 	StopChan  chan struct{}
 
 	// Database
-	db *storage.DB
+	db *storage.Database
 
 	// Consensus
-	consensus *consensus.Consensus
+	consensus interfaces.Consensus
 
 	// Transaction pool
-	transactionPool *transaction.TransactionPool
+	transactionPool *TransactionPool
 }
 
 // NewServer creates a new network server
-func NewServer(config *config.Config) *Server {
+func NewServer(config *config.Config, consensus interfaces.Consensus) *Server {
 	return &Server{
 		config:          config,
 		peerManager:     NewPeerManager(config),
 		MessageChan:     make(chan *Message, 100),
 		StopChan:        make(chan struct{}),
-		consensus:       consensus.NewConsensus(),
-		transactionPool: transaction.NewTransactionPool(1000),
+		consensus:       consensus,
+		transactionPool: NewTransactionPool(),
 	}
 }
 
@@ -116,18 +120,22 @@ func (s *Server) Start() error {
 }
 
 // Stop stops the server
-func (s *Server) Stop() {
+func (s *Server) Stop() error {
 	if !s.IsRunning {
-		return
+		return nil
 	}
 
 	close(s.StopChan)
 	s.IsRunning = false
-	s.peerManager.Stop()
+	if err := s.peerManager.Stop(); err != nil {
+		return fmt.Errorf("failed to stop peer manager: %v", err)
+	}
+
+	return nil
 }
 
 // SetDB sets the database for the server
-func (s *Server) SetDB(db *storage.DB) {
+func (s *Server) SetDB(db *storage.Database) {
 	s.db = db
 }
 
@@ -245,14 +253,23 @@ func (s *Server) validateBlockTransactions(block *block.Block) error {
 
 // UpdateChainState updates the chain state
 func (s *Server) UpdateChainState(block *block.Block) error {
-	height, _, err := s.db.GetChainState()
+	// Get current chain state
+	_, bestBlockHash, err := s.db.GetChainState()
 	if err != nil {
 		return fmt.Errorf("failed to get chain state: %v", err)
 	}
 
-	// Update chain state
-	if err := s.db.SaveChainState(height+1, block.Hash); err != nil {
-		return fmt.Errorf("failed to save chain state: %v", err)
+	// Get current best block
+	bestBlock, err := s.db.GetBlock(bestBlockHash)
+	if err != nil {
+		return fmt.Errorf("failed to get best block: %v", err)
+	}
+
+	// If new block has higher height, update chain state
+	if block.Header.Height > bestBlock.Header.Height {
+		if err := s.db.UpdateChainState(block.Hash, block.Header.Height); err != nil {
+			return fmt.Errorf("failed to update chain state: %v", err)
+		}
 	}
 
 	return nil
@@ -327,7 +344,7 @@ func (s *Server) GetBlockByHash(hash []byte) (*block.Block, error) {
 	return s.db.GetBlock(hash)
 }
 
-// GetLastBlock gets the last block in the chain
+// GetLastBlock implements interfaces.BlockChain
 func (s *Server) GetLastBlock() (*block.Block, error) {
 	_, bestBlockHash, err := s.db.GetChainState()
 	if err != nil {
@@ -337,7 +354,7 @@ func (s *Server) GetLastBlock() (*block.Block, error) {
 	return s.db.GetBlock(bestBlockHash)
 }
 
-// GetPeerHeights returns the heights of all connected peers
+// GetPeerHeights implements interfaces.Network
 func (s *Server) GetPeerHeights() []uint64 {
 	heights := make([]uint64, 0)
 	for _, peer := range s.peerManager.peers {
@@ -346,7 +363,7 @@ func (s *Server) GetPeerHeights() []uint64 {
 	return heights
 }
 
-// RequestBlocks requests blocks from peers
+// RequestBlocks implements interfaces.Network
 func (s *Server) RequestBlocks(startHeight, endHeight uint64) ([]*block.Block, error) {
 	blocks := make([]*block.Block, 0)
 	for height := startHeight; height <= endHeight; height++ {
@@ -359,7 +376,7 @@ func (s *Server) RequestBlocks(startHeight, endHeight uint64) ([]*block.Block, e
 	return blocks, nil
 }
 
-// AddBlock adds a block to the chain
+// AddBlock implements interfaces.BlockChain
 func (s *Server) AddBlock(block *block.Block) error {
 	// Validate block
 	if err := s.consensus.ValidateBlock(block); err != nil {
@@ -377,32 +394,62 @@ func (s *Server) AddBlock(block *block.Block) error {
 	}
 
 	// Broadcast block to peers
-	blockMsg := &BlockMessage{
-		Block:     block,
-		BlockType: block.BlockType,
-	}
-	msgData, err := json.Marshal(blockMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal block message: %v", err)
-	}
-	s.peerManager.Broadcast(msgData)
-
-	return nil
+	return s.BroadcastBlock(block)
 }
 
-// GetBlockByHeight gets a block by its height
+// GetBlockByHeight implements interfaces.BlockChain
 func (s *Server) GetBlockByHeight(height uint64) (*block.Block, error) {
 	return s.db.GetBlockByHeight(height)
 }
 
-// GetBlock gets a block by its hash
+// GetBlock implements interfaces.BlockChain
 func (s *Server) GetBlock(hash []byte) (*block.Block, error) {
 	return s.db.GetBlock(hash)
 }
 
-// GetPendingTransactions gets pending transactions from the transaction pool
+// GetPendingTransactions implements interfaces.BlockChain
 func (s *Server) GetPendingTransactions() []*types.Transaction {
 	return s.transactionPool.GetPendingTransactions()
+}
+
+// BroadcastBlock implements interfaces.Network
+func (s *Server) BroadcastBlock(block *block.Block) error {
+	// Create block message
+	msg, err := messages.NewMessage(messages.BlockMsg, &messages.BlockMessage{
+		Block:     block,
+		BlockType: "new",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Broadcast message to all peers
+	return s.broadcastMessage(msg)
+}
+
+// BroadcastTransaction implements interfaces.Network
+func (s *Server) BroadcastTransaction(tx interface{}) error {
+	// Create transaction message
+	msg, err := messages.NewMessage(messages.TransactionMsg, &messages.TransactionMessage{
+		Transaction: tx.(*types.Transaction),
+		CoinType:    "default",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Broadcast message to all peers
+	return s.broadcastMessage(msg)
+}
+
+// broadcastMessage broadcasts a message to all peers
+func (s *Server) broadcastMessage(msg *messages.Message) error {
+	msgData, err := msg.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %v", err)
+	}
+	s.peerManager.Broadcast(msgData)
+	return nil
 }
 
 // 1. Consensus Implementation

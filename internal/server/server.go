@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,7 @@ type Server struct {
 	wg         sync.WaitGroup
 	shutdownCh chan struct{}
 	isShutdown bool
+	tlsConfig  *security.TLSServerConfig
 }
 
 // ServerMetrics tracks server metrics
@@ -92,6 +94,13 @@ func NewServer(config *config.Config, consensus *consensus.Consensus) *Server {
 		log.Fatalf("Failed to generate key pair: %v", err)
 	}
 
+	// Initialize TLS configuration
+	tlsConfig := security.DefaultTLSServerConfig()
+	tlsConfig.CertFile = config.TLS.CertFile
+	tlsConfig.KeyFile = config.TLS.KeyFile
+	tlsConfig.ClientCAs = config.TLS.ClientCAs
+	tlsConfig.ServerName = config.TLS.ServerName
+
 	return &Server{
 		config:     config,
 		consensus:  consensus,
@@ -101,6 +110,7 @@ func NewServer(config *config.Config, consensus *consensus.Consensus) *Server {
 		ctx:        ctx,
 		cancel:     cancel,
 		shutdownCh: make(chan struct{}),
+		tlsConfig:  tlsConfig,
 
 		// Initialize security components
 		peerAuth:  security.NewPeerAuth(),
@@ -125,12 +135,18 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	// Start listening for connections
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
+	// Create TLS listener
+	tlsConfig, err := security.LoadTLSServerConfig(s.tlsConfig)
 	if err != nil {
-		s.recordError(fmt.Errorf("failed to start listener: %v", err))
+		return fmt.Errorf("failed to load TLS config: %v", err)
+	}
+
+	listener, err := tls.Listen("tcp", s.config.ListenAddr, tlsConfig)
+	if err != nil {
+		s.recordError(fmt.Errorf("failed to create TLS listener: %v", err))
 		return err
 	}
+	defer listener.Close()
 
 	s.logger.Printf("Server started successfully on %s", s.config.ListenAddr)
 
@@ -261,6 +277,19 @@ func (s *Server) handleConnection(conn net.Conn) {
 		// Remove connection from limiter
 		s.peerLimiter.RemoveConnection(conn.RemoteAddr())
 	}()
+
+	// Get TLS connection state
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		log.Printf("Warning: Non-TLS connection from %s", conn.RemoteAddr())
+		return
+	}
+
+	state := tlsConn.ConnectionState()
+	log.Printf("TLS connection established with %s using %s and %s",
+		conn.RemoteAddr(),
+		security.GetTLSVersionString(state.Version),
+		security.GetCipherSuiteString(state.CipherSuite))
 
 	// Check connection limits
 	if err := s.peerLimiter.AllowConnection(conn.RemoteAddr()); err != nil {

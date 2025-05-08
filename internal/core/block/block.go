@@ -42,12 +42,27 @@ func (h *BlockHeader) String() string {
 		h.Nonce)
 }
 
-// Block represents a blockchain block
+// Block represents a block in the blockchain
 type Block struct {
-	Header       BlockHeader          `json:"header"`
-	Transactions []*types.Transaction `json:"transactions"`
-	Hash         []byte               `json:"hash"`
-	Parent       *Block               `json:"-"` // Parent block in the chain
+	Header       *Header
+	Transactions []*types.Transaction
+	Hash         []byte
+	Parent       *Block
+}
+
+// Header represents a block header
+type Header struct {
+	Version          uint32
+	PrevBlock        []byte
+	MerkleRoot       []byte
+	Timestamp        time.Time
+	Difficulty       uint32
+	Nonce            uint32
+	Height           uint64
+	TotalTxs         uint64
+	StateRoot        []byte
+	TransactionsRoot []byte
+	ReceiptsRoot     []byte
 }
 
 // Transaction represents a transaction in the block
@@ -77,14 +92,26 @@ type TxOutput struct {
 	CoinType coin.CoinType `json:"coin_type"`
 }
 
+// String returns a string representation of the block
+func (b *Block) String() string {
+	return fmt.Sprintf("Block{Height: %d, Hash: %x, Transactions: %d}",
+		b.Header.Height, b.Hash, len(b.Transactions))
+}
+
+// String returns a string representation of the header
+func (h *Header) String() string {
+	return fmt.Sprintf("Header{Version: %d, Height: %d, Difficulty: %d, Nonce: %d}",
+		h.Version, h.Height, h.Difficulty, h.Nonce)
+}
+
 // NewBlock creates a new block
 func NewBlock(prevBlockHash []byte, difficulty uint32) *Block {
 	return &Block{
-		Header: BlockHeader{
-			Version:       1,
-			PrevBlockHash: prevBlockHash,
-			Timestamp:     time.Now(),
-			Difficulty:    difficulty,
+		Header: &Header{
+			Version:    1,
+			PrevBlock:  prevBlockHash,
+			Timestamp:  time.Now(),
+			Difficulty: difficulty,
 		},
 		Transactions: make([]*types.Transaction, 0),
 	}
@@ -147,22 +174,29 @@ func (b *Block) CalculateHash() []byte {
 func (b *Block) Copy() *Block {
 	// Create a new block
 	blockCopy := &Block{
-		Header: BlockHeader{
-			Version:       b.Header.Version,
-			PrevBlockHash: make([]byte, len(b.Header.PrevBlockHash)),
-			MerkleRoot:    make([]byte, len(b.Header.MerkleRoot)),
-			Timestamp:     b.Header.Timestamp,
-			Difficulty:    b.Header.Difficulty,
-			Nonce:         b.Header.Nonce,
-			Height:        b.Header.Height,
+		Header: &Header{
+			Version:          b.Header.Version,
+			PrevBlock:        make([]byte, len(b.Header.PrevBlock)),
+			MerkleRoot:       make([]byte, len(b.Header.MerkleRoot)),
+			Timestamp:        b.Header.Timestamp,
+			Difficulty:       b.Header.Difficulty,
+			Nonce:            b.Header.Nonce,
+			Height:           b.Header.Height,
+			TotalTxs:         b.Header.TotalTxs,
+			StateRoot:        make([]byte, len(b.Header.StateRoot)),
+			TransactionsRoot: make([]byte, len(b.Header.TransactionsRoot)),
+			ReceiptsRoot:     make([]byte, len(b.Header.ReceiptsRoot)),
 		},
 		Transactions: make([]*types.Transaction, len(b.Transactions)),
 		Hash:         make([]byte, len(b.Hash)),
 	}
 
 	// Copy byte slices
-	copy(blockCopy.Header.PrevBlockHash, b.Header.PrevBlockHash)
+	copy(blockCopy.Header.PrevBlock, b.Header.PrevBlock)
 	copy(blockCopy.Header.MerkleRoot, b.Header.MerkleRoot)
+	copy(blockCopy.Header.StateRoot, b.Header.StateRoot)
+	copy(blockCopy.Header.TransactionsRoot, b.Header.TransactionsRoot)
+	copy(blockCopy.Header.ReceiptsRoot, b.Header.ReceiptsRoot)
 	copy(blockCopy.Hash, b.Hash)
 
 	// Copy transactions
@@ -205,11 +239,6 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 		b.Hash = hash
 	}
 	return nil
-}
-
-// String returns a string representation of the block
-func (b *Block) String() string {
-	return hex.EncodeToString(b.Hash)
 }
 
 // UpdateMerkleRoot updates the merkle root of the block
@@ -502,12 +531,16 @@ func (b *Block) Size() int {
 
 	// Header size
 	size += 4 // Version
-	size += len(b.Header.PrevBlockHash)
+	size += len(b.Header.PrevBlock)
 	size += len(b.Header.MerkleRoot)
 	size += 8 // Timestamp
 	size += 4 // Difficulty
 	size += 8 // Nonce
 	size += 8 // Height
+	size += 8 // TotalTxs
+	size += len(b.Header.StateRoot)
+	size += len(b.Header.TransactionsRoot)
+	size += len(b.Header.ReceiptsRoot)
 
 	// Transactions size
 	for _, tx := range b.Transactions {

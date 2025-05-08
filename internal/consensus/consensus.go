@@ -5,12 +5,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/types"
-	"github.com/youngchain/internal/network"
+	"github.com/youngchain/internal/interfaces"
 )
 
 const (
@@ -39,8 +39,19 @@ const (
 	MaxFutureBlockTime = 7200 // 2 hours
 )
 
-// Consensus implements the Proof of Work consensus mechanism
+// BlockChain defines the interface for blockchain operations
+type BlockChain interface {
+	GetLastBlock() (*block.Block, error)
+	GetBlockByHeight(height uint64) (*block.Block, error)
+	GetBlock(hash []byte) (*block.Block, error)
+	AddBlock(block *block.Block) error
+	GetPendingTransactions() []*types.Transaction
+}
+
+// Consensus represents the consensus engine
 type Consensus struct {
+	mu sync.RWMutex
+
 	// Current difficulty
 	difficulty uint32
 
@@ -57,15 +68,9 @@ type Consensus struct {
 	blockReward uint64
 }
 
-// NewConsensus creates a new consensus instance
+// NewConsensus creates a new consensus engine
 func NewConsensus() *Consensus {
-	return &Consensus{
-		difficulty:           MinDifficulty,
-		lastAdjustmentTime:   time.Now(),
-		lastAdjustmentHeight: 0,
-		blockTimes:           make([]time.Duration, 0, DifficultyAdjustmentInterval),
-		blockReward:          InitialBlockReward,
-	}
+	return &Consensus{}
 }
 
 // MineBlock mines a new block
@@ -98,12 +103,10 @@ func (c *Consensus) MineBlock(block *block.Block) error {
 		}
 
 		// Increment nonce
-		block.Header.Nonce++
-
-		// Check if we've reached max nonce
-		if block.Header.Nonce == math.MaxUint64 {
+		if block.Header.Nonce == math.MaxUint32 {
 			return fmt.Errorf("failed to find valid nonce")
 		}
+		block.Header.Nonce++
 	}
 }
 
@@ -162,20 +165,12 @@ func (c *Consensus) addMiningReward(block *block.Block) error {
 	reward := c.calculateBlockReward(block.Header.Height)
 
 	// Create mining reward transaction
-	rewardTx := &types.Transaction{
-		Version: 1,
-		Inputs:  make([]*types.Input, 0),
-		Outputs: []*types.Output{
-			{
-				Value:        reward,
-				ScriptPubKey: []byte("mining_reward"),
-				Address:      "miner_address", // TODO: Get actual miner address
-			},
-		},
-		LockTime: 0,
-		Fee:      0,
-		CoinType: coin.Leah,
-	}
+	rewardTx := types.NewTransaction(
+		nil,                     // From (empty for mining reward)
+		[]byte("mining_reward"), // To
+		reward,                  // Value
+		nil,                     // Data
+	)
 
 	// Add transaction to block
 	block.Transactions = append([]*types.Transaction{rewardTx}, block.Transactions...)
@@ -193,19 +188,15 @@ func (c *Consensus) verifyMiningReward(block *block.Block) error {
 	rewardTx := block.Transactions[0]
 
 	// Verify it's a mining reward transaction
-	if len(rewardTx.Inputs) != 0 {
+	if len(rewardTx.From) != 0 {
 		return fmt.Errorf("mining reward transaction has inputs")
-	}
-
-	if len(rewardTx.Outputs) != 1 {
-		return fmt.Errorf("mining reward transaction has multiple outputs")
 	}
 
 	// Calculate expected reward
 	expectedReward := c.calculateBlockReward(block.Header.Height)
 
 	// Verify reward amount
-	if rewardTx.Outputs[0].Value != expectedReward {
+	if rewardTx.Value != expectedReward {
 		return fmt.Errorf("invalid mining reward amount")
 	}
 
@@ -372,27 +363,27 @@ func (c *Consensus) calculateMinimumFee(tx *types.Transaction) uint64 {
 func (c *Consensus) calculatePriority(tx *types.Transaction) float64 {
 	// Priority is based on the time until the transaction becomes valid
 	now := time.Now().Unix()
-	if tx.LockTime <= uint32(now) {
+	if tx.Timestamp.Unix() <= now {
 		return 1.0 // Already valid
 	}
 
 	// Calculate time until valid in hours
-	timeUntilValid := float64(tx.LockTime-uint32(now)) / 3600.0
+	timeUntilValid := float64(tx.Timestamp.Unix()-now) / 3600.0
 
 	// Priority decreases as time until valid increases
 	return 1.0 / timeUntilValid
 }
 
 // SyncChain synchronizes the blockchain with the network
-func (c *Consensus) SyncChain(server *network.Server) error {
+func (c *Consensus) SyncChain(chain interfaces.BlockChain, network interfaces.Network) error {
 	// Get current chain state
-	lastBlock, err := server.GetLastBlock()
+	lastBlock, err := chain.GetLastBlock()
 	if err != nil {
 		return fmt.Errorf("failed to get last block: %v", err)
 	}
 
 	// Get peer heights
-	peerHeights := server.GetPeerHeights()
+	peerHeights := network.GetPeerHeights()
 	if len(peerHeights) == 0 {
 		return fmt.Errorf("no peers available for sync")
 	}
@@ -411,7 +402,7 @@ func (c *Consensus) SyncChain(server *network.Server) error {
 	}
 
 	// Request blocks from peers
-	blocks, err := server.RequestBlocks(lastBlock.Header.Height+1, highestHeight)
+	blocks, err := network.RequestBlocks(lastBlock.Header.Height+1, highestHeight)
 	if err != nil {
 		return fmt.Errorf("failed to request blocks: %v", err)
 	}
@@ -423,7 +414,7 @@ func (c *Consensus) SyncChain(server *network.Server) error {
 		}
 
 		// Add block to chain
-		if err := server.AddBlock(block); err != nil {
+		if err := chain.AddBlock(block); err != nil {
 			return fmt.Errorf("failed to add block at height %d: %v", block.Header.Height, err)
 		}
 
@@ -443,15 +434,15 @@ func (c *Consensus) GetMiningRewardAddress() string {
 }
 
 // ValidateChain validates the entire blockchain
-func (c *Consensus) ValidateChain(server *network.Server) error {
+func (c *Consensus) ValidateChain(chain interfaces.BlockChain) error {
 	// Get genesis block
-	genesisBlock, err := server.GetBlockByHeight(0)
+	genesisBlock, err := chain.GetBlockByHeight(0)
 	if err != nil {
 		return fmt.Errorf("failed to get genesis block: %v", err)
 	}
 
 	// Get current chain state
-	lastBlock, err := server.GetLastBlock()
+	lastBlock, err := chain.GetLastBlock()
 	if err != nil {
 		return fmt.Errorf("failed to get last block: %v", err)
 	}
@@ -465,13 +456,13 @@ func (c *Consensus) ValidateChain(server *network.Server) error {
 		}
 
 		// Get previous block
-		prevBlock, err := server.GetBlock(current.Header.PrevBlockHash)
+		prevBlock, err := chain.GetBlock(current.Header.PrevBlock)
 		if err != nil {
 			return fmt.Errorf("failed to get previous block: %v", err)
 		}
 
 		// Verify block links
-		if !bytes.Equal(prevBlock.Hash, current.Header.PrevBlockHash) {
+		if !bytes.Equal(prevBlock.Hash, current.Header.PrevBlock) {
 			return fmt.Errorf("invalid block link at height %d", current.Header.Height)
 		}
 
@@ -487,9 +478,9 @@ func (c *Consensus) ValidateChain(server *network.Server) error {
 }
 
 // GetBlockTemplate creates a new block template for mining
-func (c *Consensus) GetBlockTemplate(server *network.Server, minerAddress string) (*block.Block, error) {
+func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress string) (*block.Block, error) {
 	// Get last block
-	lastBlock, err := server.GetLastBlock()
+	lastBlock, err := chain.GetLastBlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get last block: %v", err)
 	}
@@ -501,24 +492,16 @@ func (c *Consensus) GetBlockTemplate(server *network.Server, minerAddress string
 
 	// Add mining reward transaction
 	reward := c.calculateBlockReward(newBlock.Header.Height)
-	rewardTx := &types.Transaction{
-		Version: 1,
-		Inputs:  make([]*types.Input, 0),
-		Outputs: []*types.Output{
-			{
-				Value:        reward,
-				ScriptPubKey: []byte("mining_reward"),
-				Address:      minerAddress,
-			},
-		},
-		LockTime: 0,
-		Fee:      0,
-		CoinType: coin.Leah,
-	}
+	rewardTx := types.NewTransaction(
+		nil,                  // From (empty for mining reward)
+		[]byte(minerAddress), // To
+		reward,               // Value
+		nil,                  // Data
+	)
 	newBlock.Transactions = append([]*types.Transaction{rewardTx}, newBlock.Transactions...)
 
 	// Add pending transactions
-	pendingTxs := server.GetPendingTransactions()
+	pendingTxs := chain.GetPendingTransactions()
 	for _, tx := range pendingTxs {
 		if err := c.ValidateTransaction(tx); err != nil {
 			continue // Skip invalid transactions

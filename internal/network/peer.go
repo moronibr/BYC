@@ -1,6 +1,7 @@
 package network
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -19,6 +20,15 @@ type PeerInfo struct {
 
 // Peer represents a network peer
 type Peer struct {
+	// Peer ID
+	id string
+
+	// Peer height
+	height uint64
+
+	// Peer state
+	isConnected bool
+
 	info     PeerInfo
 	conn     net.Conn
 	sendChan chan []byte
@@ -26,6 +36,91 @@ type Peer struct {
 	quitChan chan struct{}
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
+}
+
+// PeerManager manages network peers
+type PeerManager struct {
+	mu sync.RWMutex
+
+	// Connected peers
+	peers map[string]*Peer
+
+	// Server state
+	isRunning bool
+}
+
+// NewPeerManager creates a new peer manager
+func NewPeerManager() *PeerManager {
+	return &PeerManager{
+		peers: make(map[string]*Peer),
+	}
+}
+
+// Start starts the peer manager
+func (pm *PeerManager) Start() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if pm.isRunning {
+		return fmt.Errorf("peer manager is already running")
+	}
+
+	pm.isRunning = true
+	return nil
+}
+
+// Stop stops the peer manager
+func (pm *PeerManager) Stop() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if !pm.isRunning {
+		return nil
+	}
+
+	pm.isRunning = false
+	return nil
+}
+
+// AddPeer adds a new peer
+func (pm *PeerManager) AddPeer(id string, height uint64) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if _, exists := pm.peers[id]; exists {
+		return fmt.Errorf("peer %s already exists", id)
+	}
+
+	pm.peers[id] = &Peer{
+		id:          id,
+		height:      height,
+		isConnected: true,
+	}
+
+	return nil
+}
+
+// RemovePeer removes a peer
+func (pm *PeerManager) RemovePeer(id string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if _, exists := pm.peers[id]; !exists {
+		return fmt.Errorf("peer %s does not exist", id)
+	}
+
+	delete(pm.peers, id)
+	return nil
+}
+
+// Broadcast broadcasts data to all peers
+func (pm *PeerManager) Broadcast(data []byte) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	// In a real implementation, this would send data to all connected peers
+	// For now, we just log it
+	fmt.Printf("Broadcasting %d bytes to %d peers\n", len(data), len(pm.peers))
 }
 
 // NewPeer creates a new peer instance

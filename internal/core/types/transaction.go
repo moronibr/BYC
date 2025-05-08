@@ -1,21 +1,35 @@
 package types
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"time"
 
 	"github.com/youngchain/internal/core/coin"
 )
 
-// Transaction represents a cryptocurrency transaction
+// Transaction represents a blockchain transaction
 type Transaction struct {
-	Version  uint32
-	Inputs   []*Input
-	Outputs  []*Output
-	LockTime uint32
-	Fee      uint64
-	CoinType coin.CoinType
+	// Transaction hash
+	Hash []byte
+
+	// Transaction version
+	Version uint32
+
+	// Transaction timestamp
+	Timestamp time.Time
+
+	// Transaction inputs
+	From []byte
+
+	// Transaction outputs
+	To []byte
+
+	// Transaction amount
+	Amount uint64
+
+	// Transaction data
+	Data []byte
 }
 
 // Input represents a transaction input
@@ -44,94 +58,85 @@ type UTXO struct {
 	BlockHash []byte
 }
 
+// NewTransaction creates a new transaction
+func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
+	tx := &Transaction{
+		Version:   1,
+		Timestamp: time.Now(),
+		From:      from,
+		To:        to,
+		Amount:    amount,
+		Data:      data,
+	}
+
+	// Calculate transaction hash
+	tx.Hash = tx.CalculateHash()
+
+	return tx
+}
+
 // CalculateHash calculates the transaction hash
 func (tx *Transaction) CalculateHash() []byte {
-	var buf bytes.Buffer
+	// Create a buffer to store transaction data
+	buf := make([]byte, 0)
 
-	// Write version
-	binary.Write(&buf, binary.LittleEndian, tx.Version)
+	// Add version
+	versionBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(versionBytes, tx.Version)
+	buf = append(buf, versionBytes...)
 
-	// Write inputs
-	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Inputs)))
-	for _, input := range tx.Inputs {
-		buf.Write(input.PreviousTxHash)
-		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
-		binary.Write(&buf, binary.LittleEndian, uint32(len(input.ScriptSig)))
-		buf.Write(input.ScriptSig)
-		binary.Write(&buf, binary.LittleEndian, input.Sequence)
-	}
+	// Add timestamp
+	timestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.UnixNano()))
+	buf = append(buf, timestampBytes...)
 
-	// Write outputs
-	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Outputs)))
-	for _, output := range tx.Outputs {
-		binary.Write(&buf, binary.LittleEndian, output.Value)
-		binary.Write(&buf, binary.LittleEndian, uint32(len(output.ScriptPubKey)))
-		buf.Write(output.ScriptPubKey)
-	}
+	// Add from address
+	buf = append(buf, tx.From...)
 
-	// Write lock time
-	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
+	// Add to address
+	buf = append(buf, tx.To...)
+
+	// Add amount
+	amountBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(amountBytes, tx.Amount)
+	buf = append(buf, amountBytes...)
+
+	// Add data
+	buf = append(buf, tx.Data...)
 
 	// Calculate hash
-	hash := sha256.Sum256(buf.Bytes())
+	hash := sha256.Sum256(buf)
 	return hash[:]
 }
 
 // Copy creates a deep copy of the transaction
 func (tx *Transaction) Copy() *Transaction {
-	// Create a new transaction
 	txCopy := &Transaction{
-		Version:  tx.Version,
-		LockTime: tx.LockTime,
-		Fee:      tx.Fee,
-		CoinType: tx.CoinType,
-		Inputs:   make([]*Input, len(tx.Inputs)),
-		Outputs:  make([]*Output, len(tx.Outputs)),
+		Version:   tx.Version,
+		From:      make([]byte, len(tx.From)),
+		To:        make([]byte, len(tx.To)),
+		Amount:    tx.Amount,
+		Data:      make([]byte, len(tx.Data)),
+		Timestamp: tx.Timestamp,
 	}
 
-	// Copy inputs
-	for i, input := range tx.Inputs {
-		txCopy.Inputs[i] = &Input{
-			PreviousTxHash:  make([]byte, len(input.PreviousTxHash)),
-			PreviousTxIndex: input.PreviousTxIndex,
-			ScriptSig:       make([]byte, len(input.ScriptSig)),
-			Sequence:        input.Sequence,
-		}
-		copy(txCopy.Inputs[i].PreviousTxHash, input.PreviousTxHash)
-		copy(txCopy.Inputs[i].ScriptSig, input.ScriptSig)
-	}
-
-	// Copy outputs
-	for i, output := range tx.Outputs {
-		txCopy.Outputs[i] = &Output{
-			Value:        output.Value,
-			ScriptPubKey: make([]byte, len(output.ScriptPubKey)),
-			Address:      output.Address,
-		}
-		copy(txCopy.Outputs[i].ScriptPubKey, output.ScriptPubKey)
-	}
+	copy(txCopy.From, tx.From)
+	copy(txCopy.To, tx.To)
+	copy(txCopy.Data, tx.Data)
 
 	return txCopy
 }
 
 // Size returns the size of the transaction in bytes
 func (tx *Transaction) Size() int {
-	size := 4 // Version
-	size += 1 // VarInt for input count
-	for _, input := range tx.Inputs {
-		size += len(input.PreviousTxHash)
-		size += 4 // PreviousTxIndex
-		size += len(input.ScriptSig)
-		size += 4 // Sequence
-	}
-	size += 1 // VarInt for output count
-	for _, output := range tx.Outputs {
-		size += 8 // Value
-		size += len(output.ScriptPubKey)
-		size += len(output.Address)
-	}
-	size += 4 // LockTime
-	size += 8 // Fee
-	size += len(string(tx.CoinType))
+	size := 0
+
+	size += 4            // Version
+	size += len(tx.From) // From
+	size += len(tx.To)   // To
+	size += 8            // Amount
+	size += len(tx.Data) // Data
+	size += 8            // Timestamp
+
 	return size
 }

@@ -4,91 +4,34 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
 )
 
-// Config represents the application configuration
+// Config represents the server configuration
 type Config struct {
-	// Network settings
-	Network        string   `json:"network"`
-	ListenAddr     string   `json:"listen_addr"`
-	RPCAddr        string   `json:"rpc_addr"`
-	RPCPort        int      `json:"rpc_port"`
-	MaxPeers       int      `json:"max_peers"`
-	BootstrapNodes []string `json:"bootstrap_nodes"`
+	ListenAddr string
+	TLSEnabled bool
+	TLS        TLSConfig
+}
 
-	// Mining settings
-	MiningEnabled bool   `json:"mining_enabled"`
-	MiningThreads int    `json:"mining_threads"`
-	MiningCoin    string `json:"mining_coin"`
-	MiningPool    string `json:"mining_pool"`
-
-	// Database settings
-	DataDir   string        `json:"data_dir"`
-	DBPath    string        `json:"db_path"`
-	MaxDBSize int64         `json:"max_db_size"`
-	DBTimeout time.Duration `json:"db_timeout"`
-
-	// Security settings
-	RPCAuth     bool   `json:"rpc_auth"`
-	RPCAuthFile string `json:"rpc_auth_file"`
-	TLSEnabled  bool   `json:"tls_enabled"`
-	TLSCertFile string `json:"tls_cert_file"`
-	TLSKeyFile  string `json:"tls_key_file"`
-
-	// Logging settings
-	LogLevel      string `json:"log_level"`
-	LogFile       string `json:"log_file"`
-	LogMaxSize    int    `json:"log_max_size"`
-	LogMaxBackups int    `json:"log_max_backups"`
-	LogMaxAge     int    `json:"log_max_age"`
-
-	// Performance settings
-	MaxMempoolSize int `json:"max_mempool_size"`
-	MaxBlockSize   int `json:"max_block_size"`
-	MaxTxSize      int `json:"max_tx_size"`
-	RateLimit      int `json:"rate_limit"`
+// TLSConfig represents TLS configuration
+type TLSConfig struct {
+	CertFile   string
+	KeyFile    string
+	ClientCAs  string
+	ServerName string
 }
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Network:    "mainnet",
-		ListenAddr: "0.0.0.0",
-		RPCAddr:    "127.0.0.1",
-		RPCPort:    8333,
-		MaxPeers:   50,
-		BootstrapNodes: []string{
-			"node1.byc.network:8333",
-			"node2.byc.network:8333",
+		ListenAddr: "127.0.0.1:8080",
+		TLSEnabled: true,
+		TLS: TLSConfig{
+			CertFile:   "certs/server.crt",
+			KeyFile:    "certs/server.key",
+			ClientCAs:  "certs/client-ca.crt",
+			ServerName: "localhost",
 		},
-
-		MiningEnabled: false,
-		MiningThreads: 1,
-		MiningCoin:    "leah",
-		MiningPool:    "",
-
-		DataDir:   "data",
-		DBPath:    "byc.db",
-		MaxDBSize: 1024 * 1024 * 1024, // 1GB
-		DBTimeout: 30 * time.Second,
-
-		RPCAuth:     false,
-		RPCAuthFile: "rpc_auth.json",
-		TLSEnabled:  false,
-		TLSCertFile: "cert.pem",
-		TLSKeyFile:  "key.pem",
-
-		LogLevel:      "info",
-		LogFile:       "byc.log",
-		LogMaxSize:    100, // MB
-		LogMaxBackups: 3,
-		LogMaxAge:     28, // days
-
-		MaxMempoolSize: 100 * 1024 * 1024, // 100MB
-		MaxBlockSize:   2 * 1024 * 1024,   // 2MB
-		MaxTxSize:      100 * 1024,        // 100KB
-		RateLimit:      1000,              // requests per second
 	}
 }
 
