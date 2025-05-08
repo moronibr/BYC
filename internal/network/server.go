@@ -13,6 +13,7 @@ import (
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/interfaces"
 	"github.com/youngchain/internal/network/messages"
+	"github.com/youngchain/internal/network/peers"
 	"github.com/youngchain/internal/storage"
 )
 
@@ -31,7 +32,7 @@ type Server struct {
 	config *config.Config
 
 	// Peer management
-	peerManager *PeerManager
+	peerManager *peers.Manager
 
 	// Message handling
 	MessageChan chan *messages.Message
@@ -54,7 +55,7 @@ type Server struct {
 func NewServer(config *config.Config, consensus interfaces.Consensus) *Server {
 	return &Server{
 		config:          config,
-		peerManager:     NewPeerManager(config),
+		peerManager:     peers.NewManager(config),
 		MessageChan:     make(chan *messages.Message, 100),
 		StopChan:        make(chan struct{}),
 		consensus:       consensus,
@@ -87,10 +88,7 @@ func (s *Server) Stop() error {
 	close(s.StopChan)
 	s.IsRunning = false
 
-	if err := s.peerManager.Stop(); err != nil {
-		return fmt.Errorf("failed to stop peer manager: %v", err)
-	}
-
+	s.peerManager.Stop()
 	return nil
 }
 
@@ -300,8 +298,8 @@ func (s *Server) GetPendingTransactions() []*types.Transaction {
 // GetPeerHeights implements interfaces.Network
 func (s *Server) GetPeerHeights() []uint64 {
 	heights := make([]uint64, 0)
-	for _, peer := range s.peerManager.peers {
-		heights = append(heights, peer.GetInfo().Height)
+	for _, peer := range s.peerManager.GetPeers() {
+		heights = append(heights, peer.GetHeight())
 	}
 	return heights
 }
