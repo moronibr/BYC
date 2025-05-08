@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -18,12 +19,21 @@ import (
 	"github.com/youngchain/internal/network/peers"
 )
 
+const (
+	maxMessageSize = 1024 * 1024 // 1MB
+	maxRetries     = 3
+	retryDelay     = time.Second
+	readTimeout    = 30 * time.Second
+	writeTimeout   = 30 * time.Second
+)
+
 // Server represents a network server
 type Server struct {
 	config    *config.Config
 	consensus *consensus.Consensus
 	peerMgr   *peers.Manager
 	mu        sync.RWMutex
+	logger    *log.Logger
 }
 
 // NewServer creates a new server
@@ -32,6 +42,7 @@ func NewServer(config *config.Config, consensus *consensus.Consensus) *Server {
 		config:    config,
 		consensus: consensus,
 		peerMgr:   peers.NewManager(config),
+		logger:    log.New(log.Writer(), "[Server] ", log.LstdFlags),
 	}
 }
 
@@ -48,12 +59,14 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to start listener: %v", err)
 	}
 
+	s.logger.Printf("Server started listening on %s", s.config.ListenAddr)
 	go s.acceptConnections(listener)
 	return nil
 }
 
 // Stop stops the server
 func (s *Server) Stop() {
+	s.logger.Println("Stopping server...")
 	s.peerMgr.Stop()
 }
 
@@ -62,16 +75,28 @@ func (s *Server) acceptConnections(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			s.logger.Printf("Failed to accept connection: %v", err)
 			continue
 		}
 
+		s.logger.Printf("New connection from %s", conn.RemoteAddr().String())
 		go s.handleConnection(conn)
 	}
 }
 
 // handleConnection handles a connection
 func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			s.logger.Printf("Error closing connection: %v", err)
+		}
+	}()
+
+	// Set timeouts
+	if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
+		s.logger.Printf("Failed to set read deadline: %v", err)
+		return
+	}
 
 	// Create peer info
 	info := peers.Info{
@@ -82,29 +107,59 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Add peer
 	s.peerMgr.AddPeer(conn, info)
+	s.logger.Printf("Added peer %s", info.Address)
 
 	// Handle messages
 	for {
+		// Reset read deadline
+		if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
+			s.logger.Printf("Failed to set read deadline: %v", err)
+			break
+		}
+
 		// Read message length
 		var length uint32
 		if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+			if err != io.EOF {
+				s.logger.Printf("Error reading message length: %v", err)
+			}
+			break
+		}
+
+		// Validate message size
+		if length > maxMessageSize {
+			s.logger.Printf("Message too large: %d bytes (max: %d)", length, maxMessageSize)
 			break
 		}
 
 		// Read message
 		message := make([]byte, length)
 		if _, err := io.ReadFull(conn, message); err != nil {
+			s.logger.Printf("Error reading message: %v", err)
 			break
 		}
 
-		// Handle message
-		if err := s.handleMessage(message); err != nil {
+		// Handle message with retry
+		var handleErr error
+		for i := 0; i < maxRetries; i++ {
+			if err := s.handleMessage(message); err != nil {
+				handleErr = err
+				s.logger.Printf("Failed to handle message (attempt %d/%d): %v", i+1, maxRetries, err)
+				time.Sleep(retryDelay)
+				continue
+			}
+			handleErr = nil
+			break
+		}
+		if handleErr != nil {
+			s.logger.Printf("Failed to handle message after %d attempts: %v", maxRetries, handleErr)
 			break
 		}
 	}
 
 	// Remove peer
 	s.peerMgr.RemovePeer(info.Address)
+	s.logger.Printf("Removed peer %s", info.Address)
 }
 
 // handleMessage handles a message
@@ -136,14 +191,36 @@ func (s *Server) handleMessage(message []byte) error {
 
 // handleBlockMessage handles a block message
 func (s *Server) handleBlockMessage(msg messages.BlockMessage) error {
-	// Validate block
-	if err := s.consensus.ValidateBlock(msg.Block); err != nil {
-		return fmt.Errorf("invalid block: %v", err)
+	// Validate block with retry
+	var validateErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := s.consensus.ValidateBlock(msg.Block); err != nil {
+			validateErr = err
+			s.logger.Printf("Failed to validate block (attempt %d/%d): %v", i+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		validateErr = nil
+		break
+	}
+	if validateErr != nil {
+		return fmt.Errorf("failed to validate block after %d attempts: %v", maxRetries, validateErr)
 	}
 
-	// Add block to chain
-	if err := s.consensus.MineBlock(msg.Block); err != nil {
-		return fmt.Errorf("failed to mine block: %v", err)
+	// Add block to chain with retry
+	var mineErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := s.consensus.MineBlock(msg.Block); err != nil {
+			mineErr = err
+			s.logger.Printf("Failed to mine block (attempt %d/%d): %v", i+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		mineErr = nil
+		break
+	}
+	if mineErr != nil {
+		return fmt.Errorf("failed to mine block after %d attempts: %v", maxRetries, mineErr)
 	}
 
 	// Broadcast block
@@ -157,14 +234,36 @@ func (s *Server) handleBlockMessage(msg messages.BlockMessage) error {
 
 // handleTransactionMessage handles a transaction message
 func (s *Server) handleTransactionMessage(msg messages.TransactionMessage) error {
-	// Validate transaction
-	if err := s.consensus.ValidateTransaction(msg.Transaction); err != nil {
-		return fmt.Errorf("invalid transaction: %v", err)
+	// Validate transaction with retry
+	var validateErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := s.consensus.ValidateTransaction(msg.Transaction); err != nil {
+			validateErr = err
+			s.logger.Printf("Failed to validate transaction (attempt %d/%d): %v", i+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		validateErr = nil
+		break
+	}
+	if validateErr != nil {
+		return fmt.Errorf("failed to validate transaction after %d attempts: %v", maxRetries, validateErr)
 	}
 
-	// Add transaction to mempool
-	if err := s.consensus.ValidateTransaction(msg.Transaction); err != nil {
-		return fmt.Errorf("failed to validate transaction: %v", err)
+	// Add transaction to mempool with retry
+	var addErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := s.consensus.ValidateTransaction(msg.Transaction); err != nil {
+			addErr = err
+			s.logger.Printf("Failed to add transaction to mempool (attempt %d/%d): %v", i+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		addErr = nil
+		break
+	}
+	if addErr != nil {
+		return fmt.Errorf("failed to add transaction to mempool after %d attempts: %v", maxRetries, addErr)
 	}
 
 	// Broadcast transaction
@@ -177,11 +276,11 @@ func (s *Server) handleTransactionMessage(msg messages.TransactionMessage) error
 }
 
 // BroadcastBlock broadcasts a block
-func (s *Server) BroadcastBlock(block *block.Block) error {
+func (s *Server) BroadcastBlock(b *block.Block) error {
 	// Determine block type based on mining reward transaction
 	blockType := block.GoldenBlock // Default to golden block
-	if len(block.Transactions) > 0 {
-		switch block.Transactions[0].CoinType {
+	if len(b.Transactions) > 0 {
+		switch b.Transactions[0].CoinType {
 		case coin.Leah:
 			blockType = block.GoldenBlock
 		case coin.Shiblum:
@@ -190,7 +289,7 @@ func (s *Server) BroadcastBlock(block *block.Block) error {
 	}
 
 	msg := messages.BlockMessage{
-		Block:     block,
+		Block:     b,
 		BlockType: blockType,
 	}
 
