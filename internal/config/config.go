@@ -6,11 +6,23 @@ import (
 	"path/filepath"
 )
 
-// Config represents the server configuration
+// Config represents the application configuration
 type Config struct {
-	ListenAddr string
-	TLSEnabled bool
-	TLS        TLSConfig
+	// Network configuration
+	ListenAddr     string   `json:"listen_addr"`
+	BootstrapNodes []string `json:"bootstrap_nodes"`
+	MaxPeers       int      `json:"max_peers"`
+
+	// Database configuration
+	DBPath string `json:"db_path"`
+
+	// Mining configuration
+	MinerAddress string `json:"miner_address"`
+	MinerThreads int    `json:"miner_threads"`
+
+	// Consensus configuration
+	InitialDifficulty uint32 `json:"initial_difficulty"`
+	BlockTime         int64  `json:"block_time"`
 }
 
 // TLSConfig represents TLS configuration
@@ -24,14 +36,14 @@ type TLSConfig struct {
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		ListenAddr: "127.0.0.1:8080",
-		TLSEnabled: true,
-		TLS: TLSConfig{
-			CertFile:   "certs/server.crt",
-			KeyFile:    "certs/server.key",
-			ClientCAs:  "certs/client-ca.crt",
-			ServerName: "localhost",
-		},
+		ListenAddr:        ":8333",
+		BootstrapNodes:    []string{},
+		MaxPeers:          125,
+		DBPath:            "data/blockchain",
+		MinerAddress:      "",
+		MinerThreads:      4,
+		InitialDifficulty: 1,
+		BlockTime:         600, // 10 minutes
 	}
 }
 
@@ -78,8 +90,8 @@ func SaveConfig(config *Config, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// ValidateConfig validates the configuration
-func ValidateConfig(config *Config) error {
-	// TODO: Implement validation logic
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	// TODO: Add validation logic
 	return nil
 }

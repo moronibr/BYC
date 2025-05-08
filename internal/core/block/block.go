@@ -44,7 +44,7 @@ func (h *BlockHeader) String() string {
 
 // Block represents a block in the blockchain
 type Block struct {
-	Header       *Header
+	Header       *BlockHeader
 	Transactions []*types.Transaction
 	Hash         []byte
 	Parent       *Block
@@ -107,11 +107,11 @@ func (h *Header) String() string {
 // NewBlock creates a new block
 func NewBlock(prevBlockHash []byte, difficulty uint32) *Block {
 	return &Block{
-		Header: &Header{
-			Version:    1,
-			PrevBlock:  prevBlockHash,
-			Timestamp:  time.Now(),
-			Difficulty: difficulty,
+		Header: &BlockHeader{
+			Version:       1,
+			PrevBlockHash: prevBlockHash,
+			Timestamp:     time.Now(),
+			Difficulty:    difficulty,
 		},
 		Transactions: make([]*types.Transaction, 0),
 	}
@@ -174,29 +174,22 @@ func (b *Block) CalculateHash() []byte {
 func (b *Block) Copy() *Block {
 	// Create a new block
 	blockCopy := &Block{
-		Header: &Header{
-			Version:          b.Header.Version,
-			PrevBlock:        make([]byte, len(b.Header.PrevBlock)),
-			MerkleRoot:       make([]byte, len(b.Header.MerkleRoot)),
-			Timestamp:        b.Header.Timestamp,
-			Difficulty:       b.Header.Difficulty,
-			Nonce:            b.Header.Nonce,
-			Height:           b.Header.Height,
-			TotalTxs:         b.Header.TotalTxs,
-			StateRoot:        make([]byte, len(b.Header.StateRoot)),
-			TransactionsRoot: make([]byte, len(b.Header.TransactionsRoot)),
-			ReceiptsRoot:     make([]byte, len(b.Header.ReceiptsRoot)),
+		Header: &BlockHeader{
+			Version:       b.Header.Version,
+			PrevBlockHash: make([]byte, len(b.Header.PrevBlockHash)),
+			MerkleRoot:    make([]byte, len(b.Header.MerkleRoot)),
+			Timestamp:     b.Header.Timestamp,
+			Difficulty:    b.Header.Difficulty,
+			Nonce:         b.Header.Nonce,
+			Height:        b.Header.Height,
 		},
 		Transactions: make([]*types.Transaction, len(b.Transactions)),
 		Hash:         make([]byte, len(b.Hash)),
 	}
 
 	// Copy byte slices
-	copy(blockCopy.Header.PrevBlock, b.Header.PrevBlock)
+	copy(blockCopy.Header.PrevBlockHash, b.Header.PrevBlockHash)
 	copy(blockCopy.Header.MerkleRoot, b.Header.MerkleRoot)
-	copy(blockCopy.Header.StateRoot, b.Header.StateRoot)
-	copy(blockCopy.Header.TransactionsRoot, b.Header.TransactionsRoot)
-	copy(blockCopy.Header.ReceiptsRoot, b.Header.ReceiptsRoot)
 	copy(blockCopy.Hash, b.Hash)
 
 	// Copy transactions
@@ -531,7 +524,7 @@ func (b *Block) Size() int {
 
 	// Header size
 	size += 4 // Version
-	size += len(b.Header.PrevBlock)
+	size += len(b.Header.PrevBlockHash)
 	size += len(b.Header.MerkleRoot)
 	size += 8 // Timestamp
 	size += 4 // Difficulty
