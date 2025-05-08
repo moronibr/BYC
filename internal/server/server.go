@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,14 +19,28 @@ import (
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/network/messages"
 	"github.com/youngchain/internal/network/peers"
+	"github.com/youngchain/internal/security"
+	"golang.org/x/time/rate"
 )
 
 const (
-	maxMessageSize = 1024 * 1024 // 1MB
-	maxRetries     = 3
-	retryDelay     = time.Second
-	readTimeout    = 30 * time.Second
-	writeTimeout   = 30 * time.Second
+	maxMessageSize  = 1024 * 1024 // 1MB
+	maxRetries      = 3
+	retryDelay      = time.Second
+	readTimeout     = 30 * time.Second
+	writeTimeout    = 30 * time.Second
+	shutdownTimeout = 30 * time.Second
+)
+
+// Error types
+var (
+	ErrInvalidMessage     = errors.New("invalid message")
+	ErrMessageTooLarge    = errors.New("message too large")
+	ErrConnectionTimeout  = errors.New("connection timeout")
+	ErrPeerNotFound       = errors.New("peer not found")
+	ErrInvalidBlock       = errors.New("invalid block")
+	ErrInvalidTransaction = errors.New("invalid transaction")
+	ErrServerShutdown     = errors.New("server is shutting down")
 )
 
 // Server represents a network server
@@ -34,67 +50,227 @@ type Server struct {
 	peerMgr   *peers.Manager
 	mu        sync.RWMutex
 	logger    *log.Logger
+	metrics   *ServerMetrics
+
+	// Security components
+	peerAuth    *security.PeerAuth
+	msgSigner   *security.MessageSigner
+	peerLimiter *security.PeerLimiter
+
+	// Shutdown related fields
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	shutdownCh chan struct{}
+	isShutdown bool
+}
+
+// ServerMetrics tracks server metrics
+type ServerMetrics struct {
+	mu                sync.RWMutex
+	activeConnections int64
+	totalConnections  int64
+	messagesReceived  int64
+	messagesSent      int64
+	errors            int64
+	lastError         error
+	lastErrorTime     time.Time
+}
+
+// NewServerMetrics creates new server metrics
+func NewServerMetrics() *ServerMetrics {
+	return &ServerMetrics{}
 }
 
 // NewServer creates a new server
 func NewServer(config *config.Config, consensus *consensus.Consensus) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Generate key pair for message signing
+	publicKey, privateKey, err := security.GenerateKeyPair()
+	if err != nil {
+		log.Fatalf("Failed to generate key pair: %v", err)
+	}
+
 	return &Server{
-		config:    config,
-		consensus: consensus,
-		peerMgr:   peers.NewManager(config),
-		logger:    log.New(log.Writer(), "[Server] ", log.LstdFlags),
+		config:     config,
+		consensus:  consensus,
+		peerMgr:    peers.NewManager(config),
+		logger:     log.New(log.Writer(), "[Server] ", log.LstdFlags),
+		metrics:    NewServerMetrics(),
+		ctx:        ctx,
+		cancel:     cancel,
+		shutdownCh: make(chan struct{}),
+
+		// Initialize security components
+		peerAuth:  security.NewPeerAuth(),
+		msgSigner: security.NewMessageSigner(privateKey, publicKey),
+		peerLimiter: security.NewPeerLimiter(
+			rate.Limit(100),  // 100 connections per second per IP
+			rate.Limit(1000), // 1000 messages per second per connection
+			100,              // 100 burst per IP
+			1000,             // 1000 burst per connection
+			10,               // max 10 connections per IP
+		),
 	}
 }
 
 // Start starts the server
 func (s *Server) Start() error {
+	s.logger.Printf("Starting server on %s", s.config.ListenAddr)
+
 	// Start peer manager
 	if err := s.peerMgr.Start(); err != nil {
-		return fmt.Errorf("failed to start peer manager: %v", err)
+		s.recordError(fmt.Errorf("failed to start peer manager: %v", err))
+		return err
 	}
 
 	// Start listening for connections
 	listener, err := net.Listen("tcp", s.config.ListenAddr)
 	if err != nil {
-		return fmt.Errorf("failed to start listener: %v", err)
+		s.recordError(fmt.Errorf("failed to start listener: %v", err))
+		return err
 	}
 
-	s.logger.Printf("Server started listening on %s", s.config.ListenAddr)
-	go s.acceptConnections(listener)
+	s.logger.Printf("Server started successfully on %s", s.config.ListenAddr)
+
+	// Start connection acceptor in a goroutine
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.acceptConnections(listener)
+	}()
+
 	return nil
 }
 
-// Stop stops the server
-func (s *Server) Stop() {
-	s.logger.Println("Stopping server...")
+// Stop stops the server gracefully
+func (s *Server) Stop() error {
+	s.mu.Lock()
+	if s.isShutdown {
+		s.mu.Unlock()
+		return nil
+	}
+	s.isShutdown = true
+	s.mu.Unlock()
+
+	s.logger.Println("Initiating graceful shutdown...")
+
+	// Create shutdown context with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	// Signal shutdown to all components
+	s.cancel()
+	close(s.shutdownCh)
+
+	// Stop accepting new connections
+	s.logger.Println("Stopping peer manager...")
 	s.peerMgr.Stop()
+
+	// Wait for all goroutines to finish
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	// Wait for either shutdown timeout or all goroutines to finish
+	select {
+	case <-shutdownCtx.Done():
+		s.logger.Printf("Shutdown timed out after %v", shutdownTimeout)
+		return fmt.Errorf("shutdown timed out after %v", shutdownTimeout)
+	case <-done:
+		s.logger.Printf("Server stopped. Final metrics: connections=%d, messages=%d, errors=%d",
+			s.metrics.activeConnections, s.metrics.messagesReceived, s.metrics.errors)
+		return nil
+	}
+}
+
+// recordError records an error in metrics
+func (s *Server) recordError(err error) {
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	s.metrics.errors++
+	s.metrics.lastError = err
+	s.metrics.lastErrorTime = time.Now()
+	s.logger.Printf("Error: %v", err)
 }
 
 // acceptConnections accepts incoming connections
 func (s *Server) acceptConnections(listener net.Listener) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			s.logger.Printf("Failed to accept connection: %v", err)
-			continue
+	defer func() {
+		if err := listener.Close(); err != nil {
+			s.recordError(fmt.Errorf("error closing listener: %v", err))
 		}
+	}()
 
-		s.logger.Printf("New connection from %s", conn.RemoteAddr().String())
-		go s.handleConnection(conn)
+	for {
+		select {
+		case <-s.ctx.Done():
+			s.logger.Println("Stopping connection acceptor")
+			return
+		default:
+			// Set deadline for accept
+			if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
+				s.recordError(fmt.Errorf("failed to set accept deadline: %v", err))
+				continue
+			}
+
+			conn, err := listener.Accept()
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				s.recordError(fmt.Errorf("failed to accept connection: %v", err))
+				continue
+			}
+
+			s.metrics.mu.Lock()
+			s.metrics.activeConnections++
+			s.metrics.totalConnections++
+			s.metrics.mu.Unlock()
+
+			s.logger.Printf("New connection from %s (active: %d, total: %d)",
+				conn.RemoteAddr().String(), s.metrics.activeConnections, s.metrics.totalConnections)
+
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.handleConnection(conn)
+			}()
+		}
 	}
 }
 
 // handleConnection handles a connection
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
-		if err := conn.Close(); err != nil {
-			s.logger.Printf("Error closing connection: %v", err)
+		if r := recover(); r != nil {
+			s.recordError(fmt.Errorf("panic in connection handler: %v", r))
 		}
+		if err := conn.Close(); err != nil {
+			s.recordError(fmt.Errorf("error closing connection: %v", err))
+		}
+		s.metrics.mu.Lock()
+		s.metrics.activeConnections--
+		s.metrics.mu.Unlock()
+		s.logger.Printf("Connection closed from %s (active: %d)",
+			conn.RemoteAddr().String(), s.metrics.activeConnections)
+
+		// Remove connection from limiter
+		s.peerLimiter.RemoveConnection(conn.RemoteAddr())
 	}()
+
+	// Check connection limits
+	if err := s.peerLimiter.AllowConnection(conn.RemoteAddr()); err != nil {
+		s.recordError(fmt.Errorf("connection limit exceeded: %v", err))
+		return
+	}
 
 	// Set timeouts
 	if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
-		s.logger.Printf("Failed to set read deadline: %v", err)
+		s.recordError(fmt.Errorf("failed to set read deadline: %v", err))
 		return
 	}
 
@@ -107,65 +283,87 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Add peer
 	s.peerMgr.AddPeer(conn, info)
-	s.logger.Printf("Added peer %s", info.Address)
+	s.logger.Printf("Added peer %s (version: %s)", info.Address, info.Version)
 
 	// Handle messages
 	for {
-		// Reset read deadline
-		if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
-			s.logger.Printf("Failed to set read deadline: %v", err)
-			break
-		}
-
-		// Read message length
-		var length uint32
-		if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
-			if err != io.EOF {
-				s.logger.Printf("Error reading message length: %v", err)
+		select {
+		case <-s.ctx.Done():
+			s.logger.Printf("Connection handler shutting down for peer %s", info.Address)
+			return
+		default:
+			// Reset read deadline
+			if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
+				s.recordError(fmt.Errorf("failed to set read deadline: %v", err))
+				return
 			}
-			break
-		}
 
-		// Validate message size
-		if length > maxMessageSize {
-			s.logger.Printf("Message too large: %d bytes (max: %d)", length, maxMessageSize)
-			break
-		}
-
-		// Read message
-		message := make([]byte, length)
-		if _, err := io.ReadFull(conn, message); err != nil {
-			s.logger.Printf("Error reading message: %v", err)
-			break
-		}
-
-		// Handle message with retry
-		var handleErr error
-		for i := 0; i < maxRetries; i++ {
-			if err := s.handleMessage(message); err != nil {
-				handleErr = err
-				s.logger.Printf("Failed to handle message (attempt %d/%d): %v", i+1, maxRetries, err)
-				time.Sleep(retryDelay)
-				continue
+			// Read message length
+			var length uint32
+			if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+				if err != io.EOF {
+					s.recordError(fmt.Errorf("error reading message length: %v", err))
+				}
+				return
 			}
-			handleErr = nil
-			break
-		}
-		if handleErr != nil {
-			s.logger.Printf("Failed to handle message after %d attempts: %v", maxRetries, handleErr)
-			break
+
+			// Validate message size
+			if length > maxMessageSize {
+				s.recordError(fmt.Errorf("%w: %d bytes (max: %d)", ErrMessageTooLarge, length, maxMessageSize))
+				return
+			}
+
+			// Read message
+			message := make([]byte, length)
+			if _, err := io.ReadFull(conn, message); err != nil {
+				s.recordError(fmt.Errorf("error reading message: %v", err))
+				return
+			}
+
+			s.metrics.mu.Lock()
+			s.metrics.messagesReceived++
+			s.metrics.mu.Unlock()
+
+			// Handle message with retry
+			var handleErr error
+			for i := 0; i < maxRetries; i++ {
+				if err := s.handleMessage(message); err != nil {
+					handleErr = err
+					s.logger.Printf("Failed to handle message (attempt %d/%d): %v", i+1, maxRetries, err)
+					time.Sleep(retryDelay)
+					continue
+				}
+				handleErr = nil
+				break
+			}
+			if handleErr != nil {
+				s.recordError(fmt.Errorf("failed to handle message after %d attempts: %v", maxRetries, handleErr))
+				return
+			}
 		}
 	}
-
-	// Remove peer
-	s.peerMgr.RemovePeer(info.Address)
-	s.logger.Printf("Removed peer %s", info.Address)
 }
 
 // handleMessage handles a message
 func (s *Server) handleMessage(message []byte) error {
+	// Unmarshal signed message
+	var signedMsg security.SignedMessage
+	if err := json.Unmarshal(message, &signedMsg); err != nil {
+		return fmt.Errorf("failed to unmarshal signed message: %v", err)
+	}
+
+	// Verify message
+	valid, err := s.msgSigner.VerifyMessage(&signedMsg)
+	if err != nil {
+		return fmt.Errorf("failed to verify message: %v", err)
+	}
+	if !valid {
+		return fmt.Errorf("invalid message signature")
+	}
+
+	// Unmarshal actual message
 	var msg messages.Message
-	if err := json.Unmarshal(message, &msg); err != nil {
+	if err := json.Unmarshal(signedMsg.Message, &msg); err != nil {
 		return fmt.Errorf("failed to unmarshal message: %v", err)
 	}
 
@@ -185,7 +383,7 @@ func (s *Server) handleMessage(message []byte) error {
 		return s.handleTransactionMessage(txMsg)
 
 	default:
-		return fmt.Errorf("unknown message type: %s", msg.Type)
+		return fmt.Errorf("%w: %s", ErrInvalidMessage, msg.Type)
 	}
 }
 
@@ -204,7 +402,7 @@ func (s *Server) handleBlockMessage(msg messages.BlockMessage) error {
 		break
 	}
 	if validateErr != nil {
-		return fmt.Errorf("failed to validate block after %d attempts: %v", maxRetries, validateErr)
+		return fmt.Errorf("%w: %v", ErrInvalidBlock, validateErr)
 	}
 
 	// Add block to chain with retry
@@ -229,6 +427,9 @@ func (s *Server) handleBlockMessage(msg messages.BlockMessage) error {
 		return fmt.Errorf("failed to marshal block message: %v", err)
 	}
 	s.peerMgr.Broadcast(messageData)
+	s.metrics.mu.Lock()
+	s.metrics.messagesSent++
+	s.metrics.mu.Unlock()
 	return nil
 }
 
@@ -247,7 +448,7 @@ func (s *Server) handleTransactionMessage(msg messages.TransactionMessage) error
 		break
 	}
 	if validateErr != nil {
-		return fmt.Errorf("failed to validate transaction after %d attempts: %v", maxRetries, validateErr)
+		return fmt.Errorf("%w: %v", ErrInvalidTransaction, validateErr)
 	}
 
 	// Add transaction to mempool with retry
@@ -272,6 +473,9 @@ func (s *Server) handleTransactionMessage(msg messages.TransactionMessage) error
 		return fmt.Errorf("failed to marshal transaction message: %v", err)
 	}
 	s.peerMgr.Broadcast(messageData)
+	s.metrics.mu.Lock()
+	s.metrics.messagesSent++
+	s.metrics.mu.Unlock()
 	return nil
 }
 
@@ -293,19 +497,16 @@ func (s *Server) BroadcastBlock(b *block.Block) error {
 		BlockType: blockType,
 	}
 
-	data, err := json.Marshal(msg)
+	// Sign message
+	signedMsg, err := s.msgSigner.SignMessage(msg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal block message: %v", err)
+		return fmt.Errorf("failed to sign block message: %v", err)
 	}
 
-	message, err := messages.NewMessage(messages.BlockMsg, data)
+	// Marshal signed message
+	messageData, err := json.Marshal(signedMsg)
 	if err != nil {
-		return fmt.Errorf("failed to create message: %v", err)
-	}
-
-	messageData, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
+		return fmt.Errorf("failed to marshal signed message: %v", err)
 	}
 
 	s.peerMgr.Broadcast(messageData)
@@ -319,19 +520,16 @@ func (s *Server) BroadcastTransaction(tx *types.Transaction) error {
 		CoinType:    tx.CoinType,
 	}
 
-	data, err := json.Marshal(msg)
+	// Sign message
+	signedMsg, err := s.msgSigner.SignMessage(msg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal transaction message: %v", err)
+		return fmt.Errorf("failed to sign transaction message: %v", err)
 	}
 
-	message, err := messages.NewMessage(messages.BlockMsg, data)
+	// Marshal signed message
+	messageData, err := json.Marshal(signedMsg)
 	if err != nil {
-		return fmt.Errorf("failed to create message: %v", err)
-	}
-
-	messageData, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
+		return fmt.Errorf("failed to marshal signed message: %v", err)
 	}
 
 	s.peerMgr.Broadcast(messageData)
