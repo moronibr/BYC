@@ -113,3 +113,25 @@ func (tx *Transaction) Copy() *Transaction {
 
 	return txCopy
 }
+
+// Size returns the size of the transaction in bytes
+func (tx *Transaction) Size() int {
+	size := 4 // Version
+	size += 1 // VarInt for input count
+	for _, input := range tx.Inputs {
+		size += len(input.PreviousTxHash)
+		size += 4 // PreviousTxIndex
+		size += len(input.ScriptSig)
+		size += 4 // Sequence
+	}
+	size += 1 // VarInt for output count
+	for _, output := range tx.Outputs {
+		size += 8 // Value
+		size += len(output.ScriptPubKey)
+		size += len(output.Address)
+	}
+	size += 4 // LockTime
+	size += 8 // Fee
+	size += len(string(tx.CoinType))
+	return size
+}

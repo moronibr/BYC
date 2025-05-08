@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/config"
+	"github.com/youngchain/internal/consensus"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/transaction"
@@ -78,15 +79,23 @@ type Server struct {
 
 	// Database
 	db *storage.DB
+
+	// Consensus
+	consensus *consensus.Consensus
+
+	// Transaction pool
+	transactionPool *transaction.TransactionPool
 }
 
 // NewServer creates a new network server
 func NewServer(config *config.Config) *Server {
 	return &Server{
-		config:      config,
-		peerManager: NewPeerManager(config),
-		MessageChan: make(chan *Message, 100),
-		StopChan:    make(chan struct{}),
+		config:          config,
+		peerManager:     NewPeerManager(config),
+		MessageChan:     make(chan *Message, 100),
+		StopChan:        make(chan struct{}),
+		consensus:       consensus.NewConsensus(),
+		transactionPool: transaction.NewTransactionPool(1000),
 	}
 }
 
@@ -170,6 +179,11 @@ func (s *Server) processBlock(block *block.Block, blockType block.BlockType) err
 	// Update chain state
 	if err := s.UpdateChainState(block); err != nil {
 		return fmt.Errorf("failed to update chain state: %v", err)
+	}
+
+	// Adjust difficulty
+	if err := s.consensus.AdjustDifficulty(block); err != nil {
+		return fmt.Errorf("failed to adjust difficulty: %v", err)
 	}
 
 	// Broadcast block to peers
@@ -321,4 +335,103 @@ func (s *Server) GetLastBlock() (*block.Block, error) {
 	}
 
 	return s.db.GetBlock(bestBlockHash)
+}
+
+// GetPeerHeights returns the heights of all connected peers
+func (s *Server) GetPeerHeights() []uint64 {
+	heights := make([]uint64, 0)
+	for _, peer := range s.peerManager.peers {
+		heights = append(heights, peer.height)
+	}
+	return heights
+}
+
+// RequestBlocks requests blocks from peers
+func (s *Server) RequestBlocks(startHeight, endHeight uint64) ([]*block.Block, error) {
+	blocks := make([]*block.Block, 0)
+	for height := startHeight; height <= endHeight; height++ {
+		block, err := s.GetBlockByHeight(height)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get block at height %d: %v", height, err)
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
+// AddBlock adds a block to the chain
+func (s *Server) AddBlock(block *block.Block) error {
+	// Validate block
+	if err := s.consensus.ValidateBlock(block); err != nil {
+		return fmt.Errorf("invalid block: %v", err)
+	}
+
+	// Save block to database
+	if err := s.db.SaveBlock(block); err != nil {
+		return fmt.Errorf("failed to save block: %v", err)
+	}
+
+	// Update chain state
+	if err := s.UpdateChainState(block); err != nil {
+		return fmt.Errorf("failed to update chain state: %v", err)
+	}
+
+	// Broadcast block to peers
+	blockMsg := &BlockMessage{
+		Block:     block,
+		BlockType: block.BlockType,
+	}
+	msgData, err := json.Marshal(blockMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal block message: %v", err)
+	}
+	s.peerManager.Broadcast(msgData)
+
+	return nil
+}
+
+// GetBlockByHeight gets a block by its height
+func (s *Server) GetBlockByHeight(height uint64) (*block.Block, error) {
+	return s.db.GetBlockByHeight(height)
+}
+
+// GetBlock gets a block by its hash
+func (s *Server) GetBlock(hash []byte) (*block.Block, error) {
+	return s.db.GetBlock(hash)
+}
+
+// GetPendingTransactions gets pending transactions from the transaction pool
+func (s *Server) GetPendingTransactions() []*types.Transaction {
+	return s.transactionPool.GetPendingTransactions()
+}
+
+// 1. Consensus Implementation
+type Consensus interface {
+	MineBlock(block *block.Block) error
+	ValidateBlock(block *block.Block) error
+	GetDifficulty() uint32
+	AdjustDifficulty() error
+}
+
+// 2. Wallet Implementation
+type Wallet interface {
+	GenerateKeyPair() error
+	SignTransaction(tx *types.Transaction) error
+	GetAddress() string
+	GetBalance() uint64
+}
+
+// 3. P2P Network Implementation
+type P2PNetwork interface {
+	DiscoverPeers() error
+	SyncChain() error
+	BroadcastBlock(block *block.Block) error
+	BroadcastTransaction(tx *types.Transaction) error
+}
+
+// 4. Smart Contract Implementation
+type VirtualMachine interface {
+	ExecuteContract(code []byte, input []byte) ([]byte, error)
+	GetState() map[string][]byte
+	SetState(key string, value []byte) error
 }

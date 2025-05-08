@@ -28,6 +28,7 @@ type BlockHeader struct {
 	Timestamp     time.Time `json:"timestamp"`
 	Difficulty    uint32    `json:"difficulty"`
 	Nonce         uint64    `json:"nonce"`
+	Height        uint64    `json:"height"`
 }
 
 // String returns a string representation of the block header
@@ -46,6 +47,7 @@ type Block struct {
 	Header       BlockHeader          `json:"header"`
 	Transactions []*types.Transaction `json:"transactions"`
 	Hash         []byte               `json:"hash"`
+	Parent       *Block               `json:"-"` // Parent block in the chain
 }
 
 // Transaction represents a transaction in the block
@@ -152,6 +154,7 @@ func (b *Block) Copy() *Block {
 			Timestamp:     b.Header.Timestamp,
 			Difficulty:    b.Header.Difficulty,
 			Nonce:         b.Header.Nonce,
+			Height:        b.Header.Height,
 		},
 		Transactions: make([]*types.Transaction, len(b.Transactions)),
 		Hash:         make([]byte, len(b.Hash)),
@@ -491,4 +494,28 @@ func (tx *Transaction) IsLockTimeValid() bool {
 
 	// If lock time is a block height, it's always valid (block height validation is done elsewhere)
 	return true
+}
+
+// Size returns the size of the block in bytes
+func (b *Block) Size() int {
+	size := 0
+
+	// Header size
+	size += 4 // Version
+	size += len(b.Header.PrevBlockHash)
+	size += len(b.Header.MerkleRoot)
+	size += 8 // Timestamp
+	size += 4 // Difficulty
+	size += 8 // Nonce
+	size += 8 // Height
+
+	// Transactions size
+	for _, tx := range b.Transactions {
+		size += tx.Size()
+	}
+
+	// Hash size
+	size += len(b.Hash)
+
+	return size
 }
