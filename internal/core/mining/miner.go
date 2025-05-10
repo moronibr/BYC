@@ -162,7 +162,7 @@ func (m *Miner) createBlock() (*block.Block, error) {
 	return &block.Block{
 		Header:       header,
 		Transactions: commonTxs,
-		Size:         0, // Will be calculated when needed
+		BlockSize:    0, // Will be calculated when needed
 		Weight:       0, // Will be calculated when needed
 		IsValid:      true,
 	}, nil
