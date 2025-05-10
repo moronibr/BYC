@@ -35,7 +35,7 @@ func CalculateNextDifficulty(blocks []*block.Block) (uint64, error) {
 	firstBlock := blocks[0]
 
 	// Calculate the time difference
-	timeDiff := lastBlock.Timestamp.Sub(firstBlock.Timestamp).Seconds()
+	timeDiff := lastBlock.Header.Timestamp.Sub(firstBlock.Header.Timestamp).Seconds()
 
 	// Calculate the difficulty adjustment
 	adjustment := float64(TargetTimePerBlock*DifficultyAdjustmentInterval) / timeDiff
@@ -48,7 +48,7 @@ func CalculateNextDifficulty(blocks []*block.Block) (uint64, error) {
 	}
 
 	// Calculate the new difficulty
-	newDifficulty := float64(firstBlock.Difficulty) * adjustment
+	newDifficulty := float64(firstBlock.Header.Difficulty) * adjustment
 
 	// Ensure the difficulty is within bounds
 	if newDifficulty < float64(MinDifficulty) {
@@ -74,7 +74,7 @@ func BitsToDifficulty(bits uint32) uint64 {
 }
 
 // DifficultyToBits converts difficulty to compact bits
-func DifficultyToBits(difficulty uint64) uint32 {
+func DifficultyToBits(difficulty uint32) uint32 {
 	// Find the highest set bit
 	highestBit := uint32(0)
 	for i := uint32(0); i < 256; i++ {
@@ -100,8 +100,8 @@ func ValidateDifficulty(block *block.Block, prevBlocks []*block.Block) error {
 	}
 
 	// Check if the block's difficulty matches the expected difficulty
-	if block.Difficulty != expectedDifficulty {
-		return fmt.Errorf("invalid difficulty: got %d, want %d", block.Difficulty, expectedDifficulty)
+	if block.Header.Difficulty != uint32(expectedDifficulty) {
+		return fmt.Errorf("invalid difficulty: got %d, want %d", block.Header.Difficulty, expectedDifficulty)
 	}
 
 	return nil
@@ -111,7 +111,7 @@ func ValidateDifficulty(block *block.Block, prevBlocks []*block.Block) error {
 func GetNextWorkRequired(currentBlock *block.Block, prevBlocks []*block.Block) (uint64, error) {
 	// If we're not at a difficulty adjustment interval, use the current difficulty
 	if len(prevBlocks) < DifficultyAdjustmentInterval {
-		return currentBlock.Difficulty, nil
+		return uint64(currentBlock.Header.Difficulty), nil
 	}
 
 	// Calculate the next difficulty
@@ -121,7 +121,7 @@ func GetNextWorkRequired(currentBlock *block.Block, prevBlocks []*block.Block) (
 // CheckProofOfWork checks if a block's proof of work is valid
 func CheckProofOfWork(block *block.Block) bool {
 	// Convert difficulty to target
-	target := BitsToDifficulty(DifficultyToBits(block.Difficulty))
+	target := BitsToDifficulty(DifficultyToBits(uint32(block.Header.Difficulty)))
 
 	// Calculate the block hash
 	hash := block.CalculateHash()
@@ -143,13 +143,13 @@ func GetASERTDifficulty(block *block.Block, prevBlocks []*block.Block) (uint64, 
 	anchorBlock := prevBlocks[len(prevBlocks)-1]
 
 	// Calculate the time difference
-	timeDiff := block.Timestamp.Sub(anchorBlock.Timestamp).Seconds()
+	timeDiff := block.Header.Timestamp.Sub(anchorBlock.Header.Timestamp).Seconds()
 
 	// Calculate the difficulty adjustment
 	adjustment := math.Pow(2, timeDiff/float64(TargetTimePerBlock))
 
 	// Calculate the new difficulty
-	newDifficulty := float64(anchorBlock.Difficulty) * adjustment
+	newDifficulty := float64(anchorBlock.Header.Difficulty) * adjustment
 
 	// Ensure the difficulty is within bounds
 	if newDifficulty < float64(MinDifficulty) {
