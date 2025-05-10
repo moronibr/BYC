@@ -123,7 +123,7 @@ func (s *Server) HandleMessage(msg *messages.Message) error {
 func (s *Server) processBlock(block *block.Block) error {
 	// Validate block hash
 	calculatedHash := block.CalculateHash()
-	if !bytes.Equal(calculatedHash, block.Hash) {
+	if !bytes.Equal(calculatedHash, block.Header.Hash) {
 		return fmt.Errorf("invalid block hash")
 	}
 
@@ -221,7 +221,7 @@ func (s *Server) UpdateChainState(block *block.Block) error {
 
 	// If new block has higher height, update chain state
 	if block.Header.Height > bestBlock.Header.Height {
-		if err := s.db.UpdateChainState(block.Hash, block.Header.Height); err != nil {
+		if err := s.db.UpdateChainState(block.Header.Hash, block.Header.Height); err != nil {
 			return fmt.Errorf("failed to update chain state: %v", err)
 		}
 	}

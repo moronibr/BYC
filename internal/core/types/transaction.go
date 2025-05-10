@@ -483,3 +483,9 @@ func (tx *Transaction) Deserialize(data []byte) error {
 
 	return nil
 }
+
+// IsCoinbase checks if the transaction is a coinbase transaction
+func (tx *Transaction) IsCoinbase() bool {
+	// A coinbase transaction has exactly one input with a zero previous tx hash
+	return len(tx.Inputs) == 1 && len(tx.Inputs[0].PreviousTxHash) == 0
+}

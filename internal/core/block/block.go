@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/types"
 )
 
 // BlockType represents the type of block
@@ -27,7 +28,7 @@ type Block struct {
 	Header *common.Header
 
 	// Block transactions
-	Transactions []*common.Transaction
+	Transactions []*types.Transaction
 
 	// Block witness
 	Witness *common.Witness
@@ -72,12 +73,12 @@ func NewBlock(prevHash []byte, height uint64) *Block {
 			Difficulty:    0x1d00ffff,
 			Height:        height,
 		},
-		Transactions: make([]*common.Transaction, 0),
+		Transactions: make([]*types.Transaction, 0),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *common.Transaction) error {
+func (b *Block) AddTransaction(tx *types.Transaction) error {
 	if !b.CanAddTransaction(tx) {
 		return errors.New("block is full")
 	}
@@ -187,7 +188,7 @@ func (b *Block) Clone() *Block {
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
 		},
-		Transactions:    make([]*common.Transaction, len(b.Transactions)),
+		Transactions:    make([]*types.Transaction, len(b.Transactions)),
 		Witness:         b.Witness.Clone(),
 		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
@@ -250,7 +251,7 @@ func (b *Block) Copy() *Block {
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
 		},
-		Transactions:    make([]*common.Transaction, len(b.Transactions)),
+		Transactions:    make([]*types.Transaction, len(b.Transactions)),
 		Witness:         b.Witness.Clone(),
 		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
@@ -407,7 +408,7 @@ func (b *Block) ValidateBlockWeight() error {
 }
 
 // CanAddTransaction checks if a transaction can be added to the block
-func (b *Block) CanAddTransaction(tx *common.Transaction) bool {
+func (b *Block) CanAddTransaction(tx *types.Transaction) bool {
 	// Check if adding the transaction would exceed the maximum block weight
 	newWeight := b.GetBlockWeight() + tx.Size()*4
 	maxWeight := 4 * 1024 * 1024 // 4MB
