@@ -136,7 +136,7 @@ func CreateCompactBlock(block *block.Block, nonce uint64) *CompactBlock {
 
 	// Calculate short IDs for each transaction
 	for _, tx := range block.Transactions {
-		shortID := CalculateShortID(tx.Hash, nonce)
+		shortID := CalculateShortID(tx.Hash(), nonce)
 		cb.ShortIDs = append(cb.ShortIDs, shortID)
 	}
 
@@ -183,18 +183,22 @@ func (cb *CompactBlock) Serialize() []byte {
 	for _, ptx := range cb.PrefilledTxs {
 		binary.Write(&buf, binary.LittleEndian, ptx.Index)
 
+		// Get the underlying transaction
+		underlyingTx := ptx.Tx.GetTransaction()
+
 		// Serialize transaction
 		var txBuf bytes.Buffer
-		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Version)
-		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Timestamp.Unix())
-		txBuf.Write(ptx.Tx.From)
-		txBuf.Write(ptx.Tx.To)
-		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Amount)
-		txBuf.Write(ptx.Tx.Data)
+		binary.Write(&txBuf, binary.LittleEndian, underlyingTx.Version)
+		binary.Write(&txBuf, binary.LittleEndian, underlyingTx.Timestamp.Unix())
+		txBuf.Write(ptx.Tx.From())
+		txBuf.Write(ptx.Tx.To())
+		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Amount())
+		txBuf.Write(ptx.Tx.Data())
 
 		// Write inputs
-		binary.Write(&txBuf, binary.LittleEndian, uint32(len(ptx.Tx.Inputs)))
-		for _, input := range ptx.Tx.Inputs {
+		inputs := ptx.Tx.Inputs()
+		binary.Write(&txBuf, binary.LittleEndian, uint32(len(inputs)))
+		for _, input := range inputs {
 			txBuf.Write(input.PreviousTxHash)
 			binary.Write(&txBuf, binary.LittleEndian, input.PreviousTxIndex)
 			txBuf.Write(input.ScriptSig)
@@ -202,8 +206,9 @@ func (cb *CompactBlock) Serialize() []byte {
 		}
 
 		// Write outputs
-		binary.Write(&txBuf, binary.LittleEndian, uint32(len(ptx.Tx.Outputs)))
-		for _, output := range ptx.Tx.Outputs {
+		outputs := ptx.Tx.Outputs()
+		binary.Write(&txBuf, binary.LittleEndian, uint32(len(outputs)))
+		for _, output := range outputs {
 			binary.Write(&txBuf, binary.LittleEndian, output.Value)
 			txBuf.Write(output.ScriptPubKey)
 			binary.Write(&txBuf, binary.LittleEndian, uint32(len(output.Address)))
