@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -261,6 +262,224 @@ func (tx *Transaction) Validate() error {
 	if tx.CoinType == "" {
 		return errors.New("invalid coin type")
 	}
+
+	return nil
+}
+
+// Serialize serializes the transaction to bytes
+func (tx *Transaction) Serialize() []byte {
+	buf := new(bytes.Buffer)
+
+	// Write version
+	binary.Write(buf, binary.BigEndian, tx.Version)
+
+	// Write timestamp
+	timestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.Unix()))
+	buf.Write(timestampBytes)
+
+	// Write number of inputs
+	binary.Write(buf, binary.BigEndian, uint32(len(tx.Inputs)))
+
+	// Write inputs
+	for _, input := range tx.Inputs {
+		// Write previous tx hash length and hash
+		binary.Write(buf, binary.BigEndian, uint32(len(input.PreviousTxHash)))
+		buf.Write(input.PreviousTxHash)
+
+		// Write previous tx index
+		binary.Write(buf, binary.BigEndian, input.PreviousTxIndex)
+
+		// Write script sig length and script sig
+		binary.Write(buf, binary.BigEndian, uint32(len(input.ScriptSig)))
+		buf.Write(input.ScriptSig)
+
+		// Write sequence
+		binary.Write(buf, binary.BigEndian, input.Sequence)
+
+		// Write address length and address
+		binary.Write(buf, binary.BigEndian, uint32(len(input.Address)))
+		buf.WriteString(input.Address)
+	}
+
+	// Write number of outputs
+	binary.Write(buf, binary.BigEndian, uint32(len(tx.Outputs)))
+
+	// Write outputs
+	for _, output := range tx.Outputs {
+		// Write value
+		binary.Write(buf, binary.BigEndian, output.Value)
+
+		// Write script pub key length and script pub key
+		binary.Write(buf, binary.BigEndian, uint32(len(output.ScriptPubKey)))
+		buf.Write(output.ScriptPubKey)
+
+		// Write address length and address
+		binary.Write(buf, binary.BigEndian, uint32(len(output.Address)))
+		buf.WriteString(output.Address)
+	}
+
+	// Write lock time
+	binary.Write(buf, binary.BigEndian, tx.LockTime)
+
+	// Write fee
+	binary.Write(buf, binary.BigEndian, tx.Fee)
+
+	// Write coin type length and coin type
+	binary.Write(buf, binary.BigEndian, uint32(len(tx.CoinType)))
+	buf.WriteString(string(tx.CoinType))
+
+	// Write data length and data
+	binary.Write(buf, binary.BigEndian, uint32(len(tx.Data)))
+	buf.Write(tx.Data)
+
+	return buf.Bytes()
+}
+
+// Deserialize deserializes a transaction from bytes
+func (tx *Transaction) Deserialize(data []byte) error {
+	buf := bytes.NewReader(data)
+
+	// Read version
+	if err := binary.Read(buf, binary.BigEndian, &tx.Version); err != nil {
+		return err
+	}
+
+	// Read timestamp
+	var timestamp uint64
+	if err := binary.Read(buf, binary.BigEndian, &timestamp); err != nil {
+		return err
+	}
+	tx.Timestamp = time.Unix(int64(timestamp), 0)
+
+	// Read number of inputs
+	var numInputs uint32
+	if err := binary.Read(buf, binary.BigEndian, &numInputs); err != nil {
+		return err
+	}
+
+	// Read inputs
+	tx.Inputs = make([]*Input, numInputs)
+	for i := uint32(0); i < numInputs; i++ {
+		input := &Input{}
+
+		// Read previous tx hash length and hash
+		var hashLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &hashLen); err != nil {
+			return err
+		}
+		input.PreviousTxHash = make([]byte, hashLen)
+		if _, err := buf.Read(input.PreviousTxHash); err != nil {
+			return err
+		}
+
+		// Read previous tx index
+		if err := binary.Read(buf, binary.BigEndian, &input.PreviousTxIndex); err != nil {
+			return err
+		}
+
+		// Read script sig length and script sig
+		var scriptLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &scriptLen); err != nil {
+			return err
+		}
+		input.ScriptSig = make([]byte, scriptLen)
+		if _, err := buf.Read(input.ScriptSig); err != nil {
+			return err
+		}
+
+		// Read sequence
+		if err := binary.Read(buf, binary.BigEndian, &input.Sequence); err != nil {
+			return err
+		}
+
+		// Read address length and address
+		var addrLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &addrLen); err != nil {
+			return err
+		}
+		addrBytes := make([]byte, addrLen)
+		if _, err := buf.Read(addrBytes); err != nil {
+			return err
+		}
+		input.Address = string(addrBytes)
+
+		tx.Inputs[i] = input
+	}
+
+	// Read number of outputs
+	var numOutputs uint32
+	if err := binary.Read(buf, binary.BigEndian, &numOutputs); err != nil {
+		return err
+	}
+
+	// Read outputs
+	tx.Outputs = make([]*Output, numOutputs)
+	for i := uint32(0); i < numOutputs; i++ {
+		output := &Output{}
+
+		// Read value
+		if err := binary.Read(buf, binary.BigEndian, &output.Value); err != nil {
+			return err
+		}
+
+		// Read script pub key length and script pub key
+		var scriptLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &scriptLen); err != nil {
+			return err
+		}
+		output.ScriptPubKey = make([]byte, scriptLen)
+		if _, err := buf.Read(output.ScriptPubKey); err != nil {
+			return err
+		}
+
+		// Read address length and address
+		var addrLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &addrLen); err != nil {
+			return err
+		}
+		addrBytes := make([]byte, addrLen)
+		if _, err := buf.Read(addrBytes); err != nil {
+			return err
+		}
+		output.Address = string(addrBytes)
+
+		tx.Outputs[i] = output
+	}
+
+	// Read lock time
+	if err := binary.Read(buf, binary.BigEndian, &tx.LockTime); err != nil {
+		return err
+	}
+
+	// Read fee
+	if err := binary.Read(buf, binary.BigEndian, &tx.Fee); err != nil {
+		return err
+	}
+
+	// Read coin type length and coin type
+	var coinTypeLen uint32
+	if err := binary.Read(buf, binary.BigEndian, &coinTypeLen); err != nil {
+		return err
+	}
+	coinTypeBytes := make([]byte, coinTypeLen)
+	if _, err := buf.Read(coinTypeBytes); err != nil {
+		return err
+	}
+	tx.CoinType = coin.CoinType(coinTypeBytes)
+
+	// Read data length and data
+	var dataLen uint32
+	if err := binary.Read(buf, binary.BigEndian, &dataLen); err != nil {
+		return err
+	}
+	tx.Data = make([]byte, dataLen)
+	if _, err := buf.Read(tx.Data); err != nil {
+		return err
+	}
+
+	// Calculate hash
+	tx.Hash = tx.CalculateHash()
 
 	return nil
 }

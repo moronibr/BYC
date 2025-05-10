@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/types"
 )
 
 // IndexType represents the type of index
@@ -36,7 +36,7 @@ type Index interface {
 
 // TransactionIndexData manages transaction indices
 type TransactionIndexData struct {
-	txs map[string]*block.Transaction
+	txs map[string]*types.Transaction
 	mu  sync.RWMutex
 }
 
@@ -79,7 +79,7 @@ func (im *IndexManager) GetIndex(indexType IndexType) (Index, bool) {
 // NewTransactionIndex creates a new transaction index
 func NewTransactionIndex() *TransactionIndexData {
 	return &TransactionIndexData{
-		txs: make(map[string]*block.Transaction),
+		txs: make(map[string]*types.Transaction),
 	}
 }
 
@@ -88,7 +88,7 @@ func (ti *TransactionIndexData) Add(key []byte, value interface{}) error {
 	ti.mu.Lock()
 	defer ti.mu.Unlock()
 
-	tx, ok := value.(*block.Transaction)
+	tx, ok := value.(*types.Transaction)
 	if !ok {
 		return fmt.Errorf("invalid value type")
 	}
@@ -202,21 +202,18 @@ func (ti *TransactionIndexData) Serialize() []byte {
 	ti.mu.RLock()
 	defer ti.mu.RUnlock()
 
-	var buf bytes.Buffer
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, uint32(len(ti.txs)))
 
-	// Write transaction count
-	binary.Write(&buf, binary.LittleEndian, uint32(len(ti.txs)))
-
-	// Write transactions
 	for hash, tx := range ti.txs {
 		// Write hash length and hash
-		binary.Write(&buf, binary.LittleEndian, uint32(len(hash)))
+		binary.Write(buf, binary.BigEndian, uint32(len(hash)))
 		buf.WriteString(hash)
 
-		// Write transaction
-		txBytes := tx.Serialize()
-		binary.Write(&buf, binary.LittleEndian, uint32(len(txBytes)))
-		buf.Write(txBytes)
+		// Write transaction data
+		txData := tx.Serialize()
+		binary.Write(buf, binary.BigEndian, uint32(len(txData)))
+		buf.Write(txData)
 	}
 
 	return buf.Bytes()
@@ -229,17 +226,18 @@ func (ti *TransactionIndexData) Deserialize(data []byte) error {
 
 	buf := bytes.NewReader(data)
 
-	// Read transaction count
-	var count uint32
-	if err := binary.Read(buf, binary.LittleEndian, &count); err != nil {
+	// Read number of transactions
+	var numTxs uint32
+	if err := binary.Read(buf, binary.BigEndian, &numTxs); err != nil {
 		return err
 	}
 
-	// Read transactions
-	for i := uint32(0); i < count; i++ {
-		// Read hash
+	ti.txs = make(map[string]*types.Transaction)
+
+	for i := uint32(0); i < numTxs; i++ {
+		// Read hash length and hash
 		var hashLen uint32
-		if err := binary.Read(buf, binary.LittleEndian, &hashLen); err != nil {
+		if err := binary.Read(buf, binary.BigEndian, &hashLen); err != nil {
 			return err
 		}
 		hash := make([]byte, hashLen)
@@ -247,19 +245,19 @@ func (ti *TransactionIndexData) Deserialize(data []byte) error {
 			return err
 		}
 
-		// Read transaction
-		var txLen uint32
-		if err := binary.Read(buf, binary.LittleEndian, &txLen); err != nil {
+		// Read transaction data length and data
+		var txDataLen uint32
+		if err := binary.Read(buf, binary.BigEndian, &txDataLen); err != nil {
 			return err
 		}
-		txBytes := make([]byte, txLen)
-		if _, err := buf.Read(txBytes); err != nil {
+		txData := make([]byte, txDataLen)
+		if _, err := buf.Read(txData); err != nil {
 			return err
 		}
 
-		// Parse transaction
-		tx := &block.Transaction{}
-		if err := tx.Deserialize(txBytes); err != nil {
+		// Deserialize transaction
+		tx := &types.Transaction{}
+		if err := tx.Deserialize(txData); err != nil {
 			return err
 		}
 
