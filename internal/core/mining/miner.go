@@ -126,55 +126,26 @@ func (m *Miner) createBlock() (*block.Block, error) {
 	txs := m.txPool.GetBest(1000) // Get up to 1000 transactions
 
 	// Create coinbase transaction
-	coinbaseTx, err := m.createCoinbaseTx(lastBlock.Header.Height + 1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create coinbase transaction: %v", err)
-	}
+	coinbaseTx := createCoinbaseTx([]byte(m.miningAddress), lastBlock.Header.Height+1)
 
 	// Add coinbase transaction to the beginning
-	txs = append([]*types.Transaction{coinbaseTx}, txs...)
+	txs = append([]*types.Transaction{coinbaseTx.GetTransaction()}, txs...)
 
-	// Convert []*types.Transaction to []*common.Transaction
+	// Convert []*types.Transaction to []*common.Transaction using the public constructor
 	commonTxs := make([]*common.Transaction, len(txs))
 	for i, tx := range txs {
-		commonTx := &common.Transaction{
-			Hash:      tx.Hash,
-			Version:   tx.Version,
-			Timestamp: tx.Timestamp,
-			Data:      tx.Data,
-			Inputs:    make([]common.Input, len(tx.Inputs)),
-			Outputs:   make([]common.Output, len(tx.Outputs)),
+		// Use the public constructor to create a new common.Transaction
+		if len(tx.Inputs) > 0 && len(tx.Outputs) > 0 {
+			commonTxs[i] = common.NewTransaction(
+				[]byte(tx.Inputs[0].Address),
+				[]byte(tx.Outputs[0].Address),
+				tx.Outputs[0].Value,
+				tx.Data,
+			)
+		} else {
+			// Fallback for transactions with no inputs or outputs
+			commonTxs[i] = common.NewTransaction(nil, nil, 0, tx.Data)
 		}
-
-		// Copy inputs
-		for j, input := range tx.Inputs {
-			commonTx.Inputs[j] = common.Input{
-				PreviousTxHash:  input.PreviousTxHash,
-				PreviousTxIndex: input.PreviousTxIndex,
-				ScriptSig:       input.ScriptSig,
-				Sequence:        input.Sequence,
-			}
-		}
-
-		// Copy outputs
-		for j, output := range tx.Outputs {
-			commonTx.Outputs[j] = common.Output{
-				Value:        output.Value,
-				ScriptPubKey: output.ScriptPubKey,
-				Address:      output.Address,
-			}
-		}
-
-		// Set From, To, and Amount based on first input and output
-		if len(tx.Inputs) > 0 {
-			commonTx.From = []byte(tx.Inputs[0].Address)
-		}
-		if len(tx.Outputs) > 0 {
-			commonTx.To = []byte(tx.Outputs[0].Address)
-			commonTx.Amount = tx.Outputs[0].Value
-		}
-
-		commonTxs[i] = commonTx
 	}
 
 	// Create block header
@@ -227,25 +198,39 @@ func (m *Miner) mineBlock(block *block.Block) (uint32, error) {
 	return 0, fmt.Errorf("max nonce reached")
 }
 
-// createCoinbaseTx creates a coinbase transaction
-func (m *Miner) createCoinbaseTx(height uint64) (*types.Transaction, error) {
-	// Calculate block reward
-	reward := calculateBlockReward(height)
+// createCoinbaseTx creates a new coinbase transaction
+func createCoinbaseTx(minerAddress []byte, blockHeight uint64) *common.Transaction {
+	// Use the public constructor to create a new common.Transaction
+	coinbase := common.NewTransaction(
+		nil, // From (empty for coinbase)
+		minerAddress,
+		BlockReward,
+		[]byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
+	)
 
-	// Create transaction
-	return &types.Transaction{
-		Version:   1,
-		Timestamp: time.Now(),
-		Inputs:    make([]*types.Input, 0), // Coinbase has no inputs
-		Outputs: []*types.Output{
-			{
-				Value:        reward,
-				ScriptPubKey: nil,
-				Address:      m.miningAddress,
-			},
-		},
-		Data: []byte("coinbase"),
-	}, nil
+	// Modify the underlying types.Transaction
+	tx := coinbase.GetTransaction()
+
+	// Overwrite the first input to be a coinbase input
+	tx.Inputs[0] = &types.Input{
+		PreviousTxHash:  nil,
+		PreviousTxIndex: 0xffffffff,
+		ScriptSig:       []byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
+		Sequence:        0xffffffff,
+		Address:         "",
+	}
+
+	// Overwrite the first output to be the mining reward
+	tx.Outputs[0] = &types.Output{
+		Value:        BlockReward,
+		ScriptPubKey: []byte(fmt.Sprintf("Mining reward for block %d", blockHeight)),
+		Address:      string(minerAddress),
+	}
+
+	// Recalculate the hash
+	tx.Hash = tx.CalculateHash()
+
+	return coinbase
 }
 
 // calculateBlockReward calculates the block reward for a given height
@@ -290,14 +275,15 @@ func calculateMerkleRoot(txs []*types.Transaction) []byte {
 // updateUTXOSet updates the UTXO set with new block
 func (m *Miner) updateUTXOSet(block *block.Block) error {
 	for _, tx := range block.Transactions {
+		underlyingTx := tx.GetTransaction()
 		// Remove spent UTXOs for each input
-		for _, input := range tx.Inputs {
+		for _, input := range underlyingTx.Inputs {
 			m.utxoSet.RemoveUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 		}
 		// Add new UTXOs for each output
-		for idx, output := range tx.Outputs {
+		for idx, output := range underlyingTx.Outputs {
 			utxoObj := &utxo.UTXO{
-				TxHash:      tx.Hash,
+				TxHash:      underlyingTx.Hash,
 				OutIndex:    uint32(idx),
 				Amount:      output.Value,
 				ScriptPub:   nil, // TODO: Convert output.ScriptPubKey to *script.Script
@@ -331,5 +317,32 @@ func (m *Miner) adjustDifficulty() error {
 	// }
 
 	// For now, skip actual adjustment logic
+	return nil
+}
+
+// validateTransaction validates a transaction
+func validateTransaction(tx *common.Transaction) error {
+	// Get the underlying transaction
+	underlyingTx := tx.GetTransaction()
+
+	// Validate transaction
+	if err := underlyingTx.Validate(); err != nil {
+		return err
+	}
+
+	// Check inputs
+	for _, input := range underlyingTx.Inputs {
+		if input == nil {
+			return fmt.Errorf("transaction has nil input")
+		}
+	}
+
+	// Check outputs
+	for _, output := range underlyingTx.Outputs {
+		if output == nil {
+			return fmt.Errorf("transaction has nil output")
+		}
+	}
+
 	return nil
 }
