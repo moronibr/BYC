@@ -51,8 +51,8 @@ func (p *TxPool) Add(tx *types.Transaction) error {
 		if p.queue.Len() > 0 {
 			lowestFeeTx := heap.Pop(p.queue).(*types.Transaction)
 			if tx.Size() > 0 && lowestFeeTx.Size() > 0 {
-				newFeeRate := tx.Amount / uint64(tx.Size())
-				lowestFeeRate := lowestFeeTx.Amount / uint64(lowestFeeTx.Size())
+				newFeeRate := tx.Fee / uint64(tx.Size())
+				lowestFeeRate := lowestFeeTx.Fee / uint64(lowestFeeTx.Size())
 				if newFeeRate > lowestFeeRate {
 					delete(p.txs, string(lowestFeeTx.Hash))
 				} else {
@@ -128,7 +128,7 @@ func (p *TxPool) GetBest(maxSize int) []*types.Transaction {
 func (p *TxPool) validateTx(tx *types.Transaction) error {
 	// Check fee rate
 	if tx.Size() > 0 {
-		feeRate := tx.Amount / uint64(tx.Size())
+		feeRate := tx.Fee / uint64(tx.Size())
 		if feeRate < p.minFeeRate {
 			return fmt.Errorf("fee rate too low")
 		}
@@ -136,8 +136,8 @@ func (p *TxPool) validateTx(tx *types.Transaction) error {
 
 	// Check inputs
 	var totalInput uint64
-	for _, input := range tx.From {
-		utxo, exists := p.utxoSet.GetUTXO([]byte{input}, 0) // Assuming index 0 for simplicity
+	for _, input := range tx.Inputs {
+		utxo, exists := p.utxoSet.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 		if !exists {
 			return fmt.Errorf("input not found in UTXO set")
 		}
@@ -146,12 +146,12 @@ func (p *TxPool) validateTx(tx *types.Transaction) error {
 
 	// Check outputs
 	var totalOutput uint64
-	for range tx.To {
-		totalOutput += tx.Amount
+	for _, output := range tx.Outputs {
+		totalOutput += output.Value
 	}
 
 	// Check if inputs cover outputs plus fee
-	if totalInput < totalOutput {
+	if totalInput < totalOutput+tx.Fee {
 		return fmt.Errorf("insufficient input amount")
 	}
 
@@ -181,7 +181,7 @@ func (pq txPriorityQueue) Less(i, j int) bool {
 	if pq[i].Size() == 0 || pq[j].Size() == 0 {
 		return false
 	}
-	return pq[i].Amount/uint64(pq[i].Size()) > pq[j].Amount/uint64(pq[j].Size())
+	return pq[i].Fee/uint64(pq[i].Size()) > pq[j].Fee/uint64(pq[j].Size())
 }
 
 func (pq txPriorityQueue) Swap(i, j int) {
