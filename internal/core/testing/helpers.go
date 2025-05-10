@@ -5,32 +5,53 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/transaction"
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 )
 
 // TestBlock creates a test block with given parameters
 func TestBlock(t *testing.T, prevHash []byte, timestamp time.Time) *block.Block {
 	return &block.Block{
-		Header: block.Header{
+		Header: &common.Header{
 			Version:       1,
 			PrevBlockHash: prevHash,
 			Timestamp:     timestamp,
 			Difficulty:    1,
 		},
-		Transactions: []*transaction.Transaction{},
+		Transactions: []*common.Transaction{},
 	}
 }
 
 // TestTransaction creates a test transaction
-func TestTransaction(t *testing.T, from, to string, amount uint64, coinType types.CoinType) *transaction.Transaction {
-	return &transaction.Transaction{
-		From:      from,
-		To:        to,
-		Amount:    amount,
-		CoinType:  coinType,
+func TestTransaction(t *testing.T, from, to string, amount uint64, coinType coin.CoinType) *common.Transaction {
+	tx := &common.Transaction{
+		Version:   1,
 		Timestamp: time.Now(),
+		From:      []byte(from),
+		To:        []byte(to),
+		Amount:    amount,
+		Inputs:    make([]common.Input, 0),
+		Outputs:   make([]common.Output, 0),
+		LockTime:  0,
+		Data:      nil,
 	}
+
+	// Add input
+	tx.Inputs = append(tx.Inputs, common.Input{
+		PreviousTxHash:  nil,
+		PreviousTxIndex: 0,
+		ScriptSig:       nil,
+		Sequence:        0xffffffff,
+	})
+
+	// Add output
+	tx.Outputs = append(tx.Outputs, common.Output{
+		Value:        amount,
+		ScriptPubKey: nil,
+		Address:      to,
+	})
+
+	return tx
 }
 
 // AssertNoError is a helper to check for errors
