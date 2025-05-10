@@ -12,6 +12,7 @@ import (
 	"github.com/youngchain/internal/core/storage"
 	"github.com/youngchain/internal/core/transaction"
 	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/utxo"
 )
 
 const (
@@ -34,6 +35,8 @@ type Miner struct {
 	txPool *transaction.TxPool
 	// Block store
 	blockStore storage.BlockStore
+	// UTXO set
+	utxoSet *utxo.UTXOSet
 	// Mining address
 	miningAddress string
 	// Mining status
@@ -43,7 +46,7 @@ type Miner struct {
 }
 
 // NewMiner creates a new miner
-func NewMiner(txPool *transaction.TxPool, blockStore storage.BlockStore, miningAddress string) *Miner {
+func NewMiner(txPool *transaction.TxPool, blockStore storage.BlockStore, utxoSet *utxo.UTXOSet, miningAddress string) *Miner {
 	target := big.NewInt(1)
 	target.Lsh(target, uint(256-TargetBits))
 
@@ -51,6 +54,7 @@ func NewMiner(txPool *transaction.TxPool, blockStore storage.BlockStore, miningA
 		target:        target,
 		txPool:        txPool,
 		blockStore:    blockStore,
+		utxoSet:       utxoSet,
 		miningAddress: miningAddress,
 		stopChan:      make(chan struct{}),
 	}
@@ -251,7 +255,25 @@ func calculateMerkleRoot(txs []*types.Transaction) []byte {
 
 // updateUTXOSet updates the UTXO set with new block
 func (m *Miner) updateUTXOSet(block *block.Block) error {
-	// TODO: Implement UTXO set update
+	for _, tx := range block.Transactions {
+		// Remove spent UTXOs for each input
+		for _, input := range tx.Inputs {
+			m.utxoSet.RemoveUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+		}
+		// Add new UTXOs for each output
+		for idx, output := range tx.Outputs {
+			utxoObj := &utxo.UTXO{
+				TxHash:      tx.Hash,
+				OutIndex:    uint32(idx),
+				Amount:      output.Value,
+				ScriptPub:   nil, // TODO: Convert output.ScriptPubKey to *script.Script
+				BlockHeight: block.Header.Height,
+				IsCoinbase:  false, // Set true for coinbase tx if needed
+				IsSegWit:    false, // Set if SegWit
+			}
+			m.utxoSet.AddUTXO(utxoObj)
+		}
+	}
 	return nil
 }
 
