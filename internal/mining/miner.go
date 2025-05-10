@@ -1,7 +1,9 @@
 package mining
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"math/big"
 	"sync"
@@ -87,7 +89,7 @@ func (m *Miner) GetResult() <-chan *block.Block {
 func (m *Miner) mine(workerID int) {
 	logger.Info("Starting mining worker", logger.Int("worker_id", workerID))
 
-	var nonce uint64
+	var nonce uint32
 	for {
 		select {
 		case <-m.quitChan:
@@ -112,7 +114,7 @@ func (m *Miner) mine(workerID int) {
 
 					// Check if hash meets difficulty
 					if hashInt.Cmp(m.difficulty) <= 0 {
-						candidate.Hash = hash
+						candidate.Header.Hash = hash
 						logger.Info("Block mined",
 							logger.Int("worker_id", workerID),
 							logger.String("hash", hex.EncodeToString(hash)),
@@ -142,9 +144,20 @@ func (m *Miner) mine(workerID int) {
 }
 
 func (m *Miner) calculateHash(b *block.Block) []byte {
-	header := b.Header
-	data := []byte(header.String())
-	hash := sha256.Sum256(data)
+	// Create a buffer to store header data
+	var buf bytes.Buffer
+
+	// Write header fields in order
+	binary.Write(&buf, binary.LittleEndian, b.Header.Version)
+	buf.Write(b.Header.PrevBlockHash)
+	buf.Write(b.Header.MerkleRoot)
+	binary.Write(&buf, binary.LittleEndian, b.Header.Timestamp.Unix())
+	binary.Write(&buf, binary.LittleEndian, b.Header.Difficulty)
+	binary.Write(&buf, binary.LittleEndian, b.Header.Nonce)
+	binary.Write(&buf, binary.LittleEndian, b.Header.Height)
+
+	// Calculate hash
+	hash := sha256.Sum256(buf.Bytes())
 	return hash[:]
 }
 
