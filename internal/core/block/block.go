@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/core/utxo"
 	"github.com/youngchain/internal/core/witness"
@@ -87,25 +86,10 @@ type Transaction struct {
 	Hash      []byte
 	Timestamp time.Time
 	Witness   *witness.Witness
-	Inputs    []TxInput
-	Outputs   []TxOutput
+	Inputs    []types.Input
+	Outputs   []types.Output
 	LockTime  uint64
 	Version   uint32
-}
-
-// TxInput represents a transaction input
-type TxInput struct {
-	PreviousTx  []byte `json:"previous_tx"`
-	OutputIndex uint32 `json:"output_index"`
-	Script      []byte `json:"script"`
-	Sequence    uint32 `json:"sequence"`
-}
-
-// TxOutput represents a transaction output
-type TxOutput struct {
-	Value    uint64        `json:"value"`
-	Script   []byte        `json:"script"`
-	CoinType coin.CoinType `json:"coin_type"`
 }
 
 // String returns a string representation of the block
@@ -395,10 +379,10 @@ func (tx *Transaction) Clone() *Transaction {
 		clone.Witness = tx.Witness.Clone()
 	}
 
-	clone.Inputs = make([]TxInput, len(tx.Inputs))
+	clone.Inputs = make([]types.Input, len(tx.Inputs))
 	copy(clone.Inputs, tx.Inputs)
 
-	clone.Outputs = make([]TxOutput, len(tx.Outputs))
+	clone.Outputs = make([]types.Output, len(tx.Outputs))
 	copy(clone.Outputs, tx.Outputs)
 
 	return clone
@@ -527,12 +511,12 @@ func calculateInitialDifficulty(blockType BlockType) uint32 {
 }
 
 // AddInput adds an input to the transaction
-func (tx *Transaction) AddInput(input TxInput) {
+func (tx *Transaction) AddInput(input types.Input) {
 	tx.Inputs = append(tx.Inputs, input)
 }
 
 // AddOutput adds an output to the transaction
-func (tx *Transaction) AddOutput(output TxOutput) {
+func (tx *Transaction) AddOutput(output types.Output) {
 	tx.Outputs = append(tx.Outputs, output)
 }
 
@@ -559,7 +543,7 @@ func (tx *Transaction) CalculateHash() []byte {
 func (tx *Transaction) IsDoubleSpend(utxoSet *utxo.UTXOSet) bool {
 	for _, input := range tx.Inputs {
 		// Check if the input's previous output exists and is unspent
-		utxo, exists := utxoSet.GetUTXO(input.PreviousTx, input.OutputIndex)
+		utxo, exists := utxoSet.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 		if !exists || utxo == nil {
 			return true // Double spend detected
 		}
@@ -602,7 +586,7 @@ func (b *Block) Size() int {
 
 	// Transactions size
 	for _, tx := range b.Transactions {
-		size += tx.GetTransactionSize()
+		size += tx.Size()
 	}
 
 	// Hash size
@@ -650,15 +634,15 @@ func (tx *Transaction) Serialize() []byte {
 	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Inputs)))
 	for _, input := range tx.Inputs {
 		// Write previous tx
-		binary.Write(&buf, binary.LittleEndian, uint32(len(input.PreviousTx)))
-		buf.Write(input.PreviousTx)
+		binary.Write(&buf, binary.LittleEndian, uint32(len(input.PreviousTxHash)))
+		buf.Write(input.PreviousTxHash)
 
 		// Write output index
-		binary.Write(&buf, binary.LittleEndian, input.OutputIndex)
+		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
 
 		// Write script
-		binary.Write(&buf, binary.LittleEndian, uint32(len(input.Script)))
-		buf.Write(input.Script)
+		binary.Write(&buf, binary.LittleEndian, uint32(len(input.ScriptSig)))
+		buf.Write(input.ScriptSig)
 
 		// Write sequence
 		binary.Write(&buf, binary.LittleEndian, input.Sequence)
@@ -671,12 +655,12 @@ func (tx *Transaction) Serialize() []byte {
 		binary.Write(&buf, binary.LittleEndian, output.Value)
 
 		// Write script
-		binary.Write(&buf, binary.LittleEndian, uint32(len(output.Script)))
-		buf.Write(output.Script)
+		binary.Write(&buf, binary.LittleEndian, uint32(len(output.ScriptPubKey)))
+		buf.Write(output.ScriptPubKey)
 
 		// Write coin type
-		binary.Write(&buf, binary.LittleEndian, uint32(len(output.CoinType)))
-		buf.WriteString(string(output.CoinType))
+		binary.Write(&buf, binary.LittleEndian, uint32(len(output.Address)))
+		buf.WriteString(string(output.Address))
 	}
 
 	// Write witness if present
@@ -769,20 +753,20 @@ func (tx *Transaction) Deserialize(data []byte) error {
 	if err := binary.Read(buf, binary.LittleEndian, &inputCount); err != nil {
 		return err
 	}
-	tx.Inputs = make([]TxInput, inputCount)
+	tx.Inputs = make([]types.Input, inputCount)
 	for i := uint32(0); i < inputCount; i++ {
 		// Read previous tx
 		var prevTxLen uint32
 		if err := binary.Read(buf, binary.LittleEndian, &prevTxLen); err != nil {
 			return err
 		}
-		tx.Inputs[i].PreviousTx = make([]byte, prevTxLen)
-		if _, err := buf.Read(tx.Inputs[i].PreviousTx); err != nil {
+		tx.Inputs[i].PreviousTxHash = make([]byte, prevTxLen)
+		if _, err := buf.Read(tx.Inputs[i].PreviousTxHash); err != nil {
 			return err
 		}
 
 		// Read output index
-		if err := binary.Read(buf, binary.LittleEndian, &tx.Inputs[i].OutputIndex); err != nil {
+		if err := binary.Read(buf, binary.LittleEndian, &tx.Inputs[i].PreviousTxIndex); err != nil {
 			return err
 		}
 
@@ -791,8 +775,8 @@ func (tx *Transaction) Deserialize(data []byte) error {
 		if err := binary.Read(buf, binary.LittleEndian, &scriptLen); err != nil {
 			return err
 		}
-		tx.Inputs[i].Script = make([]byte, scriptLen)
-		if _, err := buf.Read(tx.Inputs[i].Script); err != nil {
+		tx.Inputs[i].ScriptSig = make([]byte, scriptLen)
+		if _, err := buf.Read(tx.Inputs[i].ScriptSig); err != nil {
 			return err
 		}
 
@@ -807,7 +791,7 @@ func (tx *Transaction) Deserialize(data []byte) error {
 	if err := binary.Read(buf, binary.LittleEndian, &outputCount); err != nil {
 		return err
 	}
-	tx.Outputs = make([]TxOutput, outputCount)
+	tx.Outputs = make([]types.Output, outputCount)
 	for i := uint32(0); i < outputCount; i++ {
 		// Read value
 		if err := binary.Read(buf, binary.LittleEndian, &tx.Outputs[i].Value); err != nil {
@@ -819,8 +803,8 @@ func (tx *Transaction) Deserialize(data []byte) error {
 		if err := binary.Read(buf, binary.LittleEndian, &scriptLen); err != nil {
 			return err
 		}
-		tx.Outputs[i].Script = make([]byte, scriptLen)
-		if _, err := buf.Read(tx.Outputs[i].Script); err != nil {
+		tx.Outputs[i].ScriptPubKey = make([]byte, scriptLen)
+		if _, err := buf.Read(tx.Outputs[i].ScriptPubKey); err != nil {
 			return err
 		}
 
@@ -833,7 +817,7 @@ func (tx *Transaction) Deserialize(data []byte) error {
 		if _, err := buf.Read(coinType); err != nil {
 			return err
 		}
-		tx.Outputs[i].CoinType = coin.CoinType(string(coinType))
+		tx.Outputs[i].Address = string(coinType)
 	}
 
 	// Read witness
