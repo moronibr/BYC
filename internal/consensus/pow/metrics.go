@@ -54,11 +54,13 @@ func (m *Metrics) RecordBlockMined(duration time.Duration) {
 	m.lastMiningDuration = duration
 	m.totalMiningTime += duration
 	m.avgMiningTime = float64(m.totalMiningTime) / float64(m.blocksMined)
+	m.updatePrometheusMetrics()
 }
 
 // RecordHashRate records the current hash rate.
 func (m *Metrics) RecordHashRate(rate uint64) {
 	atomic.StoreUint64(&m.hashRate, rate)
+	m.updatePrometheusMetrics()
 }
 
 // RecordMiningAttempt records a mining attempt.
@@ -67,6 +69,7 @@ func (m *Metrics) RecordMiningAttempt(success bool) {
 	if !success {
 		atomic.AddUint64(&m.miningFailures, 1)
 	}
+	m.updatePrometheusMetrics()
 }
 
 // RecordResourceUsage records current resource utilization.
@@ -75,6 +78,7 @@ func (m *Metrics) RecordResourceUsage(cpu, memory float64, workers, optimalWorke
 	m.memoryUtilization = memory
 	atomic.StoreInt32(&m.workerCount, int32(workers))
 	atomic.StoreInt32(&m.optimalWorkerCount, int32(optimalWorkers))
+	m.updatePrometheusMetrics()
 }
 
 // RecordCircuitBreakerState records a change in circuit breaker state.
@@ -86,6 +90,7 @@ func (m *Metrics) RecordCircuitBreakerState(state CircuitBreakerState) {
 		atomic.AddUint64(&m.circuitBreakerResets, 1)
 	}
 	m.circuitBreakerState = state
+	m.updatePrometheusMetrics()
 }
 
 // RecordDifficultyChange records a change in mining difficulty.
@@ -93,16 +98,19 @@ func (m *Metrics) RecordDifficultyChange(newDifficulty int) {
 	m.currentDifficulty = newDifficulty
 	atomic.AddUint64(&m.difficultyAdjustments, 1)
 	m.lastDifficultyChange = time.Now()
+	m.updatePrometheusMetrics()
 }
 
 // RecordHashOperation records a hash operation.
 func (m *Metrics) RecordHashOperation() {
 	atomic.AddUint64(&m.hashOperations, 1)
+	m.updatePrometheusMetrics()
 }
 
 // RecordNonceIteration records a nonce iteration.
 func (m *Metrics) RecordNonceIteration() {
 	atomic.AddUint64(&m.nonceIterations, 1)
+	m.updatePrometheusMetrics()
 }
 
 // RecordValidation records a block validation attempt.
@@ -111,6 +119,7 @@ func (m *Metrics) RecordValidation(success bool) {
 	if success {
 		atomic.AddUint64(&m.validationSuccess, 1)
 	}
+	m.updatePrometheusMetrics()
 }
 
 // GetMetrics returns a snapshot of all current metrics.
@@ -160,4 +169,5 @@ func (m *Metrics) Reset() {
 	atomic.StoreUint64(&m.nonceIterations, 0)
 	atomic.StoreUint64(&m.validationChecks, 0)
 	atomic.StoreUint64(&m.validationSuccess, 0)
+	m.updatePrometheusMetrics()
 }
