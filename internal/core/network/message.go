@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 )
 
 // MessageType represents the type of network message
@@ -38,7 +39,7 @@ type Message struct {
 
 // CompactBlock represents a compact block as per BIP152
 type CompactBlock struct {
-	Header       *block.BlockHeader
+	Header       *common.Header
 	Nonce        uint64
 	ShortIDs     []uint64
 	PrefilledTxs []PrefilledTx
@@ -47,7 +48,7 @@ type CompactBlock struct {
 // PrefilledTx represents a prefilled transaction in a compact block
 type PrefilledTx struct {
 	Index uint32
-	Tx    *block.Transaction
+	Tx    *common.Transaction
 }
 
 // NewMessage creates a new network message
@@ -128,7 +129,7 @@ func (t MessageType) String() string {
 // CreateCompactBlock creates a compact block from a full block
 func CreateCompactBlock(block *block.Block, nonce uint64) *CompactBlock {
 	cb := &CompactBlock{
-		Header:   block.GetHeader(),
+		Header:   block.Header,
 		Nonce:    nonce,
 		ShortIDs: make([]uint64, 0, len(block.Transactions)),
 	}
@@ -144,24 +145,29 @@ func CreateCompactBlock(block *block.Block, nonce uint64) *CompactBlock {
 
 // CalculateShortID calculates a short ID for a transaction as per BIP152
 func CalculateShortID(txHash []byte, nonce uint64) uint64 {
-	// Create a 64-bit hash using SipHash-2-4
+	// Create a 64-bit hash using SHA-256 (since we don't have SipHash)
 	key := make([]byte, 16)
 	binary.LittleEndian.PutUint64(key[0:8], nonce)
 	binary.LittleEndian.PutUint64(key[8:16], nonce>>8)
 
-	// Use SipHash-2-4 to create a 64-bit hash
-	h := siphash.New(key)
-	h.Write(txHash)
-	return h.Sum64()
+	// Use SHA-256 to create a 64-bit hash
+	hash := sha256.Sum256(append(key, txHash...))
+	return binary.LittleEndian.Uint64(hash[:8])
 }
 
 // Serialize serializes the compact block to bytes
 func (cb *CompactBlock) Serialize() []byte {
 	var buf bytes.Buffer
 
-	// Write header
-	headerBytes := cb.Header.Serialize()
-	buf.Write(headerBytes)
+	// Write header fields
+	binary.Write(&buf, binary.LittleEndian, cb.Header.Version)
+	buf.Write(cb.Header.PrevBlockHash)
+	buf.Write(cb.Header.MerkleRoot)
+	binary.Write(&buf, binary.LittleEndian, cb.Header.Timestamp.Unix())
+	binary.Write(&buf, binary.LittleEndian, cb.Header.Difficulty)
+	binary.Write(&buf, binary.LittleEndian, cb.Header.Nonce)
+	binary.Write(&buf, binary.LittleEndian, cb.Header.Height)
+	buf.Write(cb.Header.Hash)
 
 	// Write nonce
 	binary.Write(&buf, binary.LittleEndian, cb.Nonce)
@@ -176,7 +182,36 @@ func (cb *CompactBlock) Serialize() []byte {
 	binary.Write(&buf, binary.LittleEndian, uint32(len(cb.PrefilledTxs)))
 	for _, ptx := range cb.PrefilledTxs {
 		binary.Write(&buf, binary.LittleEndian, ptx.Index)
-		txBytes := ptx.Tx.Serialize()
+
+		// Serialize transaction
+		var txBuf bytes.Buffer
+		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Version)
+		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Timestamp.Unix())
+		txBuf.Write(ptx.Tx.From)
+		txBuf.Write(ptx.Tx.To)
+		binary.Write(&txBuf, binary.LittleEndian, ptx.Tx.Amount)
+		txBuf.Write(ptx.Tx.Data)
+
+		// Write inputs
+		binary.Write(&txBuf, binary.LittleEndian, uint32(len(ptx.Tx.Inputs)))
+		for _, input := range ptx.Tx.Inputs {
+			txBuf.Write(input.PreviousTxHash)
+			binary.Write(&txBuf, binary.LittleEndian, input.PreviousTxIndex)
+			txBuf.Write(input.ScriptSig)
+			binary.Write(&txBuf, binary.LittleEndian, input.Sequence)
+		}
+
+		// Write outputs
+		binary.Write(&txBuf, binary.LittleEndian, uint32(len(ptx.Tx.Outputs)))
+		for _, output := range ptx.Tx.Outputs {
+			binary.Write(&txBuf, binary.LittleEndian, output.Value)
+			txBuf.Write(output.ScriptPubKey)
+			binary.Write(&txBuf, binary.LittleEndian, uint32(len(output.Address)))
+			txBuf.Write([]byte(output.Address))
+		}
+
+		// Write transaction size and data
+		txBytes := txBuf.Bytes()
 		binary.Write(&buf, binary.LittleEndian, uint32(len(txBytes)))
 		buf.Write(txBytes)
 	}
