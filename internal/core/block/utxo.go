@@ -2,11 +2,13 @@ package block
 
 import (
 	"time"
+
+	"github.com/youngchain/internal/core/common"
 )
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxOutput
+	Output      common.Output
 	IsSpent     bool      `json:"is_spent"`
 	IsConfirmed bool      `json:"is_confirmed"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -14,9 +16,9 @@ type UTXO struct {
 }
 
 // NewUTXO creates a new UTXO
-func NewUTXO(output TxOutput) *UTXO {
+func NewUTXO(output common.Output) *UTXO {
 	return &UTXO{
-		TxOutput:    output,
+		Output:      output,
 		IsSpent:     false,
 		IsConfirmed: false,
 		CreatedAt:   time.Now(),
