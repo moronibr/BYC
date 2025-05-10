@@ -8,6 +8,7 @@ import (
 
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 )
 
 // MessageType represents the type of network message
@@ -56,8 +57,8 @@ type BlockMessage struct {
 
 // TransactionMessage represents a transaction message
 type TransactionMessage struct {
-	Transaction block.Transaction `json:"transaction"`
-	CoinType    coin.CoinType     `json:"coin_type"`
+	Transaction *common.Transaction `json:"transaction"`
+	CoinType    coin.CoinType       `json:"coin_type"`
 }
 
 // NewMessage creates a new network message
@@ -114,8 +115,8 @@ func DeserializeBinary(data []byte) (*Message, error) {
 	return &msg, nil
 }
 
-// Node represents a network node
-type Node struct {
+// NetworkNode represents a network node
+type NetworkNode struct {
 	Address   string
 	Version   uint32
 	Services  uint64
@@ -123,9 +124,9 @@ type Node struct {
 	Connected bool
 }
 
-// NewNode creates a new network node
-func NewNode(address string) *Node {
-	return &Node{
+// NewNetworkNode creates a new network node
+func NewNetworkNode(address string) *NetworkNode {
+	return &NetworkNode{
 		Address:   address,
 		Version:   1,
 		Services:  1,
@@ -135,11 +136,11 @@ func NewNode(address string) *Node {
 }
 
 // UpdateLastSeen updates the last seen timestamp
-func (n *Node) UpdateLastSeen() {
+func (n *NetworkNode) UpdateLastSeen() {
 	n.LastSeen = time.Now()
 }
 
 // IsActive checks if the node is active
-func (n *Node) IsActive() bool {
+func (n *NetworkNode) IsActive() bool {
 	return time.Since(n.LastSeen) < time.Minute*5
 }
