@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 	"go.etcd.io/bbolt"
 )
 
@@ -75,7 +76,7 @@ func (s *Storage) StoreBlock(block *block.Block) error {
 
 		// Use block height as key
 		key := make([]byte, 8)
-		binary.BigEndian.PutUint64(key, block.Height)
+		binary.BigEndian.PutUint64(key, block.Header.Height)
 
 		if err := blocksBucket.Put(key, blockData); err != nil {
 			return err
@@ -89,7 +90,7 @@ func (s *Storage) StoreBlock(block *block.Block) error {
 				return err
 			}
 
-			if err := txBucket.Put(tx.Hash, txData); err != nil {
+			if err := txBucket.Put(tx.Hash(), txData); err != nil {
 				return err
 			}
 		}
@@ -130,7 +131,7 @@ func (s *Storage) GetBlock(height uint64) (*block.Block, error) {
 }
 
 // GetTransaction retrieves a transaction by hash
-func (s *Storage) GetTransaction(hash []byte) (*block.Transaction, error) {
+func (s *Storage) GetTransaction(hash []byte) (*common.Transaction, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -149,7 +150,7 @@ func (s *Storage) GetTransaction(hash []byte) (*block.Transaction, error) {
 		return nil, fmt.Errorf("transaction not found")
 	}
 
-	var tx block.Transaction
+	var tx common.Transaction
 	if err := json.Unmarshal(txData, &tx); err != nil {
 		return nil, err
 	}
