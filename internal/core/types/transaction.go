@@ -3,6 +3,7 @@ package types
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
@@ -118,11 +119,13 @@ func (tx *Transaction) Copy() *Transaction {
 		Amount:    tx.Amount,
 		Data:      make([]byte, len(tx.Data)),
 		Timestamp: tx.Timestamp,
+		Hash:      make([]byte, len(tx.Hash)),
 	}
 
 	copy(txCopy.From, tx.From)
 	copy(txCopy.To, tx.To)
 	copy(txCopy.Data, tx.Data)
+	copy(txCopy.Hash, tx.Hash)
 
 	return txCopy
 }
@@ -139,4 +142,44 @@ func (tx *Transaction) Size() int {
 	size += 8            // Timestamp
 
 	return size
+}
+
+// Validate validates the transaction
+func (tx *Transaction) Validate() error {
+	// Validate version
+	if tx.Version == 0 {
+		return errors.New("invalid version")
+	}
+
+	// Validate from address
+	if len(tx.From) == 0 {
+		return errors.New("invalid from address")
+	}
+
+	// Validate to address
+	if len(tx.To) == 0 {
+		return errors.New("invalid to address")
+	}
+
+	// Validate amount
+	if tx.Amount == 0 {
+		return errors.New("invalid amount")
+	}
+
+	// Validate timestamp
+	if tx.Timestamp.IsZero() {
+		return errors.New("invalid timestamp")
+	}
+
+	// Validate hash
+	if len(tx.Hash) == 0 {
+		return errors.New("invalid hash")
+	}
+
+	// Validate data
+	if len(tx.Data) == 0 {
+		return errors.New("invalid data")
+	}
+
+	return nil
 }

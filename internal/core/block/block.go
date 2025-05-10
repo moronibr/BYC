@@ -1,6 +1,7 @@
 package block
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/core/utxo"
 	"github.com/youngchain/internal/core/witness"
 )
@@ -57,7 +59,7 @@ type Block struct {
 	BlockSize    int
 	BlockWeight  int
 	TxCount      int
-	Transactions []*Transaction
+	Transactions []*types.Transaction
 }
 
 // Header represents a block header
@@ -137,12 +139,12 @@ func NewBlock(prevHash []byte, height uint64) *Block {
 		Timestamp:    time.Now(),
 		Difficulty:   0x1d00ffff,
 		Height:       height,
-		Transactions: make([]*Transaction, 0),
+		Transactions: make([]*types.Transaction, 0),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *Transaction) error {
+func (b *Block) AddTransaction(tx *types.Transaction) error {
 	if !b.CanAddTransaction(tx) {
 		return errors.New("block is full")
 	}
@@ -232,6 +234,12 @@ func (b *Block) Validate() error {
 		return err
 	}
 
+	// Validate merkle root matches transactions
+	calculatedMerkleRoot := b.CalculateMerkleRoot()
+	if !bytes.Equal(b.MerkleRoot, calculatedMerkleRoot) {
+		return errors.New("invalid merkle root")
+	}
+
 	return nil
 }
 
@@ -249,11 +257,11 @@ func (b *Block) Clone() *Block {
 		BlockSize:    b.BlockSize,
 		BlockWeight:  b.BlockWeight,
 		TxCount:      b.TxCount,
-		Transactions: make([]*Transaction, len(b.Transactions)),
+		Transactions: make([]*types.Transaction, len(b.Transactions)),
 	}
 
 	for i, tx := range b.Transactions {
-		clone.Transactions[i] = tx.Clone()
+		clone.Transactions[i] = tx.Copy()
 	}
 
 	return clone
@@ -446,7 +454,7 @@ func (b *Block) Copy() *Block {
 		BlockSize:    b.BlockSize,
 		BlockWeight:  b.BlockWeight,
 		TxCount:      b.TxCount,
-		Transactions: make([]*Transaction, len(b.Transactions)),
+		Transactions: make([]*types.Transaction, len(b.Transactions)),
 	}
 
 	// Copy byte slices
@@ -601,4 +609,313 @@ func (b *Block) Size() int {
 	size += len(b.Hash)
 
 	return size
+}
+
+// Serialize serializes the transaction
+func (tx *Transaction) Serialize() []byte {
+	var buf bytes.Buffer
+
+	// Write version
+	binary.Write(&buf, binary.LittleEndian, tx.Version)
+
+	// Write from address
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.From)))
+	buf.WriteString(tx.From)
+
+	// Write to address
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.To)))
+	buf.WriteString(tx.To)
+
+	// Write amount
+	binary.Write(&buf, binary.LittleEndian, tx.Amount)
+
+	// Write nonce
+	binary.Write(&buf, binary.LittleEndian, tx.Nonce)
+
+	// Write signature
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Signature)))
+	buf.Write(tx.Signature)
+
+	// Write hash
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Hash)))
+	buf.Write(tx.Hash)
+
+	// Write timestamp
+	binary.Write(&buf, binary.LittleEndian, tx.Timestamp.Unix())
+
+	// Write lock time
+	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
+
+	// Write inputs
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Inputs)))
+	for _, input := range tx.Inputs {
+		// Write previous tx
+		binary.Write(&buf, binary.LittleEndian, uint32(len(input.PreviousTx)))
+		buf.Write(input.PreviousTx)
+
+		// Write output index
+		binary.Write(&buf, binary.LittleEndian, input.OutputIndex)
+
+		// Write script
+		binary.Write(&buf, binary.LittleEndian, uint32(len(input.Script)))
+		buf.Write(input.Script)
+
+		// Write sequence
+		binary.Write(&buf, binary.LittleEndian, input.Sequence)
+	}
+
+	// Write outputs
+	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Outputs)))
+	for _, output := range tx.Outputs {
+		// Write value
+		binary.Write(&buf, binary.LittleEndian, output.Value)
+
+		// Write script
+		binary.Write(&buf, binary.LittleEndian, uint32(len(output.Script)))
+		buf.Write(output.Script)
+
+		// Write coin type
+		binary.Write(&buf, binary.LittleEndian, uint32(len(output.CoinType)))
+		buf.WriteString(string(output.CoinType))
+	}
+
+	// Write witness if present
+	if tx.Witness != nil {
+		binary.Write(&buf, binary.LittleEndian, uint8(1))
+		// For now, just write a placeholder for witness data
+		binary.Write(&buf, binary.LittleEndian, uint32(0))
+	} else {
+		binary.Write(&buf, binary.LittleEndian, uint8(0))
+	}
+
+	return buf.Bytes()
+}
+
+// Deserialize deserializes the transaction
+func (tx *Transaction) Deserialize(data []byte) error {
+	buf := bytes.NewReader(data)
+
+	// Read version
+	if err := binary.Read(buf, binary.LittleEndian, &tx.Version); err != nil {
+		return err
+	}
+
+	// Read from address
+	var fromLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &fromLen); err != nil {
+		return err
+	}
+	from := make([]byte, fromLen)
+	if _, err := buf.Read(from); err != nil {
+		return err
+	}
+	tx.From = string(from)
+
+	// Read to address
+	var toLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &toLen); err != nil {
+		return err
+	}
+	to := make([]byte, toLen)
+	if _, err := buf.Read(to); err != nil {
+		return err
+	}
+	tx.To = string(to)
+
+	// Read amount
+	if err := binary.Read(buf, binary.LittleEndian, &tx.Amount); err != nil {
+		return err
+	}
+
+	// Read nonce
+	if err := binary.Read(buf, binary.LittleEndian, &tx.Nonce); err != nil {
+		return err
+	}
+
+	// Read signature
+	var sigLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &sigLen); err != nil {
+		return err
+	}
+	tx.Signature = make([]byte, sigLen)
+	if _, err := buf.Read(tx.Signature); err != nil {
+		return err
+	}
+
+	// Read hash
+	var hashLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &hashLen); err != nil {
+		return err
+	}
+	tx.Hash = make([]byte, hashLen)
+	if _, err := buf.Read(tx.Hash); err != nil {
+		return err
+	}
+
+	// Read timestamp
+	var timestamp int64
+	if err := binary.Read(buf, binary.LittleEndian, &timestamp); err != nil {
+		return err
+	}
+	tx.Timestamp = time.Unix(timestamp, 0)
+
+	// Read lock time
+	if err := binary.Read(buf, binary.LittleEndian, &tx.LockTime); err != nil {
+		return err
+	}
+
+	// Read inputs
+	var inputCount uint32
+	if err := binary.Read(buf, binary.LittleEndian, &inputCount); err != nil {
+		return err
+	}
+	tx.Inputs = make([]TxInput, inputCount)
+	for i := uint32(0); i < inputCount; i++ {
+		// Read previous tx
+		var prevTxLen uint32
+		if err := binary.Read(buf, binary.LittleEndian, &prevTxLen); err != nil {
+			return err
+		}
+		tx.Inputs[i].PreviousTx = make([]byte, prevTxLen)
+		if _, err := buf.Read(tx.Inputs[i].PreviousTx); err != nil {
+			return err
+		}
+
+		// Read output index
+		if err := binary.Read(buf, binary.LittleEndian, &tx.Inputs[i].OutputIndex); err != nil {
+			return err
+		}
+
+		// Read script
+		var scriptLen uint32
+		if err := binary.Read(buf, binary.LittleEndian, &scriptLen); err != nil {
+			return err
+		}
+		tx.Inputs[i].Script = make([]byte, scriptLen)
+		if _, err := buf.Read(tx.Inputs[i].Script); err != nil {
+			return err
+		}
+
+		// Read sequence
+		if err := binary.Read(buf, binary.LittleEndian, &tx.Inputs[i].Sequence); err != nil {
+			return err
+		}
+	}
+
+	// Read outputs
+	var outputCount uint32
+	if err := binary.Read(buf, binary.LittleEndian, &outputCount); err != nil {
+		return err
+	}
+	tx.Outputs = make([]TxOutput, outputCount)
+	for i := uint32(0); i < outputCount; i++ {
+		// Read value
+		if err := binary.Read(buf, binary.LittleEndian, &tx.Outputs[i].Value); err != nil {
+			return err
+		}
+
+		// Read script
+		var scriptLen uint32
+		if err := binary.Read(buf, binary.LittleEndian, &scriptLen); err != nil {
+			return err
+		}
+		tx.Outputs[i].Script = make([]byte, scriptLen)
+		if _, err := buf.Read(tx.Outputs[i].Script); err != nil {
+			return err
+		}
+
+		// Read coin type
+		var coinTypeLen uint32
+		if err := binary.Read(buf, binary.LittleEndian, &coinTypeLen); err != nil {
+			return err
+		}
+		coinType := make([]byte, coinTypeLen)
+		if _, err := buf.Read(coinType); err != nil {
+			return err
+		}
+		tx.Outputs[i].CoinType = coin.CoinType(string(coinType))
+	}
+
+	// Read witness
+	var hasWitness uint8
+	if err := binary.Read(buf, binary.LittleEndian, &hasWitness); err != nil {
+		return err
+	}
+	if hasWitness == 1 {
+		var witnessLen uint32
+		if err := binary.Read(buf, binary.LittleEndian, &witnessLen); err != nil {
+			return err
+		}
+		// For now, just skip witness data
+		if _, err := buf.Seek(int64(witnessLen), 1); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// GetBlockSize returns the size of the block in bytes
+func (b *Block) GetBlockSize() int {
+	size := 0
+
+	// Version size
+	size += 4
+
+	// Previous block hash size
+	size += len(b.PrevHash)
+
+	// Merkle root size
+	size += len(b.MerkleRoot)
+
+	// Timestamp size
+	size += 8
+
+	// Difficulty size
+	size += 8
+
+	// Nonce size
+	size += 4
+
+	// Transaction count size
+	size += 4
+
+	// Transaction sizes
+	for _, tx := range b.Transactions {
+		size += tx.Size()
+	}
+
+	return size
+}
+
+// GetBlockWeight returns the weight of the block
+func (b *Block) GetBlockWeight() int {
+	weight := 0
+
+	// Base weight
+	weight += b.GetBlockSize()
+
+	// Additional weight for transactions
+	for _, tx := range b.Transactions {
+		weight += tx.Size() * 4 // Transactions are weighted 4x
+	}
+
+	return weight
+}
+
+// ValidateBlockWeight validates the block weight
+func (b *Block) ValidateBlockWeight() error {
+	maxWeight := 4 * 1024 * 1024 // 4MB
+	if b.GetBlockWeight() > maxWeight {
+		return errors.New("block weight exceeds maximum")
+	}
+	return nil
+}
+
+// CanAddTransaction checks if a transaction can be added to the block
+func (b *Block) CanAddTransaction(tx *types.Transaction) bool {
+	// Check if adding the transaction would exceed the maximum block weight
+	newWeight := b.GetBlockWeight() + tx.Size()*4
+	maxWeight := 4 * 1024 * 1024 // 4MB
+	return newWeight <= maxWeight
 }
