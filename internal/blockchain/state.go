@@ -76,7 +76,8 @@ func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight u
 
 	// Calculate total input amount
 	var totalInput uint64
-	for _, input := range tx.Inputs {
+	inputs := tx.Inputs()
+	for _, input := range inputs {
 		// Get UTXO
 		utxo, exists := sm.utxoSet.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 		if !exists {
@@ -89,7 +90,8 @@ func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight u
 
 	// Calculate total output amount
 	var totalOutput uint64
-	for _, output := range tx.Outputs {
+	outputs := tx.Outputs()
+	for _, output := range outputs {
 		totalOutput += output.Value
 	}
 
@@ -99,13 +101,13 @@ func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight u
 	}
 
 	// Update UTXO set
-	for _, input := range tx.Inputs {
+	for _, input := range inputs {
 		// Mark input as spent
 		sm.utxoSet.RemoveUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 	}
 
 	// Add new UTXOs
-	for i, output := range tx.Outputs {
+	for i, output := range outputs {
 		// Create script from public key
 		script := script.CreateP2PKHScript(output.ScriptPubKey)
 		if err := script.Validate(); err != nil {
@@ -113,7 +115,7 @@ func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight u
 		}
 
 		utxo := &utxo.UTXO{
-			TxHash:      tx.Hash,
+			TxHash:      tx.Hash(),
 			OutIndex:    uint32(i),
 			Amount:      output.Value,
 			ScriptPub:   script,
