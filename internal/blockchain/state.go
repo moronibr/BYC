@@ -6,12 +6,16 @@ import (
 	"sync"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/script"
+	"github.com/youngchain/internal/core/utxo"
 )
 
 // StateManager manages the blockchain state
 type StateManager struct {
 	state     *State
 	storage   *Storage
+	utxoSet   *utxo.UTXOSet
 	processor *Processor
 	mu        sync.RWMutex
 }
@@ -33,6 +37,7 @@ func NewStateManager(storage *Storage, processor *Processor) *StateManager {
 			ContractData: make(map[string][]byte),
 		},
 		storage:   storage,
+		utxoSet:   utxo.NewUTXOSet(),
 		processor: processor,
 	}
 }
@@ -44,7 +49,7 @@ func (sm *StateManager) ApplyBlock(block *block.Block) error {
 
 	// Process each transaction in the block
 	for _, tx := range block.Transactions {
-		if err := sm.processTransaction(tx); err != nil {
+		if err := sm.processTransaction(tx, block.Header.Height); err != nil {
 			return fmt.Errorf("failed to process transaction: %v", err)
 		}
 	}
@@ -58,31 +63,67 @@ func (sm *StateManager) ApplyBlock(block *block.Block) error {
 }
 
 // processTransaction processes a single transaction
-func (sm *StateManager) processTransaction(tx *block.Transaction) error {
-	// Verify transaction
-	if !tx.VerifySignature(nil) { // TODO: Get public key from address
-		return fmt.Errorf("invalid transaction signature")
+func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight uint64) error {
+	// Validate transaction
+	if err := tx.Validate(); err != nil {
+		return fmt.Errorf("invalid transaction: %v", err)
 	}
 
-	// Check sender's balance
-	senderBalance := sm.state.GetBalance(tx.From)
-	if senderBalance < tx.Amount {
-		return fmt.Errorf("insufficient balance")
+	// Skip coinbase transactions
+	if tx.IsCoinbase() {
+		return nil
 	}
 
-	// Check nonce
-	senderNonce := sm.state.GetNonce(tx.From)
-	if tx.Nonce != senderNonce {
-		return fmt.Errorf("invalid nonce")
+	// Calculate total input amount
+	var totalInput uint64
+	for _, input := range tx.Inputs {
+		// Get UTXO
+		utxo, exists := sm.utxoSet.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+		if !exists {
+			return fmt.Errorf("input not found: %x:%d", input.PreviousTxHash, input.PreviousTxIndex)
+		}
+
+		// Add to total input
+		totalInput += utxo.Amount
 	}
 
-	// Update balances
-	sm.state.UpdateBalance(tx.From, senderBalance-tx.Amount)
-	receiverBalance := sm.state.GetBalance(tx.To)
-	sm.state.UpdateBalance(tx.To, receiverBalance+tx.Amount)
+	// Calculate total output amount
+	var totalOutput uint64
+	for _, output := range tx.Outputs {
+		totalOutput += output.Value
+	}
 
-	// Update nonce
-	sm.state.IncrementNonce(tx.From)
+	// Check if inputs cover outputs
+	if totalInput < totalOutput {
+		return fmt.Errorf("insufficient input amount")
+	}
+
+	// Update UTXO set
+	for _, input := range tx.Inputs {
+		// Mark input as spent
+		sm.utxoSet.RemoveUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+	}
+
+	// Add new UTXOs
+	for i, output := range tx.Outputs {
+		// Create script from public key
+		script := script.CreateP2PKHScript(output.ScriptPubKey)
+		if err := script.Validate(); err != nil {
+			return fmt.Errorf("invalid script: %v", err)
+		}
+
+		utxo := &utxo.UTXO{
+			TxHash:      tx.Hash,
+			OutIndex:    uint32(i),
+			Amount:      output.Value,
+			ScriptPub:   script,
+			IsCoinbase:  tx.IsCoinbase(),
+			BlockHeight: blockHeight,
+		}
+		if err := sm.utxoSet.AddUTXO(utxo); err != nil {
+			return fmt.Errorf("failed to add UTXO: %v", err)
+		}
+	}
 
 	return nil
 }

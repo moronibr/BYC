@@ -3,7 +3,7 @@ package transaction
 import (
 	"fmt"
 
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 )
 
 // ValidationError represents a transaction validation error
@@ -17,7 +17,7 @@ func (e *ValidationError) Error() string {
 }
 
 // ValidateTransaction validates a transaction
-func ValidateTransaction(tx *types.Transaction, utxoGetter UTXOGetter) error {
+func ValidateTransaction(tx *common.Transaction, utxoGetter UTXOGetter) error {
 	// Validate basic structure
 	if err := validateBasicStructure(tx); err != nil {
 		return err
@@ -34,7 +34,7 @@ func ValidateTransaction(tx *types.Transaction, utxoGetter UTXOGetter) error {
 	}
 
 	// Validate fee
-	if err := validateFee(tx); err != nil {
+	if err := validateFee(tx, utxoGetter); err != nil {
 		return err
 	}
 
@@ -43,11 +43,11 @@ func ValidateTransaction(tx *types.Transaction, utxoGetter UTXOGetter) error {
 
 // UTXOGetter defines the interface for getting UTXOs
 type UTXOGetter interface {
-	GetUTXO(txHash []byte, index uint32) (*types.UTXO, error)
+	GetUTXO(txHash []byte, index uint32) (*common.UTXO, error)
 }
 
 // validateBasicStructure validates the basic structure of a transaction
-func validateBasicStructure(tx *types.Transaction) error {
+func validateBasicStructure(tx *common.Transaction) error {
 	if tx == nil {
 		return &ValidationError{Code: 1, Message: "transaction is nil"}
 	}
@@ -64,7 +64,7 @@ func validateBasicStructure(tx *types.Transaction) error {
 }
 
 // validateInputs validates the inputs of a transaction
-func validateInputs(tx *types.Transaction, utxoGetter UTXOGetter) error {
+func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 	var totalInput uint64
 	spentUTXOs := make(map[string]bool)
 
@@ -91,11 +91,11 @@ func validateInputs(tx *types.Transaction, utxoGetter UTXOGetter) error {
 		}
 
 		// Validate signature
-		if !validateSignature(input, utxo) {
+		if !validateSignature(&input, utxo) {
 			return &ValidationError{Code: 8, Message: "invalid signature"}
 		}
 
-		totalInput += utxo.Value
+		totalInput += utxo.Amount
 	}
 
 	// Check if inputs are sufficient
@@ -104,7 +104,9 @@ func validateInputs(tx *types.Transaction, utxoGetter UTXOGetter) error {
 		totalOutput += output.Value
 	}
 
-	if totalInput < totalOutput+tx.Fee {
+	// Calculate fee as the difference between inputs and outputs
+	fee := totalInput - totalOutput
+	if fee < 0 {
 		return &ValidationError{Code: 9, Message: "insufficient funds"}
 	}
 
@@ -112,7 +114,7 @@ func validateInputs(tx *types.Transaction, utxoGetter UTXOGetter) error {
 }
 
 // validateOutputs validates the outputs of a transaction
-func validateOutputs(tx *types.Transaction) error {
+func validateOutputs(tx *common.Transaction) error {
 	for _, output := range tx.Outputs {
 		if output.Value == 0 {
 			return &ValidationError{Code: 10, Message: "output value cannot be zero"}
@@ -131,9 +133,25 @@ func validateOutputs(tx *types.Transaction) error {
 }
 
 // validateFee validates the transaction fee
-func validateFee(tx *types.Transaction) error {
-	if tx.Fee < 0 {
-		return &ValidationError{Code: 13, Message: "fee cannot be negative"}
+func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
+	// Calculate total input and output values
+	var totalInput, totalOutput uint64
+	for _, input := range tx.Inputs {
+		utxo, err := utxoGetter.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+		if err != nil {
+			return &ValidationError{Code: 13, Message: fmt.Sprintf("failed to get UTXO: %v", err)}
+		}
+		totalInput += utxo.Amount
+	}
+
+	for _, output := range tx.Outputs {
+		totalOutput += output.Value
+	}
+
+	// Fee is the difference between inputs and outputs
+	fee := totalInput - totalOutput
+	if fee < 0 {
+		return &ValidationError{Code: 14, Message: "fee cannot be negative"}
 	}
 
 	// TODO: Add more fee validation rules
@@ -141,7 +159,7 @@ func validateFee(tx *types.Transaction) error {
 }
 
 // validateSignature validates the signature of a transaction input
-func validateSignature(input *types.Input, utxo *types.UTXO) bool {
+func validateSignature(input *common.Input, utxo *common.UTXO) bool {
 	// TODO: Implement signature validation
 	return true
 }

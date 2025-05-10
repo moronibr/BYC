@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 )
 
 func TestFeeCalculator(t *testing.T) {
@@ -13,10 +13,10 @@ func TestFeeCalculator(t *testing.T) {
 
 	t.Run("Basic Fee Calculation", func(t *testing.T) {
 		// Create a test transaction
-		tx := &block.Transaction{
+		tx := &common.Transaction{
 			Version: 1,
-			Inputs:  []block.TxInput{{}},
-			Outputs: []block.TxOutput{{}},
+			Inputs:  []common.Input{{}},
+			Outputs: []common.Output{{}},
 		}
 
 		// Calculate fee
@@ -41,10 +41,10 @@ func TestFeeCalculator(t *testing.T) {
 		calculator.SetPriorityMultiplier(1.5)
 
 		// Create a test transaction
-		tx := &block.Transaction{
+		tx := &common.Transaction{
 			Version: 1,
-			Inputs:  []block.TxInput{{}},
-			Outputs: []block.TxOutput{{}},
+			Inputs:  []common.Input{{}},
+			Outputs: []common.Output{{}},
 		}
 
 		// Calculate fee

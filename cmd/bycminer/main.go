@@ -16,8 +16,13 @@ import (
 	"github.com/youngchain/internal/config"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/mining"
+	"github.com/youngchain/internal/core/storage"
+	"github.com/youngchain/internal/core/transaction"
+	"github.com/youngchain/internal/core/utxo"
 	"github.com/youngchain/internal/network"
+	"github.com/youngchain/internal/network/messages"
 )
 
 var (
@@ -40,7 +45,7 @@ var (
 
 	// Network state
 	networkServer *network.Server
-	transactions  []*block.Transaction
+	transactions  []*common.Transaction
 	txMutex       sync.RWMutex
 	latestBlock   *block.Block
 	blockMutex    sync.RWMutex
@@ -82,7 +87,12 @@ func main() {
 		ListenAddr: fmt.Sprintf(":%d", *minerPort),
 		MaxPeers:   10,
 	}
-	networkServer = network.NewServer(cfg)
+
+	// Create consensus engine
+	consensus := &mining.PoWConsensus{}
+
+	// Initialize network server
+	networkServer = network.NewServer(cfg, consensus)
 	if err := networkServer.Start(); err != nil {
 		log.Fatalf("Failed to start network server: %v", err)
 	}
@@ -91,9 +101,15 @@ func main() {
 	// Start network message handler
 	go handleNetworkMessages()
 
+	// Initialize storage
+	db := storage.NewMemoryDB()
+	blockStore := storage.NewMemoryBlockStore()
+	utxoSet := utxo.NewMemoryUTXOSet()
+	txPool := transaction.NewTxPool(1000, 1000, utxoSet)
+
 	// Initialize mining with initial block
-	latestBlock = block.NewBlock([]byte{}, block.GetInitialDifficulty(block.GoldenBlock))
-	miner := mining.NewMiner(latestBlock)
+	latestBlock = block.NewBlock([]byte{}, uint64(block.GetInitialDifficulty(block.GoldenBlock)))
+	miner := mining.NewMiner(txPool, blockStore, utxoSet, *walletAddress)
 
 	// Start mining threads
 	var wg sync.WaitGroup
@@ -122,7 +138,7 @@ func main() {
 }
 
 func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopChan chan struct{}) {
-	nonce := uint64(threadID)
+	nonce := uint32(threadID)
 	hashes := uint64(0)
 	lastReport := time.Now()
 
@@ -159,18 +175,18 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 			txMutex.Unlock()
 
 			// Update miner's current block
-			miner.CurrentBlock = blockCopy
+			miner.SetBlock(blockCopy)
 
 			// Calculate hash
-			hash := miner.CalculateHash(nonce)
+			hash := miner.MineBlock(nonce)
 			hashes++
 
 			// Check if hash meets difficulty target
-			target := miner.CalculateTarget(coinType)
+			target := miner.GetTarget(coinType)
 			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
 				// Found a valid block!
 				blockCopy.Header.Nonce = nonce
-				blockCopy.Hash = hash
+				blockCopy.Header.Hash = hash
 
 				// Update statistics
 				statsMutex.Lock()
@@ -182,11 +198,11 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 
 				// Clear transaction pool after successful mining
 				txMutex.Lock()
-				transactions = []*block.Transaction{}
+				transactions = []*common.Transaction{}
 				txMutex.Unlock()
 
 				// Reset nonce for next block
-				nonce = uint64(threadID)
+				nonce = uint32(threadID)
 			} else {
 				// Increment nonce by 1 for next attempt
 				// This ensures we don't miss any potential nonce values
@@ -224,13 +240,13 @@ func handleNetworkMessages() {
 
 func submitBlock(block *block.Block) {
 	// Create block message
-	blockMsg := &network.BlockMessage{
+	blockMsg := &messages.BlockMessage{
 		Block:     block,
 		BlockType: "golden", // Use string literal for block type
 	}
 
 	// Create network message
-	msg, err := network.NewMessage(network.BlockMsg, blockMsg)
+	msg, err := messages.NewMessage(messages.BlockMsg, blockMsg)
 	if err != nil {
 		log.Printf("Error creating block message: %v", err)
 		return
@@ -238,7 +254,7 @@ func submitBlock(block *block.Block) {
 
 	// Send message to network
 	networkServer.MessageChan <- msg
-	log.Printf("Submitted block with hash: %x", block.Hash)
+	log.Printf("Submitted block with hash: %x", block.Header.Hash)
 }
 
 func reportStats() {
@@ -248,9 +264,9 @@ func reportStats() {
 	for {
 		<-ticker.C
 		statsMutex.RLock()
-		uptime := time.Since(startTime).Seconds()
+		elapsed := time.Since(startTime).Seconds()
 		log.Printf("Hashrate: %.2f H/s, Blocks found: %d, Uptime: %.0f seconds",
-			hashrate, blocksFound, uptime)
+			hashrate, blocksFound, elapsed)
 		statsMutex.RUnlock()
 	}
 }
