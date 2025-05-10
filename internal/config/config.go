@@ -30,6 +30,10 @@ type Config struct {
 	// Consensus configuration
 	InitialDifficulty uint32 `json:"initial_difficulty"`
 	BlockTime         int64  `json:"block_time"`
+
+	// TLS configuration
+	TLSEnabled bool      `json:"tls_enabled"`
+	TLS        TLSConfig `json:"tls"`
 }
 
 // TLSConfig represents TLS configuration
@@ -56,6 +60,13 @@ func DefaultConfig() *Config {
 		DBTimeout:         30 * time.Second,
 		InitialDifficulty: 1,
 		BlockTime:         600, // 10 minutes
+		TLSEnabled:        false,
+		TLS: TLSConfig{
+			CertFile:   "server.crt",
+			KeyFile:    "server.key",
+			ClientCAs:  "client-ca.crt",
+			ServerName: "localhost",
+		},
 	}
 }
 
