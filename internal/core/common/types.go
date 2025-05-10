@@ -3,6 +3,7 @@ package common
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -105,7 +106,7 @@ func (us *UTXOSet) GetUTXO(txHash []byte, outIndex uint32) (*UTXO, bool) {
 
 // utxoKey creates a key for a UTXO
 func utxoKey(txHash []byte, outIndex uint32) string {
-	return string(txHash) + ":" + string(outIndex)
+	return string(txHash) + ":" + strconv.FormatUint(uint64(outIndex), 10)
 }
 
 // Witness represents a transaction witness
