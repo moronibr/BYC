@@ -16,9 +16,9 @@ func TestNewTransaction(t *testing.T) {
 
 	assert.NotNil(t, tx)
 	assert.Equal(t, uint32(1), tx.Version)
-	assert.Equal(t, from, tx.From)
-	assert.Equal(t, to, tx.To)
-	assert.Equal(t, amount, tx.Amount)
+	assert.Equal(t, string(from), tx.Inputs[0].Address)
+	assert.Equal(t, string(to), tx.Outputs[0].Address)
+	assert.Equal(t, amount, tx.Outputs[0].Value)
 	assert.Equal(t, data, tx.Data)
 	assert.NotNil(t, tx.Hash)
 }
@@ -40,7 +40,7 @@ func TestTransaction_CalculateHash(t *testing.T) {
 	assert.Equal(t, hash, hash2)
 
 	// Hash should change when transaction data changes
-	tx.Amount = 200
+	tx.Outputs[0].Value = 200
 	hash3 := tx.CalculateHash()
 	assert.NotEqual(t, hash, hash3)
 }
@@ -56,15 +56,15 @@ func TestTransaction_Copy(t *testing.T) {
 
 	assert.NotNil(t, txCopy)
 	assert.Equal(t, tx.Version, txCopy.Version)
-	assert.Equal(t, tx.From, txCopy.From)
-	assert.Equal(t, tx.To, txCopy.To)
-	assert.Equal(t, tx.Amount, txCopy.Amount)
+	assert.Equal(t, tx.Inputs[0].Address, txCopy.Inputs[0].Address)
+	assert.Equal(t, tx.Outputs[0].Address, txCopy.Outputs[0].Address)
+	assert.Equal(t, tx.Outputs[0].Value, txCopy.Outputs[0].Value)
 	assert.Equal(t, tx.Data, txCopy.Data)
 	assert.Equal(t, tx.Hash, txCopy.Hash)
 
 	// Verify deep copy
-	txCopy.Amount = 200
-	assert.NotEqual(t, tx.Amount, txCopy.Amount)
+	txCopy.Outputs[0].Value = 200
+	assert.NotEqual(t, tx.Outputs[0].Value, txCopy.Outputs[0].Value)
 }
 
 func TestTransaction_Size(t *testing.T) {
