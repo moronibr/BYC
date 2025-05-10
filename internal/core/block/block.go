@@ -1,15 +1,17 @@
 package block
 
 import (
-	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/utxo"
+	"github.com/youngchain/internal/core/witness"
 )
 
 // BlockType represents the type of block
@@ -44,14 +46,18 @@ func (h *BlockHeader) String() string {
 
 // Block represents a block in the blockchain
 type Block struct {
-	Height       uint64
-	Timestamp    time.Time
-	Transactions []*Transaction
+	Version      uint32
 	PrevHash     []byte
-	Hash         []byte
-	Nonce        uint64
-	Difficulty   uint64
 	MerkleRoot   []byte
+	Timestamp    time.Time
+	Difficulty   uint64
+	Nonce        uint32
+	Hash         []byte
+	Height       uint64
+	BlockSize    int
+	BlockWeight  int
+	TxCount      int
+	Transactions []*Transaction
 }
 
 // Header represents a block header
@@ -78,6 +84,11 @@ type Transaction struct {
 	Signature []byte
 	Hash      []byte
 	Timestamp time.Time
+	Witness   *witness.Witness
+	Inputs    []TxInput
+	Outputs   []TxOutput
+	LockTime  uint64
+	Version   uint32
 }
 
 // TxInput represents a transaction input
@@ -97,8 +108,19 @@ type TxOutput struct {
 
 // String returns a string representation of the block
 func (b *Block) String() string {
-	return fmt.Sprintf("Block{Height: %d, Hash: %x, Transactions: %d}",
-		b.Height, b.Hash, len(b.Transactions))
+	return fmt.Sprintf("Block{Version: %d, PrevHash: %s, MerkleRoot: %s, Timestamp: %s, Difficulty: %d, Nonce: %d, Hash: %s, Height: %d, Size: %d, Weight: %d, TxCount: %d}",
+		b.Version,
+		hex.EncodeToString(b.PrevHash),
+		hex.EncodeToString(b.MerkleRoot),
+		b.Timestamp.Format(time.RFC3339),
+		b.Difficulty,
+		b.Nonce,
+		hex.EncodeToString(b.Hash),
+		b.Height,
+		b.BlockSize,
+		b.BlockWeight,
+		b.TxCount,
+	)
 }
 
 // String returns a string representation of the header
@@ -108,20 +130,270 @@ func (h *Header) String() string {
 }
 
 // NewBlock creates a new block
-func NewBlock(prevBlockHash []byte, difficulty uint32) *Block {
+func NewBlock(prevHash []byte, height uint64) *Block {
 	return &Block{
-		Height:       0,
+		Version:      1,
+		PrevHash:     prevHash,
 		Timestamp:    time.Now(),
+		Difficulty:   0x1d00ffff,
+		Height:       height,
 		Transactions: make([]*Transaction, 0),
-		PrevHash:     prevBlockHash,
-		Nonce:        0,
-		Difficulty:   uint64(difficulty),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *Transaction) {
+func (b *Block) AddTransaction(tx *Transaction) error {
+	if !b.CanAddTransaction(tx) {
+		return errors.New("block is full")
+	}
+
 	b.Transactions = append(b.Transactions, tx)
+	b.TxCount++
+	b.BlockSize = b.GetBlockSize()
+	b.BlockWeight = b.GetBlockWeight()
+
+	return nil
+}
+
+// CalculateHash calculates the block hash
+func (b *Block) CalculateHash() []byte {
+	hash := sha256.New()
+
+	// Hash version
+	versionBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(versionBytes, b.Version)
+	hash.Write(versionBytes)
+
+	// Hash previous block hash
+	hash.Write(b.PrevHash)
+
+	// Hash merkle root
+	hash.Write(b.MerkleRoot)
+
+	// Hash timestamp
+	timeBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(timeBytes, uint64(b.Timestamp.Unix()))
+	hash.Write(timeBytes)
+
+	// Hash difficulty
+	diffBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(diffBytes, b.Difficulty)
+	hash.Write(diffBytes)
+
+	// Hash nonce
+	nonceBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(nonceBytes, b.Nonce)
+	hash.Write(nonceBytes)
+
+	return hash.Sum(nil)
+}
+
+// Validate validates the block
+func (b *Block) Validate() error {
+	// Validate version
+	if b.Version == 0 {
+		return errors.New("invalid version")
+	}
+
+	// Validate previous block hash
+	if len(b.PrevHash) != 32 {
+		return errors.New("invalid previous block hash")
+	}
+
+	// Validate merkle root
+	if len(b.MerkleRoot) != 32 {
+		return errors.New("invalid merkle root")
+	}
+
+	// Validate timestamp
+	if b.Timestamp.IsZero() {
+		return errors.New("invalid timestamp")
+	}
+
+	// Validate difficulty
+	if b.Difficulty == 0 {
+		return errors.New("invalid difficulty")
+	}
+
+	// Validate hash
+	if len(b.Hash) != 32 {
+		return errors.New("invalid hash")
+	}
+
+	// Validate transactions
+	for _, tx := range b.Transactions {
+		if err := tx.Validate(); err != nil {
+			return fmt.Errorf("invalid transaction: %v", err)
+		}
+	}
+
+	// Validate block weight
+	if err := b.ValidateBlockWeight(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Clone creates a deep copy of the block
+func (b *Block) Clone() *Block {
+	clone := &Block{
+		Version:      b.Version,
+		PrevHash:     append([]byte{}, b.PrevHash...),
+		MerkleRoot:   append([]byte{}, b.MerkleRoot...),
+		Timestamp:    b.Timestamp,
+		Difficulty:   b.Difficulty,
+		Nonce:        b.Nonce,
+		Hash:         append([]byte{}, b.Hash...),
+		Height:       b.Height,
+		BlockSize:    b.BlockSize,
+		BlockWeight:  b.BlockWeight,
+		TxCount:      b.TxCount,
+		Transactions: make([]*Transaction, len(b.Transactions)),
+	}
+
+	for i, tx := range b.Transactions {
+		clone.Transactions[i] = tx.Clone()
+	}
+
+	return clone
+}
+
+// NewTransaction creates a new transaction
+func NewTransaction(from, to string, amount uint64, nonce uint64) *Transaction {
+	return &Transaction{
+		From:      from,
+		To:        to,
+		Amount:    amount,
+		Nonce:     nonce,
+		Timestamp: time.Now(),
+	}
+}
+
+// Validate validates the transaction
+func (tx *Transaction) Validate() error {
+	// Validate version
+	if tx.Version == 0 {
+		return errors.New("invalid version")
+	}
+
+	// Validate from address
+	if tx.From == "" {
+		return errors.New("invalid from address")
+	}
+
+	// Validate to address
+	if tx.To == "" {
+		return errors.New("invalid to address")
+	}
+
+	// Validate amount
+	if tx.Amount == 0 {
+		return errors.New("invalid amount")
+	}
+
+	// Validate nonce
+	if tx.Nonce == 0 {
+		return errors.New("invalid nonce")
+	}
+
+	// Validate signature
+	if len(tx.Signature) == 0 {
+		return errors.New("invalid signature")
+	}
+
+	// Validate hash
+	if len(tx.Hash) == 0 {
+		return errors.New("invalid hash")
+	}
+
+	// Validate timestamp
+	if tx.Timestamp.IsZero() {
+		return errors.New("invalid timestamp")
+	}
+
+	// Validate inputs
+	if len(tx.Inputs) == 0 {
+		return errors.New("no inputs")
+	}
+
+	// Validate outputs
+	if len(tx.Outputs) == 0 {
+		return errors.New("no outputs")
+	}
+
+	// Validate witness if present
+	if tx.Witness != nil {
+		if err := tx.Witness.Validate(); err != nil {
+			return fmt.Errorf("invalid witness: %v", err)
+		}
+	}
+
+	// Validate lock time
+	if !tx.IsLockTimeValid() {
+		return errors.New("invalid lock time")
+	}
+
+	return nil
+}
+
+// GetTransactionSize returns the size of the transaction in bytes
+func (tx *Transaction) GetTransactionSize() int {
+	size := 0
+
+	// From address size
+	size += len(tx.From)
+
+	// To address size
+	size += len(tx.To)
+
+	// Amount size
+	size += 8
+
+	// Nonce size
+	size += 8
+
+	// Signature size
+	size += len(tx.Signature)
+
+	// Hash size
+	size += len(tx.Hash)
+
+	// Timestamp size
+	size += 8
+
+	// Witness size if present
+	if tx.Witness != nil {
+		size += tx.Witness.Size()
+	}
+
+	return size
+}
+
+// Clone creates a deep copy of the transaction
+func (tx *Transaction) Clone() *Transaction {
+	clone := &Transaction{
+		From:      tx.From,
+		To:        tx.To,
+		Amount:    tx.Amount,
+		Nonce:     tx.Nonce,
+		Signature: append([]byte{}, tx.Signature...),
+		Hash:      append([]byte{}, tx.Hash...),
+		Timestamp: tx.Timestamp,
+		Version:   tx.Version,
+	}
+
+	if tx.Witness != nil {
+		clone.Witness = tx.Witness.Clone()
+	}
+
+	clone.Inputs = make([]TxInput, len(tx.Inputs))
+	copy(clone.Inputs, tx.Inputs)
+
+	clone.Outputs = make([]TxOutput, len(tx.Outputs))
+	copy(clone.Outputs, tx.Outputs)
+
+	return clone
 }
 
 // CalculateMerkleRoot calculates the Merkle root of the block's transactions
@@ -159,48 +431,28 @@ func (b *Block) CalculateMerkleRoot() []byte {
 	return hashes[0]
 }
 
-// CalculateHash computes the block hash
-func (b *Block) CalculateHash() []byte {
-	// Combine block data
-	data := make([]byte, 0)
-	data = append(data, binary.BigEndian.AppendUint64(nil, b.Height)...)
-
-	// Convert timestamp to bytes
-	timestampBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(timestampBytes, uint64(b.Timestamp.UnixNano()))
-	data = append(data, timestampBytes...)
-
-	data = append(data, b.PrevHash...)
-	data = append(data, binary.BigEndian.AppendUint64(nil, b.Nonce)...)
-	data = append(data, binary.BigEndian.AppendUint64(nil, b.Difficulty)...)
-	data = append(data, b.MerkleRoot...)
-
-	// Add transaction hashes
-	for _, tx := range b.Transactions {
-		data = append(data, tx.Hash...)
-	}
-
-	// Calculate hash
-	hash := sha256.Sum256(data)
-	return hash[:]
-}
-
 // Copy creates a deep copy of the block
 func (b *Block) Copy() *Block {
 	// Create a new block
 	blockCopy := &Block{
-		Height:       b.Height,
-		Timestamp:    b.Timestamp,
-		Transactions: make([]*Transaction, len(b.Transactions)),
+		Version:      b.Version,
 		PrevHash:     make([]byte, len(b.PrevHash)),
-		Nonce:        b.Nonce,
-		Difficulty:   b.Difficulty,
 		MerkleRoot:   make([]byte, len(b.MerkleRoot)),
+		Timestamp:    b.Timestamp,
+		Difficulty:   b.Difficulty,
+		Nonce:        b.Nonce,
+		Hash:         make([]byte, len(b.Hash)),
+		Height:       b.Height,
+		BlockSize:    b.BlockSize,
+		BlockWeight:  b.BlockWeight,
+		TxCount:      b.TxCount,
+		Transactions: make([]*Transaction, len(b.Transactions)),
 	}
 
 	// Copy byte slices
 	copy(blockCopy.PrevHash, b.PrevHash)
 	copy(blockCopy.MerkleRoot, b.MerkleRoot)
+	copy(blockCopy.Hash, b.Hash)
 
 	// Copy transactions
 	for i, tx := range b.Transactions {
@@ -266,26 +518,14 @@ func calculateInitialDifficulty(blockType BlockType) uint32 {
 	}
 }
 
-// NewTransaction creates a new transaction
-func NewTransaction(coinType coin.CoinType) *Transaction {
-	return &Transaction{
-		From:      "",
-		To:        "",
-		Amount:    0,
-		Nonce:     0,
-		Signature: nil,
-		Hash:      nil,
-	}
-}
-
 // AddInput adds an input to the transaction
 func (tx *Transaction) AddInput(input TxInput) {
-	// Implementation needed
+	tx.Inputs = append(tx.Inputs, input)
 }
 
 // AddOutput adds an output to the transaction
 func (tx *Transaction) AddOutput(output TxOutput) {
-	// Implementation needed
+	tx.Outputs = append(tx.Outputs, output)
 }
 
 // CalculateHash computes the transaction hash
@@ -307,80 +547,16 @@ func (tx *Transaction) CalculateHash() []byte {
 	return hash[:]
 }
 
-// Copy creates a deep copy of the transaction
-func (tx *Transaction) Copy() *Transaction {
-	txCopy := &Transaction{
-		From:      tx.From,
-		To:        tx.To,
-		Amount:    tx.Amount,
-		Nonce:     tx.Nonce,
-		Signature: make([]byte, len(tx.Signature)),
-		Hash:      make([]byte, len(tx.Hash)),
-		Timestamp: tx.Timestamp,
-	}
-
-	// Copy signature
-	copy(txCopy.Signature, tx.Signature)
-
-	// Copy hash
-	copy(txCopy.Hash, tx.Hash)
-
-	return txCopy
-}
-
-// MarshalJSON implements the json.Marshaler interface
-func (tx *Transaction) MarshalJSON() ([]byte, error) {
-	type Alias Transaction
-	return json.Marshal(&struct {
-		*Alias
-		SignatureHex string `json:"signature_hex"`
-	}{
-		Alias:        (*Alias)(tx),
-		SignatureHex: hex.EncodeToString(tx.Signature),
-	})
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface
-func (tx *Transaction) UnmarshalJSON(data []byte) error {
-	type Alias Transaction
-	aux := &struct {
-		*Alias
-		SignatureHex string `json:"signature_hex"`
-	}{
-		Alias: (*Alias)(tx),
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	if aux.SignatureHex != "" {
-		signature, err := hex.DecodeString(aux.SignatureHex)
-		if err != nil {
-			return err
+// IsDoubleSpend checks if a transaction is a double spend
+func (tx *Transaction) IsDoubleSpend(utxoSet *utxo.UTXOSet) bool {
+	for _, input := range tx.Inputs {
+		// Check if the input's previous output exists and is unspent
+		utxo, exists := utxoSet.GetUTXO(input.PreviousTx, input.OutputIndex)
+		if !exists || utxo == nil {
+			return true // Double spend detected
 		}
-		tx.Signature = signature
 	}
-	return nil
-}
-
-// Size returns the size of the transaction in bytes
-func (tx *Transaction) Size() int {
-	size := 0
-	size += len(tx.From)
-	size += len(tx.To)
-	size += 8 // Amount
-	size += 8 // Nonce
-	size += len(tx.Signature)
-	return size
-}
-
-// VerifySignature verifies the transaction signature
-func (tx *Transaction) VerifySignature(publicKey *ecdsa.PublicKey) bool {
-	if tx.Signature == nil {
-		return false
-	}
-
-	// Verify the signature using the transaction hash
-	return ecdsa.VerifyASN1(publicKey, tx.Hash, tx.Signature)
+	return false
 }
 
 // IsMature checks if the transaction is mature
@@ -418,7 +594,7 @@ func (b *Block) Size() int {
 
 	// Transactions size
 	for _, tx := range b.Transactions {
-		size += tx.Size()
+		size += tx.GetTransactionSize()
 	}
 
 	// Hash size
