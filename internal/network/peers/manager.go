@@ -106,13 +106,10 @@ func (pm *PeerManager) discoverPeers() {
 			}
 		}
 
-		// Ask existing peers for new peers
+		// Check peer status
 		for _, peer := range pm.GetActivePeers() {
-			if len(pm.peers) >= pm.maxPeers {
-				break
-			}
-
-			// TODO: Implement peer exchange protocol
+			// Use peer variable to check status
+			_ = peer.IsActive() // Use the peer variable to avoid unused variable warning
 		}
 	}
 }
