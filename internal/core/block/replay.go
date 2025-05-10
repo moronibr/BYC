@@ -79,12 +79,12 @@ func (rp *ReplayProtection) GetSeenCount() int {
 // ValidateTransaction validates a transaction against replay protection
 func (rp *ReplayProtection) ValidateTransaction(tx *common.Transaction) error {
 	// Check if transaction is a replay
-	if rp.IsReplay(tx.Hash) {
+	if rp.IsReplay(tx.Hash()) {
 		return errors.New("transaction is a replay")
 	}
 
 	// Add transaction to replay protection
-	rp.AddTransaction(tx.Hash)
+	rp.AddTransaction(tx.Hash())
 
 	return nil
 }
