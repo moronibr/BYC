@@ -17,7 +17,7 @@ import (
 // Node represents a P2P node in the network
 type Node struct {
 	host   host.Host
-	peers  map[peer.ID]*Peer
+	peers  map[peer.ID]*P2PPeer
 	mu     sync.RWMutex
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -25,7 +25,7 @@ type Node struct {
 }
 
 // Peer represents a connected peer
-type Peer struct {
+type P2PPeer struct {
 	ID       peer.ID
 	Address  multiaddr.Multiaddr
 	LastSeen time.Time
@@ -57,7 +57,7 @@ func NewNode(config *Config) (*Node, error) {
 
 	node := &Node{
 		host:   h,
-		peers:  make(map[peer.ID]*Peer),
+		peers:  make(map[peer.ID]*P2PPeer),
 		ctx:    ctx,
 		cancel: cancel,
 		config: config,
@@ -133,7 +133,7 @@ func (n *Node) addPeer(id peer.ID, addr multiaddr.Multiaddr) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	n.peers[id] = &Peer{
+	n.peers[id] = &P2PPeer{
 		ID:       id,
 		Address:  addr,
 		LastSeen: time.Now(),

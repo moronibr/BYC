@@ -24,32 +24,22 @@ func TestBlock(t *testing.T, prevHash []byte, timestamp time.Time) *block.Block 
 
 // TestTransaction creates a test transaction
 func TestTransaction(t *testing.T, from, to string, amount uint64, coinType coin.CoinType) *common.Transaction {
-	tx := &common.Transaction{
-		Version:   1,
-		Timestamp: time.Now(),
-		From:      []byte(from),
-		To:        []byte(to),
-		Amount:    amount,
-		Inputs:    make([]common.Input, 0),
-		Outputs:   make([]common.Output, 0),
-		LockTime:  0,
-		Data:      nil,
-	}
+	// Create a new transaction using the constructor
+	tx := common.NewTransaction(
+		[]byte(from),
+		[]byte(to),
+		amount,
+		nil,
+	)
 
-	// Add input
-	tx.Inputs = append(tx.Inputs, common.Input{
-		PreviousTxHash:  nil,
-		PreviousTxIndex: 0,
-		ScriptSig:       nil,
-		Sequence:        0xffffffff,
-	})
+	// Get the underlying transaction
+	underlyingTx := tx.GetTransaction()
 
-	// Add output
-	tx.Outputs = append(tx.Outputs, common.Output{
-		Value:        amount,
-		ScriptPubKey: nil,
-		Address:      to,
-	})
+	// Set transaction fields
+	underlyingTx.Version = 1
+	underlyingTx.Timestamp = time.Now()
+	underlyingTx.LockTime = 0
+	underlyingTx.CoinType = coinType
 
 	return tx
 }
