@@ -142,26 +142,6 @@ func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
 	}
 }
 
-// Metrics holds the metrics for the proof of work system.
-type Metrics struct {
-	// MiningAttempts is the total number of mining attempts
-	MiningAttempts int
-
-	// BlockMined is the total time spent mining blocks
-	BlockMined time.Duration
-
-	// ValidationAttempts is the total number of validation attempts
-	ValidationAttempts int
-
-	// ValidationSuccesses is the total number of successful validations
-	ValidationSuccesses int
-}
-
-// NewMetrics creates a new Metrics instance.
-func NewMetrics() *Metrics {
-	return &Metrics{}
-}
-
 // ProofOfWork represents a proof of work instance.
 // It handles the mining process and related functionality.
 type ProofOfWork struct {
