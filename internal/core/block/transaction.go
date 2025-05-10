@@ -33,7 +33,7 @@ func (tx *TransactionWrapper) CalculateTxID() []byte {
 // VerifyTxID verifies that the transaction ID matches the calculated ID
 func (tx *TransactionWrapper) VerifyTxID() bool {
 	calculatedID := tx.CalculateTxID()
-	return bytes.Equal(tx.Hash, calculatedID)
+	return bytes.Equal(tx.Hash(), calculatedID)
 }
 
 // IsMalleable checks if a transaction has been malleated
@@ -46,43 +46,38 @@ func (tx *TransactionWrapper) Serialize() []byte {
 	var buf bytes.Buffer
 
 	// Write version
-	binary.Write(&buf, binary.LittleEndian, tx.Version)
+	binary.Write(&buf, binary.LittleEndian, tx.Version())
 
 	// Write lock time
-	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
+	binary.Write(&buf, binary.LittleEndian, tx.LockTime())
 
 	// Write timestamp
-	binary.Write(&buf, binary.LittleEndian, tx.Timestamp.Unix())
+	binary.Write(&buf, binary.LittleEndian, tx.Timestamp().Unix())
 
 	// Write from address
-	buf.Write(tx.From)
+	buf.Write(tx.From())
 
 	// Write to address
-	buf.Write(tx.To)
+	buf.Write(tx.To())
 
 	// Write amount
-	binary.Write(&buf, binary.LittleEndian, tx.Amount)
+	binary.Write(&buf, binary.LittleEndian, tx.Amount())
 
 	// Write inputs
-	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Inputs)))
-	for _, input := range tx.Inputs {
+	inputs := tx.Inputs()
+	binary.Write(&buf, binary.LittleEndian, uint32(len(inputs)))
+	for _, input := range inputs {
 		buf.Write(input.PreviousTxHash)
 		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
 		buf.Write(input.ScriptSig)
 	}
 
 	// Write outputs
-	binary.Write(&buf, binary.LittleEndian, uint32(len(tx.Outputs)))
-	for _, output := range tx.Outputs {
+	outputs := tx.Outputs()
+	binary.Write(&buf, binary.LittleEndian, uint32(len(outputs)))
+	for _, output := range outputs {
 		binary.Write(&buf, binary.LittleEndian, output.Value)
 		buf.Write(output.ScriptPubKey)
-	}
-
-	// Write witness if present
-	if tx.Witness != nil {
-		for _, data := range tx.Witness.Data {
-			buf.Write(data)
-		}
 	}
 
 	return buf.Bytes()
