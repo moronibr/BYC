@@ -1,6 +1,7 @@
 package block
 
 import (
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
-	"github.com/youngchain/internal/core/types"
 )
 
 // BlockType represents the type of block
@@ -44,10 +44,14 @@ func (h *BlockHeader) String() string {
 
 // Block represents a block in the blockchain
 type Block struct {
-	Header       *BlockHeader
-	Transactions []*types.Transaction
+	Height       uint64
+	Timestamp    time.Time
+	Transactions []*Transaction
+	PrevHash     []byte
 	Hash         []byte
-	Parent       *Block
+	Nonce        uint64
+	Difficulty   uint64
+	MerkleRoot   []byte
 }
 
 // Header represents a block header
@@ -65,16 +69,15 @@ type Header struct {
 	ReceiptsRoot     []byte
 }
 
-// Transaction represents a transaction in the block
+// Transaction represents a blockchain transaction
 type Transaction struct {
-	Version    uint32        `json:"version"`
-	Inputs     []TxInput     `json:"inputs"`
-	Outputs    []TxOutput    `json:"outputs"`
-	LockTime   uint32        `json:"lock_time"`
-	CoinType   coin.CoinType `json:"coin_type"`
-	CrossBlock bool          `json:"cross_block"`
-	Signature  []byte        `json:"signature"`
-	Timestamp  time.Time     `json:"timestamp"`
+	From      string
+	To        string
+	Amount    uint64
+	Nonce     uint64
+	Signature []byte
+	Hash      []byte
+	Timestamp time.Time
 }
 
 // TxInput represents a transaction input
@@ -95,7 +98,7 @@ type TxOutput struct {
 // String returns a string representation of the block
 func (b *Block) String() string {
 	return fmt.Sprintf("Block{Height: %d, Hash: %x, Transactions: %d}",
-		b.Header.Height, b.Hash, len(b.Transactions))
+		b.Height, b.Hash, len(b.Transactions))
 }
 
 // String returns a string representation of the header
@@ -107,18 +110,17 @@ func (h *Header) String() string {
 // NewBlock creates a new block
 func NewBlock(prevBlockHash []byte, difficulty uint32) *Block {
 	return &Block{
-		Header: &BlockHeader{
-			Version:       1,
-			PrevBlockHash: prevBlockHash,
-			Timestamp:     time.Now(),
-			Difficulty:    difficulty,
-		},
-		Transactions: make([]*types.Transaction, 0),
+		Height:       0,
+		Timestamp:    time.Now(),
+		Transactions: make([]*Transaction, 0),
+		PrevHash:     prevBlockHash,
+		Nonce:        0,
+		Difficulty:   uint64(difficulty),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *types.Transaction) {
+func (b *Block) AddTransaction(tx *Transaction) {
 	b.Transactions = append(b.Transactions, tx)
 }
 
@@ -132,7 +134,7 @@ func (b *Block) CalculateMerkleRoot() []byte {
 	// Create a list of transaction hashes
 	hashes := make([][]byte, len(b.Transactions))
 	for i, tx := range b.Transactions {
-		hashes[i] = tx.CalculateHash()
+		hashes[i] = tx.Hash
 	}
 
 	// Calculate Merkle root
@@ -157,16 +159,29 @@ func (b *Block) CalculateMerkleRoot() []byte {
 	return hashes[0]
 }
 
-// CalculateHash calculates the hash of the block
+// CalculateHash computes the block hash
 func (b *Block) CalculateHash() []byte {
-	// Update Merkle root
-	b.Header.MerkleRoot = b.CalculateMerkleRoot()
+	// Combine block data
+	data := make([]byte, 0)
+	data = append(data, binary.BigEndian.AppendUint64(nil, b.Height)...)
 
-	// Serialize header
-	headerBytes := []byte(b.Header.String())
+	// Convert timestamp to bytes
+	timestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestampBytes, uint64(b.Timestamp.UnixNano()))
+	data = append(data, timestampBytes...)
+
+	data = append(data, b.PrevHash...)
+	data = append(data, binary.BigEndian.AppendUint64(nil, b.Nonce)...)
+	data = append(data, binary.BigEndian.AppendUint64(nil, b.Difficulty)...)
+	data = append(data, b.MerkleRoot...)
+
+	// Add transaction hashes
+	for _, tx := range b.Transactions {
+		data = append(data, tx.Hash...)
+	}
 
 	// Calculate hash
-	hash := sha256.Sum256(headerBytes)
+	hash := sha256.Sum256(data)
 	return hash[:]
 }
 
@@ -174,23 +189,18 @@ func (b *Block) CalculateHash() []byte {
 func (b *Block) Copy() *Block {
 	// Create a new block
 	blockCopy := &Block{
-		Header: &BlockHeader{
-			Version:       b.Header.Version,
-			PrevBlockHash: make([]byte, len(b.Header.PrevBlockHash)),
-			MerkleRoot:    make([]byte, len(b.Header.MerkleRoot)),
-			Timestamp:     b.Header.Timestamp,
-			Difficulty:    b.Header.Difficulty,
-			Nonce:         b.Header.Nonce,
-			Height:        b.Header.Height,
-		},
-		Transactions: make([]*types.Transaction, len(b.Transactions)),
-		Hash:         make([]byte, len(b.Hash)),
+		Height:       b.Height,
+		Timestamp:    b.Timestamp,
+		Transactions: make([]*Transaction, len(b.Transactions)),
+		PrevHash:     make([]byte, len(b.PrevHash)),
+		Nonce:        b.Nonce,
+		Difficulty:   b.Difficulty,
+		MerkleRoot:   make([]byte, len(b.MerkleRoot)),
 	}
 
 	// Copy byte slices
-	copy(blockCopy.Header.PrevBlockHash, b.Header.PrevBlockHash)
-	copy(blockCopy.Header.MerkleRoot, b.Header.MerkleRoot)
-	copy(blockCopy.Hash, b.Hash)
+	copy(blockCopy.PrevHash, b.PrevHash)
+	copy(blockCopy.MerkleRoot, b.MerkleRoot)
 
 	// Copy transactions
 	for i, tx := range b.Transactions {
@@ -236,7 +246,7 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 
 // UpdateMerkleRoot updates the merkle root of the block
 func (b *Block) UpdateMerkleRoot() {
-	b.Header.MerkleRoot = b.CalculateMerkleRoot()
+	b.MerkleRoot = b.CalculateMerkleRoot()
 }
 
 // GetInitialDifficulty returns the initial difficulty for a block type
@@ -259,71 +269,38 @@ func calculateInitialDifficulty(blockType BlockType) uint32 {
 // NewTransaction creates a new transaction
 func NewTransaction(coinType coin.CoinType) *Transaction {
 	return &Transaction{
-		Version:    1,
-		Inputs:     make([]TxInput, 0),
-		Outputs:    make([]TxOutput, 0),
-		LockTime:   0,
-		CoinType:   coinType,
-		CrossBlock: false,
-		Signature:  make([]byte, 0),
-		Timestamp:  time.Now(),
+		From:      "",
+		To:        "",
+		Amount:    0,
+		Nonce:     0,
+		Signature: nil,
+		Hash:      nil,
 	}
 }
 
 // AddInput adds an input to the transaction
 func (tx *Transaction) AddInput(input TxInput) {
-	tx.Inputs = append(tx.Inputs, input)
+	// Implementation needed
 }
 
 // AddOutput adds an output to the transaction
 func (tx *Transaction) AddOutput(output TxOutput) {
-	tx.Outputs = append(tx.Outputs, output)
+	// Implementation needed
 }
 
-// CalculateHash calculates the hash of a transaction
+// CalculateHash computes the transaction hash
 func (tx *Transaction) CalculateHash() []byte {
-	// Serialize transaction data
+	// Combine transaction data
 	data := make([]byte, 0)
+	data = append(data, []byte(tx.From)...)
+	data = append(data, []byte(tx.To)...)
+	data = append(data, binary.BigEndian.AppendUint64(nil, tx.Amount)...)
+	data = append(data, binary.BigEndian.AppendUint64(nil, tx.Nonce)...)
 
-	// Add version
-	versionBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(versionBytes, tx.Version)
-	data = append(data, versionBytes...)
-
-	// Add inputs
-	for _, input := range tx.Inputs {
-		data = append(data, input.PreviousTx...)
-		indexBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(indexBytes, input.OutputIndex)
-		data = append(data, indexBytes...)
-		data = append(data, input.Script...)
-		seqBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(seqBytes, input.Sequence)
-		data = append(data, seqBytes...)
-	}
-
-	// Add outputs
-	for _, output := range tx.Outputs {
-		valueBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(valueBytes, output.Value)
-		data = append(data, valueBytes...)
-		data = append(data, output.Script...)
-	}
-
-	// Add lock time
-	lockTimeBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(lockTimeBytes, tx.LockTime)
-	data = append(data, lockTimeBytes...)
-
-	// Add coin type
-	data = append(data, []byte(tx.CoinType)...)
-
-	// Add cross block flag
-	if tx.CrossBlock {
-		data = append(data, 1)
-	} else {
-		data = append(data, 0)
-	}
+	// Add timestamp
+	timestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.UnixNano()))
+	data = append(data, timestampBytes...)
 
 	// Calculate hash
 	hash := sha256.Sum256(data)
@@ -333,40 +310,20 @@ func (tx *Transaction) CalculateHash() []byte {
 // Copy creates a deep copy of the transaction
 func (tx *Transaction) Copy() *Transaction {
 	txCopy := &Transaction{
-		Version:    tx.Version,
-		Inputs:     make([]TxInput, len(tx.Inputs)),
-		Outputs:    make([]TxOutput, len(tx.Outputs)),
-		LockTime:   tx.LockTime,
-		CoinType:   tx.CoinType,
-		CrossBlock: tx.CrossBlock,
-		Signature:  make([]byte, len(tx.Signature)),
-		Timestamp:  tx.Timestamp,
-	}
-
-	// Copy inputs
-	for i, input := range tx.Inputs {
-		txCopy.Inputs[i] = TxInput{
-			PreviousTx:  make([]byte, len(input.PreviousTx)),
-			OutputIndex: input.OutputIndex,
-			Script:      make([]byte, len(input.Script)),
-			Sequence:    input.Sequence,
-		}
-		copy(txCopy.Inputs[i].PreviousTx, input.PreviousTx)
-		copy(txCopy.Inputs[i].Script, input.Script)
-	}
-
-	// Copy outputs
-	for i, output := range tx.Outputs {
-		txCopy.Outputs[i] = TxOutput{
-			Value:    output.Value,
-			Script:   make([]byte, len(output.Script)),
-			CoinType: output.CoinType,
-		}
-		copy(txCopy.Outputs[i].Script, output.Script)
+		From:      tx.From,
+		To:        tx.To,
+		Amount:    tx.Amount,
+		Nonce:     tx.Nonce,
+		Signature: make([]byte, len(tx.Signature)),
+		Hash:      make([]byte, len(tx.Hash)),
+		Timestamp: tx.Timestamp,
 	}
 
 	// Copy signature
 	copy(txCopy.Signature, tx.Signature)
+
+	// Copy hash
+	copy(txCopy.Hash, tx.Hash)
 
 	return txCopy
 }
@@ -407,93 +364,23 @@ func (tx *Transaction) UnmarshalJSON(data []byte) error {
 
 // Size returns the size of the transaction in bytes
 func (tx *Transaction) Size() int {
-	size := 4 // Version
-	size += 1 // VarInt for input count
-	for _, input := range tx.Inputs {
-		size += len(input.PreviousTx)
-		size += 4 // OutputIndex
-		size += len(input.Script)
-		size += 4 // Sequence
-	}
-	size += 1 // VarInt for output count
-	for _, output := range tx.Outputs {
-		size += 8 // Value
-		size += len(output.Script)
-		size += len(string(output.CoinType))
-	}
-	size += 4 // LockTime
-	size += len(string(tx.CoinType))
-	size += 1 // CrossBlock
+	size := 0
+	size += len(tx.From)
+	size += len(tx.To)
+	size += 8 // Amount
+	size += 8 // Nonce
 	size += len(tx.Signature)
-	size += 8 // Timestamp
 	return size
 }
 
-// Hash returns the hash of the transaction
-func (tx *Transaction) Hash() []byte {
-	// Create a byte slice to hold the serialized transaction
-	data := make([]byte, 0, tx.Size())
-
-	// Add version
-	versionBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(versionBytes, tx.Version)
-	data = append(data, versionBytes...)
-
-	// Add inputs
-	inputCountBytes := make([]byte, 1)
-	inputCountBytes[0] = byte(len(tx.Inputs))
-	data = append(data, inputCountBytes...)
-
-	for _, input := range tx.Inputs {
-		data = append(data, input.PreviousTx...)
-		outputIndexBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(outputIndexBytes, input.OutputIndex)
-		data = append(data, outputIndexBytes...)
-		data = append(data, input.Script...)
-		sequenceBytes := make([]byte, 4)
-		binary.LittleEndian.PutUint32(sequenceBytes, input.Sequence)
-		data = append(data, sequenceBytes...)
+// VerifySignature verifies the transaction signature
+func (tx *Transaction) VerifySignature(publicKey *ecdsa.PublicKey) bool {
+	if tx.Signature == nil {
+		return false
 	}
 
-	// Add outputs
-	outputCountBytes := make([]byte, 1)
-	outputCountBytes[0] = byte(len(tx.Outputs))
-	data = append(data, outputCountBytes...)
-
-	for _, output := range tx.Outputs {
-		valueBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(valueBytes, output.Value)
-		data = append(data, valueBytes...)
-		data = append(data, output.Script...)
-		data = append(data, string(output.CoinType)...)
-	}
-
-	// Add lock time
-	lockTimeBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(lockTimeBytes, tx.LockTime)
-	data = append(data, lockTimeBytes...)
-
-	// Add coin type
-	data = append(data, string(tx.CoinType)...)
-
-	// Add cross block flag
-	if tx.CrossBlock {
-		data = append(data, 1)
-	} else {
-		data = append(data, 0)
-	}
-
-	// Add signature
-	data = append(data, tx.Signature...)
-
-	// Add timestamp
-	timestampBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.UnixNano()))
-	data = append(data, timestampBytes...)
-
-	// Calculate hash
-	hash := sha256.Sum256(data)
-	return hash[:]
+	// Verify the signature using the transaction hash
+	return ecdsa.VerifyASN1(publicKey, tx.Hash, tx.Signature)
 }
 
 // IsMature checks if the transaction is mature
@@ -505,13 +392,13 @@ func (tx *Transaction) IsMature() bool {
 // IsLockTimeValid checks if the transaction's lock time is valid
 func (tx *Transaction) IsLockTimeValid() bool {
 	// If lock time is 0, it's always valid
-	if tx.LockTime == 0 {
+	if tx.Nonce == 0 {
 		return true
 	}
 
 	// If lock time is a timestamp, check if it's in the past
-	if tx.LockTime < 500000000 {
-		return uint32(time.Now().Unix()) >= tx.LockTime
+	if tx.Nonce < 500000000 {
+		return uint64(time.Now().Unix()) >= tx.Nonce
 	}
 
 	// If lock time is a block height, it's always valid (block height validation is done elsewhere)
@@ -523,17 +410,11 @@ func (b *Block) Size() int {
 	size := 0
 
 	// Header size
-	size += 4 // Version
-	size += len(b.Header.PrevBlockHash)
-	size += len(b.Header.MerkleRoot)
-	size += 8 // Timestamp
-	size += 4 // Difficulty
-	size += 8 // Nonce
 	size += 8 // Height
-	size += 8 // TotalTxs
-	size += len(b.Header.StateRoot)
-	size += len(b.Header.TransactionsRoot)
-	size += len(b.Header.ReceiptsRoot)
+	size += 8 // Timestamp
+	size += len(b.PrevHash)
+	size += 8 // Nonce
+	size += 8 // Difficulty
 
 	// Transactions size
 	for _, tx := range b.Transactions {

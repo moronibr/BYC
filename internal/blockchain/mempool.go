@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -123,8 +124,9 @@ func (m *Mempool) calculatePriority(tx *block.Transaction) float64 {
 
 // sortTransactionsByPriority sorts transactions by priority
 func sortTransactionsByPriority(infos []*TransactionInfo) {
-	// Implement sorting logic
-	// This is a placeholder for the actual sorting implementation
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].Priority > infos[j].Priority
+	})
 }
 
 // Cleanup removes old transactions from the mempool

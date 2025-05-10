@@ -16,11 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/scrypt"
 
-	"github.com/youngchain/internal/crypto"
+	"github.com/youngchain/internal/core/block"
 )
 
 var (
@@ -28,6 +29,7 @@ var (
 	ErrWalletExists       = errors.New("wallet already exists")
 	ErrInvalidPassword    = errors.New("invalid password")
 	ErrWalletNotEncrypted = errors.New("wallet is not encrypted")
+	ErrInvalidKey         = errors.New("invalid key")
 )
 
 const (
@@ -90,7 +92,7 @@ func NewWalletManager(walletFile string) *WalletManager {
 func NewWallet() (*Wallet, error) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate key pair: %v", err)
 	}
 
 	publicKey := &privateKey.PublicKey
@@ -427,7 +429,7 @@ func ValidateAddress(address string) bool {
 }
 
 // SignTransaction signs a transaction with the wallet's private key
-func (w *Wallet) SignTransaction(tx *Transaction) error {
+func (w *Wallet) SignTransaction(tx *block.Transaction) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
@@ -435,13 +437,13 @@ func (w *Wallet) SignTransaction(tx *Transaction) error {
 		return errors.New("wallet has no private key")
 	}
 
-	// Create the transaction hash
-	txHash := tx.Hash()
+	// Calculate transaction hash
+	tx.Hash = tx.CalculateHash()
 
 	// Sign the hash
-	signature, err := crypto.Sign(txHash, w.PrivateKey)
+	signature, err := ecdsa.SignASN1(rand.Reader, w.PrivateKey, tx.Hash)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to sign transaction: %v", err)
 	}
 
 	tx.Signature = signature
@@ -462,36 +464,30 @@ func (w *Wallet) GetBalance() uint64 {
 	return w.Balance
 }
 
-// Transaction represents a cryptocurrency transaction
-type Transaction struct {
-	From      string
-	To        string
-	Amount    uint64
-	Nonce     uint64
-	Signature []byte
-	Hash      []byte
-}
+// CreateTransaction creates a new transaction
+func (w *Wallet) CreateTransaction(to string, amount uint64, nonce uint64) (*block.Transaction, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 
-// NewTransaction creates a new transaction
-func NewTransaction(from, to string, amount, nonce uint64) *Transaction {
-	tx := &Transaction{
-		From:   from,
-		To:     to,
-		Amount: amount,
-		Nonce:  nonce,
+	if w.Balance < amount {
+		return nil, errors.New("insufficient balance")
 	}
-	tx.Hash = tx.calculateHash()
-	return tx
-}
 
-// calculateHash computes the transaction hash
-func (tx *Transaction) calculateHash() []byte {
-	data := []byte(tx.From + tx.To + string(tx.Amount) + string(tx.Nonce))
-	hash := sha256.Sum256(data)
-	return hash[:]
-}
+	tx := &block.Transaction{
+		From:      w.Address,
+		To:        to,
+		Amount:    amount,
+		Nonce:     nonce,
+		Timestamp: time.Now(),
+	}
 
-// VerifySignature verifies the transaction signature
-func (tx *Transaction) VerifySignature(publicKey *ecdsa.PublicKey) bool {
-	return crypto.Verify(tx.Hash, tx.Signature, publicKey)
+	// Calculate transaction hash
+	tx.Hash = tx.CalculateHash()
+
+	// Sign the transaction
+	if err := w.SignTransaction(tx); err != nil {
+		return nil, err
+	}
+
+	return tx, nil
 }

@@ -60,7 +60,7 @@ func (sm *StateManager) ApplyBlock(block *block.Block) error {
 // processTransaction processes a single transaction
 func (sm *StateManager) processTransaction(tx *block.Transaction) error {
 	// Verify transaction
-	if !tx.VerifySignature() {
+	if !tx.VerifySignature(nil) { // TODO: Get public key from address
 		return fmt.Errorf("invalid transaction signature")
 	}
 
