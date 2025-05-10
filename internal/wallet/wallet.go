@@ -13,16 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/tyler-smith/go-bip39"
-	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/crypto/scrypt"
 
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/crypto"
 )
 
 var (
@@ -71,12 +69,39 @@ type WalletManager struct {
 	walletFile string
 }
 
+// Wallet represents a cryptocurrency wallet
+type Wallet struct {
+	PrivateKey *ecdsa.PrivateKey
+	PublicKey  *ecdsa.PublicKey
+	Address    string
+	Balance    uint64
+	mu         sync.RWMutex
+}
+
 // NewWalletManager creates a new wallet manager
 func NewWalletManager(walletFile string) *WalletManager {
 	return &WalletManager{
 		wallets:    make(map[string]*HDWallet),
 		walletFile: walletFile,
 	}
+}
+
+// NewWallet creates a new wallet with a fresh key pair
+func NewWallet() (*Wallet, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey := &privateKey.PublicKey
+	address := generateAddress(publicKey)
+
+	return &Wallet{
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+		Address:    address,
+		Balance:    0,
+	}, nil
 }
 
 // CreateWallet creates a new HD wallet
@@ -361,32 +386,18 @@ func (wm *WalletManager) ListWallets() []string {
 	return addresses
 }
 
-// generateAddress generates a wallet address from a public key
-func generateAddress(publicKey []byte) string {
-	// SHA256 hash
-	sha256Hash := sha256.Sum256(publicKey)
+// generateAddress creates a unique address from a public key
+func generateAddress(publicKey *ecdsa.PublicKey) string {
+	// Convert public key to bytes
+	pubKeyBytes := elliptic.Marshal(publicKey.Curve, publicKey.X, publicKey.Y)
 
-	// RIPEMD160 hash
-	ripemd160Hasher := ripemd160.New()
-	_, err := ripemd160Hasher.Write(sha256Hash[:])
-	if err != nil {
-		panic(err) // Should never happen
-	}
-	ripemd160Hash := ripemd160Hasher.Sum(nil)
+	// Hash the public key
+	hash := sha256.Sum256(pubKeyBytes)
 
-	// Add version byte
-	versionedHash := append([]byte{0x00}, ripemd160Hash...)
+	// Take the last 20 bytes as the address
+	address := hex.EncodeToString(hash[12:])
 
-	// Double SHA256 for checksum
-	firstHash := sha256.Sum256(versionedHash)
-	secondHash := sha256.Sum256(firstHash[:])
-	checksum := secondHash[:4]
-
-	// Append checksum
-	finalHash := append(versionedHash, checksum...)
-
-	// Return base58 encoded address
-	return hex.EncodeToString(finalHash)
+	return "0x" + address
 }
 
 // ValidateAddress validates a wallet address
@@ -416,39 +427,71 @@ func ValidateAddress(address string) bool {
 }
 
 // SignTransaction signs a transaction with the wallet's private key
-func (w *HDWallet) SignTransaction(tx *block.Transaction) error {
-	// Calculate transaction hash
-	hash := tx.CalculateHash()
+func (w *Wallet) SignTransaction(tx *Transaction) error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	if w.PrivateKey == nil {
+		return errors.New("wallet has no private key")
+	}
+
+	// Create the transaction hash
+	txHash := tx.Hash()
 
 	// Sign the hash
-	r, s, err := ecdsa.Sign(rand.Reader, w.MasterKey, hash)
+	signature, err := crypto.Sign(txHash, w.PrivateKey)
 	if err != nil {
 		return err
 	}
 
-	// Combine r and s into signature
-	signature := make([]byte, 64)
-	r.FillBytes(signature[:32])
-	s.FillBytes(signature[32:])
-
-	// Set transaction signature
 	tx.Signature = signature
 	return nil
 }
 
-// VerifyTransaction verifies a transaction's signature
-func (w *HDWallet) VerifyTransaction(tx *block.Transaction) bool {
-	if len(tx.Signature) != 64 {
-		return false
+// UpdateBalance updates the wallet's balance
+func (w *Wallet) UpdateBalance(amount uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.Balance = amount
+}
+
+// GetBalance returns the current wallet balance
+func (w *Wallet) GetBalance() uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.Balance
+}
+
+// Transaction represents a cryptocurrency transaction
+type Transaction struct {
+	From      string
+	To        string
+	Amount    uint64
+	Nonce     uint64
+	Signature []byte
+	Hash      []byte
+}
+
+// NewTransaction creates a new transaction
+func NewTransaction(from, to string, amount, nonce uint64) *Transaction {
+	tx := &Transaction{
+		From:   from,
+		To:     to,
+		Amount: amount,
+		Nonce:  nonce,
 	}
+	tx.Hash = tx.calculateHash()
+	return tx
+}
 
-	// Split signature into r and s
-	r := new(big.Int).SetBytes(tx.Signature[:32])
-	s := new(big.Int).SetBytes(tx.Signature[32:])
+// calculateHash computes the transaction hash
+func (tx *Transaction) calculateHash() []byte {
+	data := []byte(tx.From + tx.To + string(tx.Amount) + string(tx.Nonce))
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
 
-	// Calculate transaction hash
-	hash := tx.CalculateHash()
-
-	// Verify signature
-	return ecdsa.Verify(&w.MasterKey.PublicKey, hash, r, s)
+// VerifySignature verifies the transaction signature
+func (tx *Transaction) VerifySignature(publicKey *ecdsa.PublicKey) bool {
+	return crypto.Verify(tx.Hash, tx.Signature, publicKey)
 }
