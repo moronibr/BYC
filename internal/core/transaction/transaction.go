@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -233,4 +234,53 @@ func (tp *TransactionPool) GetBalance(address string, coinType coin.CoinType) ui
 		}
 	}
 	return balance
+}
+
+// Hash returns the transaction hash
+func (tx *Transaction) Hash() common.Hash {
+	return common.BytesToHash(tx.CalculateHash())
+}
+
+// FeeRate calculates the fee rate in satoshis per byte
+func (tx *Transaction) FeeRate() uint64 {
+	size := tx.Size()
+	if size == 0 {
+		return 0
+	}
+	return tx.Fee / uint64(size)
+}
+
+// Size returns the transaction size in bytes
+func (tx *Transaction) Size() int {
+	var size int
+
+	// Version
+	size += 4
+
+	// Input count and inputs
+	size += 4 // Input count
+	for _, input := range tx.Inputs {
+		size += 32 // PreviousTxHash
+		size += 4  // PreviousTxIndex
+		size += 4  // ScriptSig length
+		size += len(input.ScriptSig)
+		size += 4 // Sequence
+	}
+
+	// Output count and outputs
+	size += 4 // Output count
+	for _, output := range tx.Outputs {
+		size += 8 // Value
+		size += 4 // ScriptPubKey length
+		size += len(output.ScriptPubKey)
+	}
+
+	// LockTime and Fee
+	size += 4 // LockTime
+	size += 8 // Fee
+
+	// CoinType
+	size += len(tx.CoinType)
+
+	return size
 }
