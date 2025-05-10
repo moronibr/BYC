@@ -176,3 +176,13 @@ func (us *UTXOSet) GetUTXO(txHash []byte, outIndex uint32) (*UTXO, bool) {
 func utxoKey(txHash []byte, outIndex uint32) string {
 	return string(txHash) + ":" + strconv.FormatUint(uint64(outIndex), 10)
 }
+
+// Hash represents a 32-byte hash
+type Hash [32]byte
+
+// BytesToHash converts a byte slice to a Hash
+func BytesToHash(b []byte) Hash {
+	var h Hash
+	copy(h[:], b)
+	return h
+}
