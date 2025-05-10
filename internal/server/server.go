@@ -17,6 +17,7 @@ import (
 	"github.com/youngchain/internal/consensus"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/network/messages"
 	"github.com/youngchain/internal/network/peers"
@@ -306,13 +307,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// Create peer info
 	info := peers.Info{
 		Address:  conn.RemoteAddr().String(),
-		Version:  "1.0.0", // TODO: Get from config
+		Version:  1, // Changed from string to uint32
 		LastSeen: time.Now(),
 	}
 
 	// Add peer
 	s.peerMgr.AddPeer(conn, info)
-	s.logger.Printf("Added peer %s (version: %s)", info.Address, info.Version)
+	s.logger.Printf("Added peer %s (version: %d)", info.Address, info.Version)
 
 	// Handle messages
 	for {
@@ -513,7 +514,9 @@ func (s *Server) BroadcastBlock(b *block.Block) error {
 	// Determine block type based on mining reward transaction
 	blockType := block.GoldenBlock // Default to golden block
 	if len(b.Transactions) > 0 {
-		switch b.Transactions[0].CoinType {
+		// Get the coin type from the first transaction
+		coinType := b.Transactions[0].CoinType()
+		switch coinType {
 		case coin.Leah:
 			blockType = block.GoldenBlock
 		case coin.Shiblum:
@@ -523,7 +526,7 @@ func (s *Server) BroadcastBlock(b *block.Block) error {
 
 	msg := messages.BlockMessage{
 		Block:     b,
-		BlockType: blockType,
+		BlockType: string(blockType), // Convert BlockType to string
 	}
 
 	// Sign message
@@ -544,9 +547,17 @@ func (s *Server) BroadcastBlock(b *block.Block) error {
 
 // BroadcastTransaction broadcasts a transaction
 func (s *Server) BroadcastTransaction(tx *types.Transaction) error {
+	// Create a common.Transaction wrapper
+	commonTx := common.NewTransaction(
+		[]byte(tx.Inputs[0].Address),  // From address
+		[]byte(tx.Outputs[0].Address), // To address
+		tx.Outputs[0].Value,           // Amount
+		tx.Data,                       // Data
+	)
+
 	msg := messages.TransactionMessage{
-		Transaction: tx,
-		CoinType:    tx.CoinType,
+		Transaction: commonTx,
+		CoinType:    string(tx.CoinType), // Convert CoinType to string
 	}
 
 	// Sign message
