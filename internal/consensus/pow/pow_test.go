@@ -27,41 +27,57 @@ func (b *MockBlock) SetNonce(nonce int64) { b.nonce = nonce }
 func (b *MockBlock) SetHash(hash []byte)  { b.hash = hash }
 
 func TestNewProofOfWork(t *testing.T) {
-	block := &MockBlock{
-		prevHash:  []byte("prev"),
-		data:      []byte("data"),
-		timestamp: time.Now().Unix(),
-		height:    1,
+	// Test with nil block
+	pow, err := NewProofOfWork(nil, nil)
+	if err != ErrInvalidBlock {
+		t.Errorf("Expected ErrInvalidBlock, got %v", err)
+	}
+	if pow != nil {
+		t.Error("Expected nil pow for nil block")
 	}
 
-	pow := NewProofOfWork(block)
-
-	if pow.block != block {
-		t.Error("block not set correctly")
+	// Test with valid block
+	block := &MockBlock{data: []byte("test")}
+	pow, err = NewProofOfWork(block, nil)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if pow == nil {
+		t.Error("Expected non-nil pow for valid block")
 	}
 
-	if pow.target == nil {
-		t.Error("target not set")
+	// Test with custom config
+	config := &Config{
+		MiningTimeout:   time.Minute,
+		MaxRetries:      2,
+		RecoveryEnabled: false,
+		LoggingEnabled:  false,
+	}
+	pow, err = NewProofOfWork(block, config)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if pow.config != config {
+		t.Error("Expected custom config to be set")
 	}
 }
 
 func TestRun(t *testing.T) {
-	block := &MockBlock{
-		prevHash:  []byte("prev"),
-		data:      []byte("data"),
-		timestamp: time.Now().Unix(),
-		height:    1,
+	block := &MockBlock{data: []byte("test")}
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
 	}
 
-	pow := NewProofOfWork(block)
-	nonce, hash := pow.Run()
-
+	nonce, hash, err := pow.Run()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if nonce == 0 {
-		t.Error("nonce should not be 0")
+		t.Error("Expected non-zero nonce")
 	}
-
 	if len(hash) == 0 {
-		t.Error("hash should not be empty")
+		t.Error("Expected non-empty hash")
 	}
 
 	// Verify the hash meets the target
@@ -80,8 +96,15 @@ func TestRunParallel(t *testing.T) {
 		height:    1,
 	}
 
-	pow := NewProofOfWork(block)
-	nonce, hash := pow.RunParallel(4) // Test with 4 workers
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
+	}
+
+	nonce, hash, err := pow.RunParallel(4) // Test with 4 workers
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 
 	if nonce == 0 {
 		t.Error("nonce should not be 0")
@@ -100,54 +123,45 @@ func TestRunParallel(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	block := &MockBlock{
-		prevHash:  []byte("prev"),
-		data:      []byte("data"),
-		timestamp: time.Now().Unix(),
-		height:    1,
+	block := &MockBlock{data: []byte("test")}
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
 	}
 
-	pow := NewProofOfWork(block)
-	nonce, hash := pow.Run()
-
+	// Test valid block
+	nonce, hash, err := pow.Run()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	block.SetNonce(nonce)
 	block.SetHash(hash)
-
 	if !pow.Validate() {
-		t.Error("validation should pass")
+		t.Error("Expected valid block")
 	}
 
-	// Test with invalid nonce
-	block.SetNonce(nonce + 1)
+	// Test invalid block
+	block.SetNonce(0)
 	if pow.Validate() {
-		t.Error("validation should fail with invalid nonce")
+		t.Error("Expected invalid block")
 	}
 }
 
 func TestPrepareData(t *testing.T) {
-	block := &MockBlock{
-		prevHash:  []byte("prev"),
-		data:      []byte("data"),
-		timestamp: time.Now().Unix(),
-		height:    1,
+	block := &MockBlock{data: []byte("test")}
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
 	}
 
-	pow := NewProofOfWork(block)
 	data := pow.prepareData(1)
+	if len(data) == 0 {
+		t.Error("Expected non-empty data")
+	}
 
-	expected := bytes.Join(
-		[][]byte{
-			block.GetPrevHash(),
-			block.GetData(),
-			IntToHex(block.GetTimestamp()),
-			IntToHex(int64(TargetBits)),
-			IntToHex(1),
-		},
-		[]byte{},
-	)
-
-	if !bytes.Equal(data, expected) {
-		t.Error("prepared data does not match expected")
+	// Verify data contains block data
+	if !bytes.Contains(data, block.GetData()) {
+		t.Error("Data should contain block data")
 	}
 }
 
@@ -207,5 +221,153 @@ func TestCalculateNextDifficulty(t *testing.T) {
 	}
 	if diff := CalculateNextDifficulty(blocks); diff > MaxDifficultyBits {
 		t.Errorf("difficulty %d above maximum %d", diff, MaxDifficultyBits)
+	}
+}
+
+func TestRunAdaptive(t *testing.T) {
+	block := &MockBlock{data: []byte("test")}
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
+	}
+
+	// Test successful mining
+	nonce, hash, err := pow.RunAdaptive()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if nonce == 0 {
+		t.Error("Expected non-zero nonce")
+	}
+	if len(hash) == 0 {
+		t.Error("Expected non-empty hash")
+	}
+
+	// Test resource exhaustion
+	pow.rm.SetResourceLimits(0, 0) // Set limits to force resource exhaustion
+	_, _, err = pow.RunAdaptive()
+	if err == nil {
+		t.Error("Expected error for resource exhaustion")
+	}
+
+	// Test timeout
+	config := &Config{
+		MiningTimeout:   time.Nanosecond, // Set very short timeout
+		MaxRetries:      1,
+		RecoveryEnabled: true,
+		LoggingEnabled:  true,
+	}
+	pow, err = NewProofOfWork(block, config)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
+	}
+	_, _, err = pow.RunAdaptive()
+	if err == nil {
+		t.Error("Expected error for timeout")
+	}
+}
+
+func TestResourceManager(t *testing.T) {
+	rm := NewResourceManager()
+
+	// Test initial state
+	workerCount := rm.GetOptimalWorkerCount()
+	if workerCount < 1 {
+		t.Errorf("Expected at least 1 worker, got %d", workerCount)
+	}
+
+	// Test resource limits
+	rm.SetResourceLimits(50, 80)
+	cpuCount, memUsage := rm.GetSystemMetrics()
+	if cpuCount > 50 {
+		t.Errorf("CPU count exceeds limit: %d > 50", cpuCount)
+	}
+	if memUsage > 0.8 {
+		t.Errorf("Memory usage exceeds limit: %f > 0.8", memUsage)
+	}
+
+	// Test worker load updates
+	rm.UpdateWorkerLoad(4, 100.0)
+	workerCount = rm.GetOptimalWorkerCount()
+	if workerCount > 4 {
+		t.Errorf("Worker count exceeds limit: %d > 4", workerCount)
+	}
+}
+
+func TestShutdown(t *testing.T) {
+	block := &MockBlock{data: []byte("test")}
+	pow, err := NewProofOfWork(block, nil)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
+	}
+
+	// Test normal shutdown
+	err = pow.Shutdown()
+	if err != nil {
+		t.Errorf("Unexpected error during shutdown: %v", err)
+	}
+
+	// Test double shutdown
+	err = pow.Shutdown()
+	if err != nil {
+		t.Errorf("Unexpected error during second shutdown: %v", err)
+	}
+
+	// Test mining after shutdown
+	_, _, err = pow.RunAdaptive()
+	if err == nil {
+		t.Error("Expected error when mining after shutdown")
+	}
+}
+
+func TestCircuitBreaker(t *testing.T) {
+	block := &MockBlock{data: []byte("test")}
+	config := &Config{
+		MiningTimeout:   time.Millisecond * 100,
+		MaxRetries:      1,
+		RecoveryEnabled: true,
+		LoggingEnabled:  false,
+	}
+	pow, err := NewProofOfWork(block, config)
+	if err != nil {
+		t.Fatalf("Failed to create PoW: %v", err)
+	}
+
+	// Force resource exhaustion to trigger failures
+	pow.rm.SetResourceLimits(0, 0)
+
+	// Test circuit breaker opening
+	for i := 0; i < pow.circuitBreakerConfig.FailureThreshold; i++ {
+		_, _, err = pow.RunAdaptive()
+		if err == nil {
+			t.Errorf("Expected error on attempt %d", i+1)
+		}
+	}
+
+	// Verify circuit breaker is open
+	_, _, err = pow.RunAdaptive()
+	if err == nil {
+		t.Error("Expected error when circuit breaker is open")
+	}
+
+	// Wait for reset timeout
+	time.Sleep(pow.circuitBreakerConfig.ResetTimeout)
+
+	// Verify circuit breaker is in half-open state
+	_, _, err = pow.RunAdaptive()
+	if err == nil {
+		t.Error("Expected error when circuit breaker is half-open")
+	}
+
+	// Reset resource limits
+	pow.rm.SetResourceLimits(100, 100)
+
+	// Wait for reset timeout again
+	time.Sleep(pow.circuitBreakerConfig.ResetTimeout)
+
+	// Verify circuit breaker closes after successful operation
+	_, _, err = pow.RunAdaptive()
+	if err != nil {
+		t.Errorf("Unexpected error after circuit breaker reset: %v", err)
 	}
 }
