@@ -152,13 +152,34 @@ func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
 	}
 }
 
+// Metrics holds the metrics for the proof of work system.
+type Metrics struct {
+	// MiningAttempts is the total number of mining attempts
+	MiningAttempts int
+
+	// BlockMined is the total time spent mining blocks
+	BlockMined time.Duration
+
+	// ValidationAttempts is the total number of validation attempts
+	ValidationAttempts int
+
+	// ValidationSuccesses is the total number of successful validations
+	ValidationSuccesses int
+}
+
+// NewMetrics creates a new Metrics instance.
+func NewMetrics() *Metrics {
+	return &Metrics{}
+}
+
 // ProofOfWork represents a proof of work instance.
 // It handles the mining process and related functionality.
 type ProofOfWork struct {
-	block  Block
-	target *big.Int
-	rm     *ResourceManager
-	config *Config
+	block   Block
+	target  *big.Int
+	rm      *ResourceManager
+	config  *Config
+	metrics *Metrics
 
 	// Circuit breaker fields
 	circuitBreakerState  CircuitBreakerState
@@ -192,6 +213,7 @@ func NewProofOfWork(block Block, config *Config) (*ProofOfWork, error) {
 		target:               target,
 		rm:                   NewResourceManager(),
 		config:               config,
+		metrics:              NewMetrics(),
 		circuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		shutdownChan:         make(chan struct{}),
 		shutdownTimeout:      time.Second * 30,
@@ -487,28 +509,25 @@ func (pow *ProofOfWork) recordSuccess() {
 
 // RunAdaptive performs proof of work mining with adaptive worker count.
 // It automatically adjusts the number of workers based on system resources.
-// The method:
-//   - Checks for shutdown signals and circuit breaker state
-//   - Verifies system resources are available
-//   - Determines optimal worker count based on system resources
-//   - Executes mining with the determined worker count
-//   - Updates resource manager with current load
-//   - Handles errors and implements retry logic
-//
-// Returns:
-//   - nonce: The nonce value that produced a valid hash
-//   - hash: The resulting block hash
-//   - error: Any error that occurred during mining
 func (pow *ProofOfWork) RunAdaptive() (int64, []byte, error) {
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime)
+		pow.metrics.RecordMiningAttempt(true)
+		pow.metrics.RecordBlockMined(duration)
+	}()
+
 	// Check if system is shutting down
 	select {
 	case <-pow.shutdownChan:
+		pow.metrics.RecordMiningAttempt(false)
 		return 0, nil, fmt.Errorf("system is shutting down")
 	default:
 	}
 
 	// Check circuit breaker
 	if err := pow.checkCircuitBreaker(); err != nil {
+		pow.metrics.RecordMiningAttempt(false)
 		return 0, nil, err
 	}
 
@@ -517,11 +536,18 @@ func (pow *ProofOfWork) RunAdaptive() (int64, []byte, error) {
 		// Check system resources
 		if err := pow.checkResources(); err != nil {
 			pow.recordFailure()
+			pow.metrics.RecordMiningAttempt(false)
 			return 0, nil, fmt.Errorf("resource check failed: %w", err)
 		}
 
 		// Get optimal worker count
 		workerCount := pow.rm.GetOptimalWorkerCount()
+		pow.metrics.RecordResourceUsage(
+			pow.rm.GetCPUUtilization(),
+			pow.rm.GetMemoryUtilization(),
+			workerCount,
+			pow.rm.GetOptimalWorkerCount(),
+		)
 
 		// Create a channel for the result
 		resultChan := make(chan struct {
@@ -546,6 +572,7 @@ func (pow *ProofOfWork) RunAdaptive() (int64, []byte, error) {
 			if result.err != nil {
 				lastErr = result.err
 				pow.recordFailure()
+				pow.metrics.RecordMiningAttempt(false)
 				if pow.config.LoggingEnabled {
 					fmt.Printf("Mining attempt %d failed: %v\n", retry+1, result.err)
 				}
@@ -556,10 +583,12 @@ func (pow *ProofOfWork) RunAdaptive() (int64, []byte, error) {
 		case <-time.After(pow.config.MiningTimeout):
 			lastErr = ErrMiningTimeout
 			pow.recordFailure()
+			pow.metrics.RecordMiningAttempt(false)
 			if pow.config.LoggingEnabled {
 				fmt.Printf("Mining attempt %d timed out\n", retry+1)
 			}
 		case <-pow.shutdownChan:
+			pow.metrics.RecordMiningAttempt(false)
 			return 0, nil, fmt.Errorf("mining interrupted by shutdown")
 		}
 	}
@@ -620,25 +649,22 @@ func (pow *ProofOfWork) checkResources() error {
 }
 
 // Validate checks if the block's proof of work is valid.
-// It verifies that the block's hash meets the target difficulty.
-// The method:
-//   - Prepares block data using current nonce
-//   - Computes block hash
-//   - Compares hash against target difficulty
-//
-// Returns:
-//   - bool: True if the proof of work is valid, false otherwise
 func (pow *ProofOfWork) Validate() bool {
+	pow.metrics.RecordValidation(true)
 	var hashInt big.Int
 
 	data, err := pow.prepareData(pow.block.GetNonce())
 	if err != nil {
+		pow.metrics.RecordValidation(false)
 		return false
 	}
 	hash := sha256.Sum256(data)
 	hashInt.SetBytes(hash[:])
 
 	isValid := hashInt.Cmp(pow.target) == -1
+	if !isValid {
+		pow.metrics.RecordValidation(false)
+	}
 
 	return isValid
 }
@@ -694,4 +720,9 @@ func (pow *ProofOfWork) adjustDifficulty() *big.Int {
 	}
 
 	return newTarget
+}
+
+// GetMetrics returns the current metrics.
+func (pow *ProofOfWork) GetMetrics() map[string]interface{} {
+	return pow.metrics.GetMetrics()
 }

@@ -1,0 +1,79 @@
+groups:
+  - name: pow
+    rules:
+      - alert: HighMiningDuration
+        expr: histogram_quantile(0.95, rate(pow_mining_duration_seconds_bucket[5m])) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mining duration detected"
+          description: "Mining duration is above 5 minutes for 95th percentile"
+
+      - alert: HighResourceUtilization
+        expr: |
+          pow_cpu_utilization_percent > 90 or
+          pow_memory_utilization_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High resource utilization detected"
+          description: "CPU or memory utilization is above 90%"
+
+      - alert: CircuitBreakerTripped
+        expr: pow_circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker tripped"
+          description: "Circuit breaker is in open state for more than 1 minute"
+
+      - alert: LowHashRate
+        expr: rate(pow_hash_operations_total[5m]) < 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low hash rate detected"
+          description: "Hash rate is below 1000 hashes per second"
+
+      - alert: HighFailureRate
+        expr: |
+          rate(pow_mining_failures_total[5m]) /
+          rate(pow_mining_attempts_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mining failure rate"
+          description: "More than 50% of mining attempts are failing"
+
+      - alert: WorkerCountMismatch
+        expr: |
+          abs(pow_worker_count - pow_optimal_worker_count) > 2
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Worker count mismatch"
+          description: "Current worker count differs significantly from optimal"
+
+      - alert: HighDifficulty
+        expr: pow_current_difficulty > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mining difficulty"
+          description: "Mining difficulty is above 30"
+
+      - alert: ResourceContention
+        expr: pow_resource_contention > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High resource contention"
+          description: "Resource contention level is above 80%" 

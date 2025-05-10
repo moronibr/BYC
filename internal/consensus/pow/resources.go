@@ -25,6 +25,10 @@ type ResourceManager struct {
 	// Current state
 	currentWorkers int
 	workerLoads    map[int]float64 // Worker count -> CPU load mapping
+
+	// Utilization metrics
+	cpuUtilization    float64
+	memoryUtilization float64
 }
 
 // NewResourceManager creates a new resource manager
@@ -83,13 +87,21 @@ func (rm *ResourceManager) GetOptimalWorkerCount() int {
 	return bestWorkerCount
 }
 
-// UpdateWorkerLoad updates the CPU load for a specific worker count
+// UpdateWorkerLoad updates the load for a specific worker count.
 func (rm *ResourceManager) UpdateWorkerLoad(workerCount int, load float64) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
 	rm.workerLoads[workerCount] = load
 	rm.currentWorkers = workerCount
+
+	// Update CPU utilization based on worker load
+	rm.cpuUtilization = load * 100 // Convert to percentage
+
+	// Update memory utilization (simplified model)
+	// Each worker is assumed to use a base amount of memory plus some overhead
+	baseMemoryPerWorker := 0.1 // 10% base memory per worker
+	rm.memoryUtilization = (baseMemoryPerWorker * float64(workerCount)) * 100
 }
 
 // monitorResources continuously monitors system resources
@@ -115,12 +127,12 @@ func (rm *ResourceManager) monitorResources() {
 	}
 }
 
-// GetSystemMetrics returns current system metrics
-func (rm *ResourceManager) GetSystemMetrics() (cpuCount int, memUsage float64) {
-	rm.mu.RLock()
-	defer rm.mu.RUnlock()
+// GetSystemMetrics returns the current system metrics.
+func (rm *ResourceManager) GetSystemMetrics() (int, float64) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 
-	return rm.cpuCount, float64(rm.memStats.Alloc) / float64(rm.memStats.Sys)
+	return rm.cpuCount, rm.memoryUtilization
 }
 
 // SetResourceLimits sets the resource usage limits
@@ -147,4 +159,14 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// GetCPUUtilization returns the current CPU utilization as a percentage.
+func (rm *ResourceManager) GetCPUUtilization() float64 {
+	return rm.cpuUtilization
+}
+
+// GetMemoryUtilization returns the current memory utilization as a percentage.
+func (rm *ResourceManager) GetMemoryUtilization() float64 {
+	return rm.memoryUtilization
 }
