@@ -2,23 +2,30 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Config represents the application configuration
 type Config struct {
 	// Network configuration
-	ListenAddr     string   `json:"listen_addr"`
-	BootstrapNodes []string `json:"bootstrap_nodes"`
-	MaxPeers       int      `json:"max_peers"`
-
-	// Database configuration
-	DBPath string `json:"db_path"`
+	Network    string `json:"network"`
+	ListenAddr string `json:"listen_addr"`
+	RPCPort    int    `json:"rpc_port"`
+	MaxPeers   int    `json:"max_peers"`
 
 	// Mining configuration
-	MinerAddress string `json:"miner_address"`
-	MinerThreads int    `json:"miner_threads"`
+	MiningEnabled bool   `json:"mining_enabled"`
+	MiningThreads int    `json:"mining_threads"`
+	MiningCoin    string `json:"mining_coin"`
+
+	// Database configuration
+	DataDir   string        `json:"data_dir"`
+	DBPath    string        `json:"db_path"`
+	MaxDBSize int64         `json:"max_db_size"`
+	DBTimeout time.Duration `json:"db_timeout"`
 
 	// Consensus configuration
 	InitialDifficulty uint32 `json:"initial_difficulty"`
@@ -36,12 +43,17 @@ type TLSConfig struct {
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		ListenAddr:        ":8333",
-		BootstrapNodes:    []string{},
+		Network:           "mainnet",
+		ListenAddr:        "0.0.0.0",
+		RPCPort:           8333,
 		MaxPeers:          125,
-		DBPath:            "data/blockchain",
-		MinerAddress:      "",
-		MinerThreads:      4,
+		MiningEnabled:     false,
+		MiningThreads:     1,
+		MiningCoin:        "leah",
+		DataDir:           "data",
+		DBPath:            "byc.db",
+		MaxDBSize:         1024 * 1024 * 1024, // 1GB
+		DBTimeout:         30 * time.Second,
 		InitialDifficulty: 1,
 		BlockTime:         600, // 10 minutes
 	}
@@ -90,8 +102,35 @@ func SaveConfig(config *Config, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// Validate validates the configuration
-func (c *Config) Validate() error {
-	// TODO: Add validation logic
+// ValidateConfig validates the configuration
+func ValidateConfig(config *Config) error {
+	// Validate network
+	if config.Network != "mainnet" && config.Network != "testnet" {
+		return errors.New("invalid network")
+	}
+
+	// Validate RPC port
+	if config.RPCPort <= 0 || config.RPCPort > 65535 {
+		return errors.New("invalid RPC port")
+	}
+
+	// Validate max peers
+	if config.MaxPeers <= 0 {
+		return errors.New("invalid max peers")
+	}
+
+	// Validate mining threads
+	if config.MiningThreads <= 0 {
+		return errors.New("invalid mining threads")
+	}
+
+	// Validate database settings
+	if config.MaxDBSize <= 0 {
+		return errors.New("invalid max DB size")
+	}
+	if config.DBTimeout <= 0 {
+		return errors.New("invalid DB timeout")
+	}
+
 	return nil
 }
