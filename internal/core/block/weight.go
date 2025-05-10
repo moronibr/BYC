@@ -35,7 +35,7 @@ func (b *Block) CalculateBlockWeight() (*BlockWeight, error) {
 
 	// Calculate base size (excluding witness data)
 	for _, tx := range b.Transactions {
-		baseSize := tx.GetTransactionSize()
+		baseSize := tx.Size()
 		weight.BaseSize += baseSize
 		weight.TotalSize += baseSize
 	}
@@ -65,60 +65,6 @@ func (b *Block) CalculateBlockWeight() (*BlockWeight, error) {
 	return weight, nil
 }
 
-// ValidateBlockWeight validates that a block's weight is within limits
-func (b *Block) ValidateBlockWeight() error {
-	weight, err := b.CalculateBlockWeight()
-	if err != nil {
-		return err
-	}
-
-	if weight.TotalSize > MaxBlockSize {
-		return fmt.Errorf("block size exceeds maximum: %d > %d", weight.TotalSize, MaxBlockSize)
-	}
-
-	if weight.Weight > MaxBlockWeight {
-		return fmt.Errorf("block weight exceeds maximum: %d > %d", weight.Weight, MaxBlockWeight)
-	}
-
-	return nil
-}
-
-// GetBlockSize returns the size of a block in bytes
-func (b *Block) GetBlockSize() int {
-	size := 0
-
-	// Add block header size
-	size += 80 // Fixed header size
-
-	// Add transaction sizes
-	for _, tx := range b.Transactions {
-		size += tx.GetTransactionSize()
-	}
-
-	return size
-}
-
-// GetBlockWeight returns the weight of a block
-func (b *Block) GetBlockWeight() int {
-	weight := 0
-
-	// Add block header weight
-	weight += 80 * BaseSizeWeight // Fixed header weight
-
-	// Add transaction weights
-	for _, tx := range b.Transactions {
-		// Base transaction weight
-		weight += tx.GetTransactionSize() * BaseSizeWeight
-
-		// Witness weight
-		if tx.Witness != nil {
-			weight += tx.Witness.Size() * WitnessSizeWeight
-		}
-	}
-
-	return weight
-}
-
 // IsBlockFull checks if a block is full
 func (b *Block) IsBlockFull() bool {
 	weight, err := b.CalculateBlockWeight()
@@ -127,23 +73,4 @@ func (b *Block) IsBlockFull() bool {
 	}
 
 	return weight.TotalSize >= MaxBlockSize || weight.Weight >= MaxBlockWeight
-}
-
-// CanAddTransaction checks if a transaction can be added to the block
-func (b *Block) CanAddTransaction(tx *Transaction) bool {
-	// Calculate current block weight
-	currentWeight, err := b.CalculateBlockWeight()
-	if err != nil {
-		return false
-	}
-
-	// Calculate transaction weight
-	txWeight := tx.GetTransactionSize() * BaseSizeWeight
-	if tx.Witness != nil {
-		txWeight += tx.Witness.Size() * WitnessSizeWeight
-	}
-
-	// Check if adding the transaction would exceed limits
-	return (currentWeight.TotalSize+tx.GetTransactionSize() <= MaxBlockSize) &&
-		(currentWeight.Weight+txWeight <= MaxBlockWeight)
 }

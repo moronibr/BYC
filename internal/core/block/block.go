@@ -33,7 +33,7 @@ type Block struct {
 	Witness *common.Witness
 
 	// Block size in bytes
-	Size int
+	BlockSize int
 
 	// Block weight in weight units
 	Weight int
@@ -56,7 +56,7 @@ func (b *Block) String() string {
 		b.Header.Nonce,
 		hex.EncodeToString(b.Header.Hash),
 		b.Header.Height,
-		b.Size,
+		b.BlockSize,
 		b.Weight,
 		len(b.Transactions),
 	)
@@ -83,7 +83,7 @@ func (b *Block) AddTransaction(tx *common.Transaction) error {
 	}
 
 	b.Transactions = append(b.Transactions, tx)
-	b.Size = b.GetBlockSize()
+	b.BlockSize = b.GetBlockSize()
 	b.Weight = b.GetBlockWeight()
 
 	return nil
@@ -189,7 +189,7 @@ func (b *Block) Clone() *Block {
 		},
 		Transactions:    make([]*common.Transaction, len(b.Transactions)),
 		Witness:         b.Witness.Clone(),
-		Size:            b.Size,
+		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
 		IsValid:         b.IsValid,
 		ValidationError: b.ValidationError,
@@ -252,7 +252,7 @@ func (b *Block) Copy() *Block {
 		},
 		Transactions:    make([]*common.Transaction, len(b.Transactions)),
 		Witness:         b.Witness.Clone(),
-		Size:            b.Size,
+		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
 		IsValid:         b.IsValid,
 		ValidationError: b.ValidationError,
