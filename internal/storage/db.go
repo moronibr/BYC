@@ -175,8 +175,8 @@ func (db *DB) DeleteUTXO(txHash []byte, outputIndex uint32) error {
 
 // SaveMempoolTx saves a transaction to the mempool
 func (db *DB) SaveMempoolTx(transaction *common.Transaction) error {
-	return db.db.Update(func(dbtx *bbolt.Tx) error {
-		bucket := dbtx.Bucket([]byte("mempool"))
+	return db.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte("mempool"))
 		if bucket == nil {
 			return fmt.Errorf("mempool bucket not found")
 		}
@@ -184,29 +184,30 @@ func (db *DB) SaveMempoolTx(transaction *common.Transaction) error {
 		// Serialize transaction
 		data, err := json.Marshal(transaction)
 		if err != nil {
-			return fmt.Errorf("failed to serialize transaction: %v", err)
+			return err
 		}
 
-		// Use transaction hash as key
-		return bucket.Put(transaction.Hash, data)
+		// Save transaction
+		return bucket.Put(transaction.Hash(), data)
 	})
 }
 
 // GetMempoolTx retrieves a transaction from the mempool
 func (db *DB) GetMempoolTx(txHash []byte) (*common.Transaction, error) {
 	var tx common.Transaction
-
 	err := db.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("mempool"))
 		if bucket == nil {
 			return fmt.Errorf("mempool bucket not found")
 		}
 
+		// Get transaction data
 		data := bucket.Get(txHash)
 		if data == nil {
 			return fmt.Errorf("transaction not found")
 		}
 
+		// Deserialize transaction
 		return json.Unmarshal(data, &tx)
 	})
 
@@ -220,13 +221,13 @@ func (db *DB) GetMempoolTx(txHash []byte) (*common.Transaction, error) {
 // GetAllMempoolTxs retrieves all transactions from the mempool
 func (db *DB) GetAllMempoolTxs() ([]*common.Transaction, error) {
 	var transactions []*common.Transaction
-
 	err := db.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("mempool"))
 		if bucket == nil {
 			return fmt.Errorf("mempool bucket not found")
 		}
 
+		// Iterate over all transactions
 		return bucket.ForEach(func(k, v []byte) error {
 			var tx common.Transaction
 			if err := json.Unmarshal(v, &tx); err != nil {
@@ -309,10 +310,10 @@ func (db *DB) StoreTransaction(blockTx *common.Transaction) error {
 		// Serialize transaction
 		data, err := json.Marshal(blockTx)
 		if err != nil {
-			return fmt.Errorf("failed to serialize transaction: %v", err)
+			return err
 		}
 
-		// Use transaction hash as key
-		return bucket.Put(blockTx.Hash, data)
+		// Store transaction
+		return bucket.Put(blockTx.Hash(), data)
 	})
 }

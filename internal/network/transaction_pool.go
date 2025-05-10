@@ -3,7 +3,7 @@ package network
 import (
 	"sync"
 
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 )
 
 // TransactionPool manages pending transactions
@@ -11,7 +11,7 @@ type TransactionPool struct {
 	mu sync.RWMutex
 
 	// Pending transactions
-	pendingTxs []*types.Transaction
+	pendingTxs []*common.Transaction
 
 	// Maximum number of transactions in the pool
 	maxSize int
@@ -20,13 +20,13 @@ type TransactionPool struct {
 // NewTransactionPool creates a new transaction pool
 func NewTransactionPool() *TransactionPool {
 	return &TransactionPool{
-		pendingTxs: make([]*types.Transaction, 0),
+		pendingTxs: make([]*common.Transaction, 0),
 		maxSize:    1000,
 	}
 }
 
 // AddTransaction adds a transaction to the pool
-func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
+func (tp *TransactionPool) AddTransaction(tx *common.Transaction) error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
@@ -39,34 +39,33 @@ func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
 }
 
 // GetPendingTransactions returns all pending transactions
-func (tp *TransactionPool) GetPendingTransactions() []*types.Transaction {
+func (tp *TransactionPool) GetPendingTransactions() []*common.Transaction {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
 	// Return a copy to prevent modification of the internal slice
-	txs := make([]*types.Transaction, len(tp.pendingTxs))
+	txs := make([]*common.Transaction, len(tp.pendingTxs))
 	copy(txs, tp.pendingTxs)
 	return txs
 }
 
 // RemoveTransactions removes transactions from the pool
-func (tp *TransactionPool) RemoveTransactions(txs []*types.Transaction) {
+func (tp *TransactionPool) RemoveTransactions(txs []*common.Transaction) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
-	// Create a map for quick lookup
+	// Create a map of transaction hashes to remove
 	toRemove := make(map[string]struct{})
 	for _, tx := range txs {
-		toRemove[string(tx.Hash)] = struct{}{}
+		toRemove[string(tx.Hash())] = struct{}{}
 	}
 
 	// Remove transactions
-	newPendingTxs := make([]*types.Transaction, 0)
+	var newTxs []*common.Transaction
 	for _, tx := range tp.pendingTxs {
-		if _, exists := toRemove[string(tx.Hash)]; !exists {
-			newPendingTxs = append(newPendingTxs, tx)
+		if _, exists := toRemove[string(tx.Hash())]; !exists {
+			newTxs = append(newTxs, tx)
 		}
 	}
-
-	tp.pendingTxs = newPendingTxs
+	tp.pendingTxs = newTxs
 }

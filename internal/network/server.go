@@ -10,7 +10,7 @@ import (
 
 	"github.com/youngchain/internal/config"
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/interfaces"
 	"github.com/youngchain/internal/network/messages"
 	"github.com/youngchain/internal/network/peers"
@@ -35,7 +35,7 @@ type Server struct {
 	peerManager *peers.Manager
 
 	// Message handling
-	MessageChan chan *messages.Message
+	MessageChan chan interface{}
 
 	// Server state
 	IsRunning bool
@@ -48,18 +48,22 @@ type Server struct {
 	consensus interfaces.Consensus
 
 	// Transaction pool
-	transactionPool *TransactionPool
+	txPool *TransactionPool
+
+	// Connected peers
+	peers map[string]*Peer
 }
 
 // NewServer creates a new network server
 func NewServer(config *config.Config, consensus interfaces.Consensus) *Server {
 	return &Server{
-		config:          config,
-		peerManager:     peers.NewManager(config),
-		MessageChan:     make(chan *messages.Message, 100),
-		StopChan:        make(chan struct{}),
-		consensus:       consensus,
-		transactionPool: NewTransactionPool(),
+		config:      config,
+		peerManager: peers.NewManager(config),
+		MessageChan: make(chan interface{}, 100),
+		StopChan:    make(chan struct{}),
+		consensus:   consensus,
+		txPool:      NewTransactionPool(),
+		peers:       make(map[string]*Peer),
 	}
 }
 
@@ -97,26 +101,35 @@ func (s *Server) SetDB(db *storage.Database) {
 	s.db = db
 }
 
-// HandleMessage handles a message from a peer
-func (s *Server) HandleMessage(msg *messages.Message) error {
-	switch msg.Type {
-	case messages.BlockMsg:
-		var blockMsg messages.BlockMessage
-		if err := json.Unmarshal(msg.Data, &blockMsg); err != nil {
-			return fmt.Errorf("failed to unmarshal block message: %v", err)
-		}
-		return s.processBlock(blockMsg.Block)
-
-	case messages.TransactionMsg:
-		var txMsg messages.TransactionMessage
-		if err := json.Unmarshal(msg.Data, &txMsg); err != nil {
-			return fmt.Errorf("failed to unmarshal transaction message: %v", err)
-		}
-		return s.processTransaction(txMsg.Transaction)
-
+// HandleMessage handles incoming network messages
+func (s *Server) HandleMessage(msg interface{}) error {
+	switch tx := msg.(type) {
+	case *common.Transaction:
+		return s.ProcessTransaction(tx)
 	default:
-		return fmt.Errorf("unknown message type: %s", msg.Type)
+		return fmt.Errorf("unknown message type: %T", msg)
 	}
+}
+
+// ProcessTransaction processes a new transaction
+func (s *Server) ProcessTransaction(tx *common.Transaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Add to transaction pool
+	if err := s.txPool.AddTransaction(tx); err != nil {
+		return fmt.Errorf("failed to add transaction to pool: %v", err)
+	}
+
+	// Broadcast to peers
+	for _, peer := range s.peers {
+		if err := peer.SendTransaction(tx); err != nil {
+			// Log error but continue with other peers
+			fmt.Printf("Failed to send transaction to peer %s: %v\n", peer.ID(), err)
+		}
+	}
+
+	return nil
 }
 
 // processBlock processes a block
@@ -197,7 +210,7 @@ func (s *Server) validateBlockHeader(block *block.Block) error {
 // validateBlockTransactions validates all transactions in the block
 func (s *Server) validateBlockTransactions(block *block.Block) error {
 	for _, tx := range block.Transactions {
-		if err := s.transactionPool.AddTransaction(tx); err != nil {
+		if err := s.txPool.AddTransaction(tx); err != nil {
 			return fmt.Errorf("transaction validation failed: %v", err)
 		}
 	}
@@ -235,27 +248,6 @@ func (s *Server) calculateNextDifficulty(prevBlock *block.Block) uint32 {
 	return prevBlock.Header.Difficulty
 }
 
-// processTransaction processes a transaction
-func (s *Server) processTransaction(tx *types.Transaction) error {
-	// Add transaction to pool
-	if err := s.transactionPool.AddTransaction(tx); err != nil {
-		return fmt.Errorf("failed to add transaction to pool: %v", err)
-	}
-
-	// Broadcast transaction to peers
-	txMsg := &messages.TransactionMessage{
-		Transaction: tx,
-		CoinType:    "default",
-	}
-	msgData, err := json.Marshal(txMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal transaction message: %v", err)
-	}
-	s.peerManager.Broadcast(msgData)
-
-	return nil
-}
-
 // processMessages processes incoming messages
 func (s *Server) processMessages() {
 	for {
@@ -290,9 +282,12 @@ func (s *Server) GetBlock(hash []byte) (*block.Block, error) {
 	return s.db.GetBlock(hash)
 }
 
-// GetPendingTransactions implements interfaces.BlockChain
-func (s *Server) GetPendingTransactions() []*types.Transaction {
-	return s.transactionPool.GetPendingTransactions()
+// GetPendingTransactions returns all pending transactions
+func (s *Server) GetPendingTransactions() []*common.Transaction {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.txPool.GetPendingTransactions()
 }
 
 // GetPeerHeights implements interfaces.Network
@@ -337,28 +332,25 @@ func (s *Server) BroadcastBlock(block *block.Block) error {
 	return nil
 }
 
-// BroadcastTransaction implements interfaces.Network
-func (s *Server) BroadcastTransaction(tx interface{}) error {
-	// Convert interface to transaction
-	transaction, ok := tx.(*types.Transaction)
-	if !ok {
-		return fmt.Errorf("invalid transaction type")
-	}
-
+// BroadcastTransaction broadcasts a transaction to all peers
+func (s *Server) BroadcastTransaction(tx *common.Transaction) error {
 	// Create transaction message
-	msg, err := messages.NewMessage(messages.TransactionMsg, &messages.TransactionMessage{
-		Transaction: transaction,
+	msg := &messages.TransactionMessage{
+		Transaction: tx,
 		CoinType:    "default",
-	})
+	}
+	data, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal transaction message: %v", err)
 	}
 
-	// Broadcast message to all peers
-	msgData, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
+	// Broadcast to all peers
+	for _, peer := range s.peers {
+		if err := peer.Send(data); err != nil {
+			// Log error but continue with other peers
+			fmt.Printf("Failed to send transaction to peer %s: %v\n", peer.ID(), err)
+		}
 	}
-	s.peerManager.Broadcast(msgData)
+
 	return nil
 }

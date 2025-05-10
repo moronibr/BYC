@@ -173,16 +173,12 @@ func (c *Consensus) addMiningReward(block *block.Block) error {
 	reward := c.calculateBlockReward(block.Header.Height)
 
 	// Create mining reward transaction
-	rewardTx := &common.Transaction{
-		Version:   1,
-		Timestamp: time.Now(),
-		From:      nil, // From is nil for coinbase
-		To:        c.miningAddress,
-		Amount:    reward,
-		Data:      []byte("mining reward"),
-		Inputs:    make([]common.Input, 0),
-		Outputs:   make([]common.Output, 0),
-	}
+	rewardTx := common.NewTransaction(
+		nil, // From is nil for coinbase
+		c.miningAddress,
+		reward,
+		[]byte("mining reward"),
+	)
 
 	// Add transaction to block
 	return block.AddTransaction(rewardTx)
@@ -199,8 +195,8 @@ func (c *Consensus) verifyMiningReward(block *block.Block) error {
 
 	// Verify transaction amount
 	expectedReward := c.calculateBlockReward(block.Header.Height)
-	if rewardTx.Amount != expectedReward {
-		return fmt.Errorf("invalid mining reward amount: got %d, want %d", rewardTx.Amount, expectedReward)
+	if rewardTx.Amount() != expectedReward {
+		return fmt.Errorf("invalid mining reward amount: got %d, want %d", rewardTx.Amount(), expectedReward)
 	}
 
 	return nil
@@ -336,27 +332,27 @@ func (c *Consensus) calculateTarget() []byte {
 // ValidateTransaction validates a transaction
 func (c *Consensus) ValidateTransaction(tx *common.Transaction) error {
 	// Validate version
-	if tx.Version == 0 {
+	if tx.Version() == 0 {
 		return errors.New("invalid version")
 	}
 
 	// Validate timestamp
-	if tx.Timestamp.IsZero() {
+	if tx.Timestamp().IsZero() {
 		return errors.New("invalid timestamp")
 	}
 
 	// Validate inputs
-	if len(tx.Inputs) == 0 {
+	if len(tx.Inputs()) == 0 {
 		return errors.New("no inputs")
 	}
 
 	// Validate outputs
-	if len(tx.Outputs) == 0 {
+	if len(tx.Outputs()) == 0 {
 		return errors.New("no outputs")
 	}
 
 	// Validate amount
-	if tx.Amount == 0 {
+	if tx.Amount() == 0 {
 		return errors.New("invalid amount")
 	}
 
@@ -368,32 +364,19 @@ func (c *Consensus) calculateMinimumFee(tx *common.Transaction) uint64 {
 	// Base fee per byte
 	baseFeePerByte := uint64(1)
 
-	// Calculate size-based fee
-	size := tx.Size()
-	fee := uint64(size) * baseFeePerByte
-
-	// Add priority fee
-	priority := c.calculatePriority(tx)
-	if priority < 0.5 {
-		fee *= 2 // Double fee for low priority
-	}
-
-	return fee
+	// Calculate fee based on transaction size
+	return uint64(tx.Size()) * baseFeePerByte
 }
 
-// calculatePriority calculates the transaction priority
+// calculatePriority calculates the priority of a transaction
 func (c *Consensus) calculatePriority(tx *common.Transaction) float64 {
-	// Priority is based on the time until the transaction becomes valid
-	now := time.Now().Unix()
-	if tx.Timestamp.Unix() <= now {
-		return 1.0 // Already valid
+	// Priority is based on fee per byte
+	fee := tx.Fee()
+	size := tx.Size()
+	if size == 0 {
+		return 0
 	}
-
-	// Calculate time until valid in hours
-	timeUntilValid := float64(tx.Timestamp.Unix()-now) / 3600.0
-
-	// Priority decreases as time until valid increases
-	return 1.0 / timeUntilValid
+	return float64(fee) / float64(size)
 }
 
 // SyncChain synchronizes the blockchain with the network

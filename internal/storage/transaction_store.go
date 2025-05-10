@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 	"go.etcd.io/bbolt"
 )
@@ -17,67 +17,45 @@ const (
 	utxoBucket        = "utxos"
 )
 
-// TransactionStore manages transaction and UTXO storage
+// TransactionStore handles storage of transactions
 type TransactionStore struct {
-	db *bbolt.DB
+	db StorageInterface
 }
 
 // NewTransactionStore creates a new transaction store
-func NewTransactionStore(db *bbolt.DB) *TransactionStore {
-	return &TransactionStore{db: db}
+func NewTransactionStore(db StorageInterface) *TransactionStore {
+	return &TransactionStore{
+		db: db,
+	}
 }
 
-// SaveTransaction saves a transaction to the database
-func (ts *TransactionStore) SaveTransaction(tx *types.Transaction) error {
-	return ts.db.Update(func(dbTx *bbolt.Tx) error {
-		// Get or create transaction bucket
-		bucket, err := dbTx.CreateBucketIfNotExists([]byte(transactionBucket))
-		if err != nil {
-			return fmt.Errorf("create bucket: %s", err)
-		}
+// SaveTransaction saves a transaction to storage
+func (ts *TransactionStore) SaveTransaction(tx *common.Transaction) error {
+	if tx == nil {
+		return errors.New("cannot save nil transaction")
+	}
 
-		// Marshal transaction
-		data, err := json.Marshal(tx)
-		if err != nil {
-			return fmt.Errorf("marshal transaction: %s", err)
-		}
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return err
+	}
 
-		// Save transaction
-		txHash := tx.CalculateHash()
-		if err := bucket.Put(txHash, data); err != nil {
-			return fmt.Errorf("put transaction: %s", err)
-		}
-
-		return nil
-	})
+	return ts.db.Put(tx.Hash(), data)
 }
 
-// GetTransaction gets a transaction from the database
-func (ts *TransactionStore) GetTransaction(txHash []byte) (*types.Transaction, error) {
-	var tx *types.Transaction
+// GetTransaction retrieves a transaction by its hash
+func (ts *TransactionStore) GetTransaction(txHash []byte) (*common.Transaction, error) {
+	data, err := ts.db.Get(txHash)
+	if err != nil {
+		return nil, err
+	}
 
-	err := ts.db.View(func(dbTx *bbolt.Tx) error {
-		// Get transaction bucket
-		bucket := dbTx.Bucket([]byte(transactionBucket))
-		if bucket == nil {
-			return fmt.Errorf("bucket not found")
-		}
+	var tx common.Transaction
+	if err := json.Unmarshal(data, &tx); err != nil {
+		return nil, err
+	}
 
-		// Get transaction data
-		data := bucket.Get(txHash)
-		if data == nil {
-			return fmt.Errorf("transaction not found")
-		}
-
-		// Unmarshal transaction
-		if err := json.Unmarshal(data, &tx); err != nil {
-			return fmt.Errorf("unmarshal transaction: %s", err)
-		}
-
-		return nil
-	})
-
-	return tx, err
+	return &tx, nil
 }
 
 // SaveUTXO saves a UTXO to the database
@@ -223,35 +201,7 @@ func (ts *TransactionStore) GetBalance(address string, coinType coin.CoinType) (
 	return balance, err
 }
 
-// calculateHash calculates the transaction hash
-func calculateHash(tx *types.Transaction) []byte {
-	var buf bytes.Buffer
-
-	// Write version
-	binary.Write(&buf, binary.LittleEndian, tx.Version)
-
-	// Write inputs
-	for _, input := range tx.Inputs {
-		buf.Write(input.PreviousTxHash)
-		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
-		buf.Write(input.ScriptSig)
-		binary.Write(&buf, binary.LittleEndian, input.Sequence)
-	}
-
-	// Write outputs
-	for _, output := range tx.Outputs {
-		binary.Write(&buf, binary.LittleEndian, output.Value)
-		buf.Write(output.ScriptPubKey)
-	}
-
-	// Write lock time and fee
-	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
-	binary.Write(&buf, binary.LittleEndian, tx.Fee)
-
-	// Write coin type
-	buf.Write([]byte(tx.CoinType))
-
-	// Calculate hash
-	hash := sha256.Sum256(buf.Bytes())
-	return hash[:]
+// calculateHash calculates the hash of a transaction
+func calculateHash(tx *common.Transaction) []byte {
+	return tx.Hash()
 }

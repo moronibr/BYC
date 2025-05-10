@@ -3,6 +3,7 @@ package peers
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/config"
+	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/network/messages"
 )
 
 // Info represents peer information
@@ -37,6 +40,26 @@ func NewPeer(conn net.Conn, info Info) *Peer {
 		info:   info,
 		stopCh: make(chan struct{}),
 	}
+}
+
+// ID returns the peer's address as its ID
+func (p *Peer) ID() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.info.Address
+}
+
+// SendTransaction sends a transaction to the peer
+func (p *Peer) SendTransaction(tx *common.Transaction) error {
+	msg := &messages.TransactionMessage{
+		Transaction: tx,
+		CoinType:    "default",
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transaction message: %v", err)
+	}
+	return p.Send(data)
 }
 
 // GetHeight returns the peer's height

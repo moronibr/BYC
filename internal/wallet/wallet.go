@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/scrypt"
 
 	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/types"
 )
 
 var (
@@ -435,22 +436,24 @@ func (w *Wallet) SignTransaction(tx *common.Transaction) error {
 	defer w.mu.RUnlock()
 
 	if w.PrivateKey == nil {
-		return errors.New("wallet has no private key")
+		return ErrInvalidKey
 	}
 
 	// Calculate transaction hash
 	hash := calculateTransactionHash(tx)
-	tx.Hash = hash
 
 	// Sign the hash
-	signature, err := ecdsa.SignASN1(rand.Reader, w.PrivateKey, hash)
+	r, s, err := ecdsa.Sign(rand.Reader, w.PrivateKey, hash)
 	if err != nil {
 		return fmt.Errorf("failed to sign transaction: %v", err)
 	}
 
-	// Add signature to the first input's script
-	if len(tx.Inputs) > 0 {
-		tx.Inputs[0].ScriptSig = signature
+	// Get the underlying transaction
+	underlyingTx := tx.GetTransaction()
+
+	// Add signature to the first input
+	if len(underlyingTx.Inputs) > 0 {
+		underlyingTx.Inputs[0].ScriptSig = append(r.Bytes(), s.Bytes()...)
 	}
 
 	return nil
@@ -458,17 +461,20 @@ func (w *Wallet) SignTransaction(tx *common.Transaction) error {
 
 // calculateTransactionHash calculates the hash of a transaction
 func calculateTransactionHash(tx *common.Transaction) []byte {
+	// Get the underlying transaction
+	underlyingTx := tx.GetTransaction()
+
 	// Create a buffer to hold the transaction data
 	var buf bytes.Buffer
 
 	// Write version
-	binary.Write(&buf, binary.LittleEndian, tx.Version)
+	binary.Write(&buf, binary.LittleEndian, underlyingTx.Version)
 
 	// Write timestamp
-	binary.Write(&buf, binary.LittleEndian, tx.Timestamp.Unix())
+	binary.Write(&buf, binary.LittleEndian, underlyingTx.Timestamp.Unix())
 
 	// Write inputs
-	for _, input := range tx.Inputs {
+	for _, input := range underlyingTx.Inputs {
 		buf.Write(input.PreviousTxHash)
 		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
 		buf.Write(input.ScriptSig)
@@ -476,13 +482,13 @@ func calculateTransactionHash(tx *common.Transaction) []byte {
 	}
 
 	// Write outputs
-	for _, output := range tx.Outputs {
+	for _, output := range underlyingTx.Outputs {
 		binary.Write(&buf, binary.LittleEndian, output.Value)
 		buf.Write(output.ScriptPubKey)
 	}
 
 	// Write lock time
-	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
+	binary.Write(&buf, binary.LittleEndian, underlyingTx.LockTime)
 
 	// Calculate hash
 	hash := sha256.Sum256(buf.Bytes())
@@ -508,28 +514,45 @@ func (w *Wallet) CreateTransaction(to string, amount uint64, nonce uint64) (*com
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	if w.Balance < amount {
-		return nil, errors.New("insufficient balance")
+	if w.PrivateKey == nil {
+		return nil, ErrInvalidKey
 	}
 
-	tx := &common.Transaction{
-		Version:   1,
-		From:      []byte(w.Address),
-		To:        []byte(to),
-		Amount:    amount,
-		Timestamp: time.Now(),
-		Inputs:    []common.Input{{}},
-		Outputs:   []common.Output{{}},
+	// Create transaction
+	tx := common.NewTransaction(
+		[]byte(w.Address),
+		[]byte(to),
+		amount,
+		nil,
+	)
+
+	// Get the underlying transaction
+	underlyingTx := tx.GetTransaction()
+
+	// Set transaction fields
+	underlyingTx.Version = 1
+	underlyingTx.Timestamp = time.Now()
+	underlyingTx.LockTime = 0
+
+	// Add input
+	input := &types.Input{
+		PreviousTxHash:  make([]byte, 32), // Placeholder for previous transaction hash
+		PreviousTxIndex: 0,                // Placeholder for output index
+		Address:         w.Address,
+		ScriptSig:       nil, // Will be set when signing
+		Sequence:        0xffffffff,
 	}
+	underlyingTx.Inputs = append(underlyingTx.Inputs, input)
 
-	// Set output details
-	tx.Outputs[0].Value = amount
-	tx.Outputs[0].Address = to
+	// Add output
+	output := &types.Output{
+		Address:      to,
+		Value:        amount,
+		ScriptPubKey: nil,
+	}
+	underlyingTx.Outputs = append(underlyingTx.Outputs, output)
 
-	// Calculate transaction hash
-	tx.Hash = calculateTransactionHash(tx)
-
-	// Sign the transaction
+	// Sign transaction
 	if err := w.SignTransaction(tx); err != nil {
 		return nil, err
 	}

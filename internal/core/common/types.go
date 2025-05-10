@@ -1,10 +1,11 @@
 package common
 
 import (
-	"errors"
-	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/types"
 )
 
 // Header represents a block header
@@ -21,53 +22,120 @@ type Header struct {
 
 // Transaction represents a blockchain transaction
 type Transaction struct {
-	// Transaction hash
-	Hash []byte
+	tx *types.Transaction
+}
 
-	// Transaction version
-	Version uint32
+// NewTransaction creates a new transaction
+func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
+	return &Transaction{
+		tx: types.NewTransaction(from, to, amount, data),
+	}
+}
 
-	// Transaction timestamp
-	Timestamp time.Time
+// GetTransaction returns the underlying types.Transaction
+func (t *Transaction) GetTransaction() *types.Transaction {
+	return t.tx
+}
 
-	// Transaction inputs
-	From []byte
+// From returns the from address from the first input
+func (t *Transaction) From() []byte {
+	if len(t.tx.Inputs) > 0 {
+		return []byte(t.tx.Inputs[0].Address)
+	}
+	return nil
+}
 
-	// Transaction outputs
-	To []byte
+// To returns the to address from the first output
+func (t *Transaction) To() []byte {
+	if len(t.tx.Outputs) > 0 {
+		return []byte(t.tx.Outputs[0].Address)
+	}
+	return nil
+}
 
-	// Transaction amount
-	Amount uint64
+// Amount returns the amount from the first output
+func (t *Transaction) Amount() uint64 {
+	if len(t.tx.Outputs) > 0 {
+		return t.tx.Outputs[0].Value
+	}
+	return 0
+}
 
-	// Transaction data
-	Data []byte
+// Hash returns the transaction hash
+func (t *Transaction) Hash() []byte {
+	return t.tx.Hash
+}
 
-	// Transaction inputs
-	Inputs []Input
+// Version returns the transaction version
+func (t *Transaction) Version() uint32 {
+	return t.tx.Version
+}
 
-	// Transaction outputs
-	Outputs []Output
+// Timestamp returns the transaction timestamp
+func (t *Transaction) Timestamp() time.Time {
+	return t.tx.Timestamp
+}
 
-	// Transaction witness
-	Witness *Witness
+// Inputs returns the transaction inputs
+func (t *Transaction) Inputs() []*types.Input {
+	return t.tx.Inputs
+}
 
-	// Transaction lock time
-	LockTime uint64
+// Outputs returns the transaction outputs
+func (t *Transaction) Outputs() []*types.Output {
+	return t.tx.Outputs
+}
+
+// LockTime returns the transaction lock time
+func (t *Transaction) LockTime() uint32 {
+	return t.tx.LockTime
+}
+
+// Fee returns the transaction fee
+func (t *Transaction) Fee() uint64 {
+	return t.tx.Fee
+}
+
+// CoinType returns the transaction coin type
+func (t *Transaction) CoinType() coin.CoinType {
+	return t.tx.CoinType
+}
+
+// Data returns the transaction data
+func (t *Transaction) Data() []byte {
+	return t.tx.Data
+}
+
+// Copy creates a deep copy of the transaction
+func (t *Transaction) Copy() *Transaction {
+	return &Transaction{
+		tx: t.tx.Copy(),
+	}
+}
+
+// Validate validates the transaction
+func (t *Transaction) Validate() error {
+	return t.tx.Validate()
+}
+
+// Size returns the size of the transaction in bytes
+func (t *Transaction) Size() int {
+	return t.tx.Size()
+}
+
+// IsCoinbase returns whether the transaction is a coinbase transaction
+func (t *Transaction) IsCoinbase() bool {
+	return t.tx.IsCoinbase()
 }
 
 // Input represents a transaction input
 type Input struct {
-	PreviousTxHash  []byte
-	PreviousTxIndex uint32
-	ScriptSig       []byte
-	Sequence        uint32
+	*types.Input
 }
 
 // Output represents a transaction output
 type Output struct {
-	Value        uint64
-	ScriptPubKey []byte
-	Address      string
+	*types.Output
 }
 
 // UTXO represents an unspent transaction output
@@ -107,196 +175,4 @@ func (us *UTXOSet) GetUTXO(txHash []byte, outIndex uint32) (*UTXO, bool) {
 // utxoKey creates a key for a UTXO
 func utxoKey(txHash []byte, outIndex uint32) string {
 	return string(txHash) + ":" + strconv.FormatUint(uint64(outIndex), 10)
-}
-
-// Witness represents a transaction witness
-type Witness struct {
-	Data [][]byte
-}
-
-// NewWitness creates a new witness
-func NewWitness() *Witness {
-	return &Witness{
-		Data: make([][]byte, 0),
-	}
-}
-
-// AddData adds data to the witness
-func (w *Witness) AddData(data []byte) {
-	w.Data = append(w.Data, data)
-}
-
-// Size returns the size of the witness in bytes
-func (w *Witness) Size() int {
-	size := 0
-	for _, data := range w.Data {
-		size += len(data)
-	}
-	return size
-}
-
-// Clone creates a deep copy of the witness
-func (w *Witness) Clone() *Witness {
-	clone := &Witness{
-		Data: make([][]byte, len(w.Data)),
-	}
-	for i, data := range w.Data {
-		clone.Data[i] = append([]byte{}, data...)
-	}
-	return clone
-}
-
-// Validate validates the witness
-func (w *Witness) Validate() error {
-	if len(w.Data) == 0 {
-		return nil
-	}
-	return nil
-}
-
-// Validate validates the transaction
-func (tx *Transaction) Validate() error {
-	// Validate version
-	if tx.Version == 0 {
-		return errors.New("invalid version")
-	}
-
-	// Validate from address
-	if len(tx.From) == 0 {
-		return errors.New("invalid from address")
-	}
-
-	// Validate to address
-	if len(tx.To) == 0 {
-		return errors.New("invalid to address")
-	}
-
-	// Validate amount
-	if tx.Amount == 0 {
-		return errors.New("invalid amount")
-	}
-
-	// Validate hash
-	if len(tx.Hash) == 0 {
-		return errors.New("invalid hash")
-	}
-
-	// Validate timestamp
-	if tx.Timestamp.IsZero() {
-		return errors.New("invalid timestamp")
-	}
-
-	// Validate inputs
-	if len(tx.Inputs) == 0 {
-		return errors.New("no inputs")
-	}
-
-	// Validate outputs
-	if len(tx.Outputs) == 0 {
-		return errors.New("no outputs")
-	}
-
-	// Validate witness if present
-	if tx.Witness != nil {
-		if err := tx.Witness.Validate(); err != nil {
-			return fmt.Errorf("invalid witness: %v", err)
-		}
-	}
-
-	return nil
-}
-
-// Size returns the size of the transaction in bytes
-func (tx *Transaction) Size() int {
-	size := 0
-
-	// Version size
-	size += 4
-
-	// From address size
-	size += len(tx.From)
-
-	// To address size
-	size += len(tx.To)
-
-	// Amount size
-	size += 8
-
-	// Data size
-	size += len(tx.Data)
-
-	// Hash size
-	size += len(tx.Hash)
-
-	// Timestamp size
-	size += 8
-
-	// Lock time size
-	size += 8
-
-	// Inputs size
-	for _, input := range tx.Inputs {
-		size += len(input.PreviousTxHash)
-		size += 4 // PreviousTxIndex
-		size += len(input.ScriptSig)
-		size += 4 // Sequence
-	}
-
-	// Outputs size
-	for _, output := range tx.Outputs {
-		size += 8 // Value
-		size += len(output.ScriptPubKey)
-		size += len(output.Address)
-	}
-
-	// Witness size if present
-	if tx.Witness != nil {
-		size += tx.Witness.Size()
-	}
-
-	return size
-}
-
-// Copy creates a deep copy of the transaction
-func (tx *Transaction) Copy() *Transaction {
-	clone := &Transaction{
-		Version:   tx.Version,
-		From:      append([]byte{}, tx.From...),
-		To:        append([]byte{}, tx.To...),
-		Amount:    tx.Amount,
-		Data:      append([]byte{}, tx.Data...),
-		Hash:      append([]byte{}, tx.Hash...),
-		Timestamp: tx.Timestamp,
-		LockTime:  tx.LockTime,
-	}
-
-	if tx.Witness != nil {
-		clone.Witness = tx.Witness.Clone()
-	}
-
-	clone.Inputs = make([]Input, len(tx.Inputs))
-	for i, input := range tx.Inputs {
-		clone.Inputs[i] = Input{
-			PreviousTxHash:  append([]byte{}, input.PreviousTxHash...),
-			PreviousTxIndex: input.PreviousTxIndex,
-			ScriptSig:       append([]byte{}, input.ScriptSig...),
-			Sequence:        input.Sequence,
-		}
-	}
-
-	clone.Outputs = make([]Output, len(tx.Outputs))
-	for i, output := range tx.Outputs {
-		clone.Outputs[i] = Output{
-			Value:        output.Value,
-			ScriptPubKey: append([]byte{}, output.ScriptPubKey...),
-			Address:      output.Address,
-		}
-	}
-
-	return clone
-}
-
-// IsCoinbase checks if the transaction is a coinbase transaction
-func (tx *Transaction) IsCoinbase() bool {
-	return len(tx.Inputs) == 1 && len(tx.Inputs[0].PreviousTxHash) == 0
 }

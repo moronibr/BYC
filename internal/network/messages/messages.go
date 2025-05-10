@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 )
 
 // MessageType represents the type of network message
@@ -32,8 +32,8 @@ type BlockMessage struct {
 
 // TransactionMessage represents a transaction message
 type TransactionMessage struct {
-	Transaction *types.Transaction `json:"transaction"`
-	CoinType    string             `json:"coin_type"`
+	Transaction *common.Transaction `json:"transaction"`
+	CoinType    string              `json:"coin_type"`
 }
 
 // NewMessage creates a new message

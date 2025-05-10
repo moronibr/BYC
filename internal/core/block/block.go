@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/common"
-	"github.com/youngchain/internal/core/types"
 )
 
 // BlockType represents the type of block
@@ -28,10 +27,7 @@ type Block struct {
 	Header *common.Header
 
 	// Block transactions
-	Transactions []*types.Transaction
-
-	// Block witness
-	Witness *common.Witness
+	Transactions []*common.Transaction
 
 	// Block size in bytes
 	BlockSize int
@@ -73,12 +69,12 @@ func NewBlock(prevHash []byte, height uint64) *Block {
 			Difficulty:    0x1d00ffff,
 			Height:        height,
 		},
-		Transactions: make([]*types.Transaction, 0),
+		Transactions: make([]*common.Transaction, 0),
 	}
 }
 
 // AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *types.Transaction) error {
+func (b *Block) AddTransaction(tx *common.Transaction) error {
 	if !b.CanAddTransaction(tx) {
 		return errors.New("block is full")
 	}
@@ -188,8 +184,7 @@ func (b *Block) Clone() *Block {
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
 		},
-		Transactions:    make([]*types.Transaction, len(b.Transactions)),
-		Witness:         b.Witness.Clone(),
+		Transactions:    make([]*common.Transaction, len(b.Transactions)),
 		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
 		IsValid:         b.IsValid,
@@ -203,39 +198,50 @@ func (b *Block) Clone() *Block {
 	return clone
 }
 
-// CalculateMerkleRoot calculates the Merkle root of the block's transactions
+// CalculateMerkleRoot calculates the merkle root of the block's transactions
 func (b *Block) CalculateMerkleRoot() []byte {
 	if len(b.Transactions) == 0 {
-		hash := sha256.Sum256([]byte{})
-		return hash[:]
+		return nil
 	}
 
-	// Create a list of transaction hashes
+	// Create a slice of transaction hashes
 	hashes := make([][]byte, len(b.Transactions))
 	for i, tx := range b.Transactions {
-		hashes[i] = tx.Hash
+		hashes[i] = tx.Hash()
 	}
 
-	// Calculate Merkle root
-	for len(hashes) > 1 {
-		// If odd number of hashes, duplicate the last one
-		if len(hashes)%2 != 0 {
-			hashes = append(hashes, hashes[len(hashes)-1])
-		}
+	// Calculate merkle root
+	return calculateMerkleRoot(hashes)
+}
 
-		// Create new level of hashes
-		newHashes := make([][]byte, len(hashes)/2)
-		for i := 0; i < len(hashes); i += 2 {
-			// Concatenate hashes
-			combined := append(hashes[i], hashes[i+1]...)
-			// Hash the concatenated hashes
-			hash := sha256.Sum256(combined)
-			newHashes[i/2] = hash[:]
-		}
-		hashes = newHashes
+// calculateMerkleRoot calculates the merkle root from a list of hashes
+func calculateMerkleRoot(hashes [][]byte) []byte {
+	if len(hashes) == 0 {
+		return nil
 	}
 
-	return hashes[0]
+	if len(hashes) == 1 {
+		return hashes[0]
+	}
+
+	// Create a new level of hashes
+	newLevel := make([][]byte, 0)
+	for i := 0; i < len(hashes); i += 2 {
+		if i+1 == len(hashes) {
+			// If there's an odd number of hashes, duplicate the last one
+			newLevel = append(newLevel, calculateHash(append(hashes[i], hashes[i]...)))
+		} else {
+			newLevel = append(newLevel, calculateHash(append(hashes[i], hashes[i+1]...)))
+		}
+	}
+
+	return calculateMerkleRoot(newLevel)
+}
+
+// calculateHash calculates the SHA-256 hash of the input
+func calculateHash(data []byte) []byte {
+	hash := sha256.Sum256(data)
+	return hash[:]
 }
 
 // Copy creates a deep copy of the block
@@ -251,8 +257,7 @@ func (b *Block) Copy() *Block {
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
 		},
-		Transactions:    make([]*types.Transaction, len(b.Transactions)),
-		Witness:         b.Witness.Clone(),
+		Transactions:    make([]*common.Transaction, len(b.Transactions)),
 		BlockSize:       b.BlockSize,
 		Weight:          b.Weight,
 		IsValid:         b.IsValid,
@@ -408,7 +413,7 @@ func (b *Block) ValidateBlockWeight() error {
 }
 
 // CanAddTransaction checks if a transaction can be added to the block
-func (b *Block) CanAddTransaction(tx *types.Transaction) bool {
+func (b *Block) CanAddTransaction(tx *common.Transaction) bool {
 	// Check if adding the transaction would exceed the maximum block weight
 	newWeight := b.GetBlockWeight() + tx.Size()*4
 	maxWeight := 4 * 1024 * 1024 // 4MB
