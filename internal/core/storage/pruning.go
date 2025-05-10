@@ -107,4 +107,5 @@ type BlockStore interface {
 	DeleteBlock(height uint64) error
 	GetBlock(height uint64) (*block.Block, error)
 	PutBlock(block *block.Block) error
+	GetLastBlock() (*block.Block, error)
 }

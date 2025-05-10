@@ -1,8 +1,10 @@
 package peers
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -12,10 +14,12 @@ import (
 
 // Info represents peer information
 type Info struct {
-	Address  string
-	Height   uint64
-	Version  string
-	LastSeen time.Time
+	Address   string
+	Height    uint64
+	Version   uint32
+	Services  uint64
+	LastSeen  time.Time
+	Connected bool
 }
 
 // Peer represents a network peer
@@ -85,6 +89,7 @@ type Manager struct {
 	config *config.Config
 	peers  map[string]*Peer
 	mu     sync.RWMutex
+	ctx    context.Context
 }
 
 // NewManager creates a new peer manager
@@ -92,6 +97,7 @@ func NewManager(config *config.Config) *Manager {
 	return &Manager{
 		config: config,
 		peers:  make(map[string]*Peer),
+		ctx:    context.Background(),
 	}
 }
 
@@ -164,7 +170,97 @@ func (m *Manager) Stop() {
 	m.peers = make(map[string]*Peer)
 }
 
-// discoverPeers discovers new peers
+// DNS seeds for peer discovery
+var dnsSeeds = []string{
+	"seed.byc.network",
+	"seed2.byc.network",
+	"seed3.byc.network",
+}
+
+// Bootstrap nodes for initial connection
+var bootstrapNodes = []string{
+	"node1.byc.network:8333",
+	"node2.byc.network:8333",
+	"node3.byc.network:8333",
+}
+
+// discoverPeers discovers new peers using DNS seeds and bootstrap nodes
 func (m *Manager) discoverPeers() {
-	// TODO: Implement peer discovery using DNS seeds and hardcoded nodes
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			// Discover peers from DNS seeds
+			for _, seed := range dnsSeeds {
+				go m.discoverFromDNS(seed)
+			}
+
+			// Connect to bootstrap nodes if we have no peers
+			if len(m.GetPeers()) == 0 {
+				for _, node := range bootstrapNodes {
+					go m.connectToBootstrap(node)
+				}
+			}
+		}
+	}
+}
+
+// discoverFromDNS discovers peers from a DNS seed
+func (m *Manager) discoverFromDNS(seed string) {
+	// Resolve DNS seed
+	addrs, err := net.LookupHost(seed)
+	if err != nil {
+		log.Printf("Failed to resolve DNS seed %s: %v", seed, err)
+		return
+	}
+
+	// Try to connect to each address
+	for _, addr := range addrs {
+		go m.connectToPeer(addr + ":8333")
+	}
+}
+
+// connectToBootstrap connects to a bootstrap node
+func (m *Manager) connectToBootstrap(addr string) {
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		log.Printf("Failed to connect to bootstrap node %s: %v", addr, err)
+		return
+	}
+
+	// Create peer info
+	info := Info{
+		Address:   addr,
+		Version:   1,
+		Services:  1,
+		LastSeen:  time.Now(),
+		Connected: true,
+	}
+
+	// Add peer
+	m.AddPeer(conn, info)
+}
+
+// connectToPeer attempts to connect to a peer
+func (m *Manager) connectToPeer(addr string) {
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		return
+	}
+
+	// Create peer info
+	info := Info{
+		Address:   addr,
+		Version:   1,
+		Services:  1,
+		LastSeen:  time.Now(),
+		Connected: true,
+	}
+
+	// Add peer
+	m.AddPeer(conn, info)
 }

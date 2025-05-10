@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync"
+
+	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 )
 
 // SyncMode represents the synchronization mode
@@ -26,6 +30,8 @@ type SyncManager struct {
 	utxoSet       *UTXOSet
 	blockStore    BlockStore
 	mu            sync.RWMutex
+	syncChan      chan struct{}
+	doneChan      chan struct{}
 }
 
 // UTXOSet manages the set of unspent transaction outputs
@@ -50,6 +56,8 @@ func NewSyncManager(mode SyncMode, blockStore BlockStore) *SyncManager {
 		mode:       mode,
 		blockStore: blockStore,
 		utxoSet:    NewUTXOSet(),
+		syncChan:   make(chan struct{}),
+		doneChan:   make(chan struct{}),
 	}
 }
 
@@ -61,36 +69,227 @@ func NewUTXOSet() *UTXOSet {
 	}
 }
 
-// StartFastSync starts fast synchronization
-func (sm *SyncManager) StartFastSync(checkpoint uint64) error {
+// StartSync starts the synchronization process
+func (sm *SyncManager) StartSync() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sm.mode = FastSync
-	sm.checkpoint = checkpoint
+	// Get current chain state
+	lastBlock, err := sm.blockStore.GetBlock(0) // Get genesis block
+	if err != nil {
+		return fmt.Errorf("failed to get genesis block: %v", err)
+	}
 
-	// Download block headers
+	sm.currentHeight = lastBlock.Header.Height
+
+	// Start sync process
+	go sm.sync()
+
+	return nil
+}
+
+// sync performs the synchronization process
+func (sm *SyncManager) sync() {
+	defer close(sm.doneChan)
+
+	// Download headers first
 	if err := sm.downloadHeaders(); err != nil {
+		log.Printf("Failed to download headers: %v", err)
+		return
+	}
+
+	// Download blocks based on sync mode
+	switch sm.mode {
+	case FullSync:
+		if err := sm.downloadBlocks(); err != nil {
+			log.Printf("Failed to download blocks: %v", err)
+			return
+		}
+	case FastSync:
+		if err := sm.downloadUTXOSet(); err != nil {
+			log.Printf("Failed to download UTXO set: %v", err)
+			return
+		}
+	case LightSync:
+		// Light sync only needs headers
+		return
+	}
+
+	// Verify chain state
+	if err := sm.verifyChainState(); err != nil {
+		log.Printf("Failed to verify chain state: %v", err)
+		return
+	}
+}
+
+// downloadHeaders downloads block headers
+func (sm *SyncManager) downloadHeaders() error {
+	// Get header locator
+	locator, err := sm.getHeaderLocator()
+	if err != nil {
 		return err
 	}
 
-	// Download UTXO set
-	if err := sm.downloadUTXOSet(); err != nil {
+	// Request headers from peers
+	headers, err := sm.requestHeaders(locator)
+	if err != nil {
 		return err
+	}
+
+	// Process headers
+	for _, header := range headers {
+		if err := sm.processHeader(header); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// downloadHeaders downloads block headers
-func (sm *SyncManager) downloadHeaders() error {
-	// TODO: Implement header download
+// downloadBlocks downloads blocks
+func (sm *SyncManager) downloadBlocks() error {
+	// Get block locator
+	locator, err := sm.getBlockLocator()
+	if err != nil {
+		return err
+	}
+
+	// Request blocks from peers
+	blocks, err := sm.requestBlocks(locator)
+	if err != nil {
+		return err
+	}
+
+	// Process blocks
+	for _, block := range blocks {
+		if err := sm.processBlock(block); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // downloadUTXOSet downloads the UTXO set
 func (sm *SyncManager) downloadUTXOSet() error {
-	// TODO: Implement UTXO set download
+	// Get UTXO set from peers
+	utxoSet, err := sm.requestUTXOSet()
+	if err != nil {
+		return err
+	}
+
+	// Process UTXO set
+	if err := sm.processUTXOSet(utxoSet); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// verifyChainState verifies the chain state
+func (sm *SyncManager) verifyChainState() error {
+	// Verify block headers
+	if err := sm.verifyHeaders(); err != nil {
+		return err
+	}
+
+	// Verify UTXO set
+	if err := sm.verifyUTXOSet(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// handleNetworkPartition handles network partitions
+func (sm *SyncManager) handleNetworkPartition() {
+	// Monitor peer connections
+	// If we lose connection to all peers, wait for reconnection
+	// When reconnected, verify chain state and sync if needed
+}
+
+// getHeaderLocator gets the header locator
+func (sm *SyncManager) getHeaderLocator() ([]byte, error) {
+	// Create header locator
+	locator := make([]byte, 0)
+	currentHeight := sm.currentHeight
+
+	// Add checkpoints
+	for i := 0; i < 10; i++ {
+		if currentHeight == 0 {
+			break
+		}
+		locator = append(locator, byte(currentHeight))
+		currentHeight = currentHeight / 2
+	}
+
+	return locator, nil
+}
+
+// getBlockLocator gets the block locator
+func (sm *SyncManager) getBlockLocator() ([]byte, error) {
+	// Create block locator
+	locator := make([]byte, 0)
+	currentHeight := sm.currentHeight
+
+	// Add checkpoints
+	for i := 0; i < 10; i++ {
+		if currentHeight == 0 {
+			break
+		}
+		locator = append(locator, byte(currentHeight))
+		currentHeight = currentHeight / 2
+	}
+
+	return locator, nil
+}
+
+// requestHeaders requests headers from peers
+func (sm *SyncManager) requestHeaders(locator []byte) ([]*common.Header, error) {
+	// TODO: Implement header request
+	return nil, nil
+}
+
+// requestBlocks requests blocks from peers
+func (sm *SyncManager) requestBlocks(locator []byte) ([]*block.Block, error) {
+	// TODO: Implement block request
+	return nil, nil
+}
+
+// requestUTXOSet requests the UTXO set from peers
+func (sm *SyncManager) requestUTXOSet() (*UTXOSet, error) {
+	// TODO: Implement UTXO set request
+	return nil, nil
+}
+
+// processHeader processes a header
+func (sm *SyncManager) processHeader(header *common.Header) error {
+	// TODO: Implement header processing
+	return nil
+}
+
+// processBlock processes a block
+func (sm *SyncManager) processBlock(block *block.Block) error {
+	// TODO: Implement block processing
+	return nil
+}
+
+// processUTXOSet processes the UTXO set
+func (sm *SyncManager) processUTXOSet(utxoSet *UTXOSet) error {
+	// TODO: Implement UTXO set processing
+	_ = utxoSet // Use utxoSet to avoid unused variable warning
+	return nil
+}
+
+// verifyHeaders verifies block headers
+func (sm *SyncManager) verifyHeaders() error {
+	// TODO: Implement header verification
+	return nil
+}
+
+// verifyUTXOSet verifies the UTXO set
+func (sm *SyncManager) verifyUTXOSet() error {
+	// TODO: Implement UTXO set verification
 	return nil
 }
 
@@ -202,6 +401,7 @@ func (us *UTXOSet) Deserialize(data []byte) error {
 
 	// Read UTXOs
 	for i := uint32(0); i < count; i++ {
+		// Create a new UTXO to store the deserialized data
 		utxo := &UTXO{}
 
 		// Read transaction hash
