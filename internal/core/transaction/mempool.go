@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/types"
 )
 
 var (
@@ -16,7 +16,7 @@ var (
 
 // MempoolEntry represents a transaction in the mempool
 type MempoolEntry struct {
-	Tx       *block.Transaction
+	Tx       *types.Transaction
 	AddedAt  time.Time
 	Fee      int64
 	Priority float64
@@ -73,7 +73,7 @@ func NewMempool(maxSize int) *Mempool {
 }
 
 // Add adds a transaction to the mempool
-func (mp *Mempool) Add(tx *block.Transaction, fee int64) error {
+func (mp *Mempool) Add(tx *types.Transaction, fee int64) error {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
 
@@ -94,7 +94,7 @@ func (mp *Mempool) Add(tx *block.Transaction, fee int64) error {
 	}
 
 	// Add to map
-	txHash := hex.EncodeToString(tx.Hash())
+	txHash := hex.EncodeToString(tx.Hash)
 	mp.entries[txHash] = entry
 
 	// Add to queue
@@ -115,7 +115,7 @@ func (mp *Mempool) Remove(txHash string) {
 }
 
 // Get returns a transaction from the mempool
-func (mp *Mempool) Get(txHash string) (*block.Transaction, bool) {
+func (mp *Mempool) Get(txHash string) (*types.Transaction, bool) {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 
@@ -127,11 +127,11 @@ func (mp *Mempool) Get(txHash string) (*block.Transaction, bool) {
 }
 
 // GetAll returns all transactions in the mempool
-func (mp *Mempool) GetAll() []*block.Transaction {
+func (mp *Mempool) GetAll() []*types.Transaction {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 
-	txs := make([]*block.Transaction, 0, len(mp.entries))
+	txs := make([]*types.Transaction, 0, len(mp.entries))
 	for _, entry := range mp.entries {
 		txs = append(txs, entry.Tx)
 	}
@@ -139,14 +139,14 @@ func (mp *Mempool) GetAll() []*block.Transaction {
 }
 
 // IsInputSpent checks if an input is already spent in the mempool
-func (mp *Mempool) IsInputSpent(input *block.TxInput) bool {
+func (mp *Mempool) IsInputSpent(input *types.Input) bool {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 
 	for _, entry := range mp.entries {
 		for _, txInput := range entry.Tx.Inputs {
-			if hex.EncodeToString(txInput.PreviousTx) == hex.EncodeToString(input.PreviousTx) &&
-				txInput.OutputIndex == input.OutputIndex {
+			if hex.EncodeToString(txInput.PreviousTxHash) == hex.EncodeToString(input.PreviousTxHash) &&
+				txInput.PreviousTxIndex == input.PreviousTxIndex {
 				return true
 			}
 		}
@@ -161,12 +161,12 @@ func (mp *Mempool) removeLowestPriority() error {
 	}
 
 	entry := heap.Pop(&mp.queue).(*MempoolEntry)
-	delete(mp.entries, hex.EncodeToString(entry.Tx.Hash()))
+	delete(mp.entries, hex.EncodeToString(entry.Tx.Hash))
 	return nil
 }
 
 // calculatePriority calculates the priority of a transaction
-func (mp *Mempool) calculatePriority(tx *block.Transaction, fee int64) float64 {
+func (mp *Mempool) calculatePriority(tx *types.Transaction, fee int64) float64 {
 	// Base priority on fee and age
 	age := time.Since(tx.Timestamp).Seconds()
 	return float64(fee) * (1 + age/86400) // 86400 seconds in a day
