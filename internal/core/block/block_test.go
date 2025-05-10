@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 )
 
 func TestNewBlock(t *testing.T) {
 	prevHash := []byte("previous_hash")
-	difficulty := uint32(1)
+	difficulty := uint64(1)
 
 	block := NewBlock(prevHash, difficulty)
 
@@ -22,12 +22,14 @@ func TestNewBlock(t *testing.T) {
 
 func TestBlock_AddTransaction(t *testing.T) {
 	block := NewBlock([]byte("prev_hash"), 1)
-	tx := &types.Transaction{
+	tx := &common.Transaction{
 		Version: 1,
 		From:    []byte("from"),
 		To:      []byte("to"),
 		Amount:  100,
 		Data:    []byte("data"),
+		Inputs:  make([]common.Input, 0),
+		Outputs: make([]common.Output, 0),
 	}
 
 	block.AddTransaction(tx)
@@ -44,24 +46,28 @@ func TestBlock_CalculateMerkleRoot(t *testing.T) {
 	assert.NotNil(t, root)
 
 	// Test with one transaction
-	tx := &types.Transaction{
+	tx := &common.Transaction{
 		Version: 1,
 		From:    []byte("from"),
 		To:      []byte("to"),
 		Amount:  100,
 		Data:    []byte("data"),
+		Inputs:  make([]common.Input, 0),
+		Outputs: make([]common.Output, 0),
 	}
 	block.AddTransaction(tx)
 	root = block.CalculateMerkleRoot()
 	assert.NotNil(t, root)
 
 	// Test with multiple transactions
-	tx2 := &types.Transaction{
+	tx2 := &common.Transaction{
 		Version: 1,
 		From:    []byte("from2"),
 		To:      []byte("to2"),
 		Amount:  200,
 		Data:    []byte("data2"),
+		Inputs:  make([]common.Input, 0),
+		Outputs: make([]common.Output, 0),
 	}
 	block.AddTransaction(tx2)
 	root = block.CalculateMerkleRoot()
@@ -78,12 +84,14 @@ func TestBlock_CalculateHash(t *testing.T) {
 
 func TestBlock_Copy(t *testing.T) {
 	block := NewBlock([]byte("prev_hash"), 1)
-	tx := &types.Transaction{
+	tx := &common.Transaction{
 		Version: 1,
 		From:    []byte("from"),
 		To:      []byte("to"),
 		Amount:  100,
 		Data:    []byte("data"),
+		Inputs:  make([]common.Input, 0),
+		Outputs: make([]common.Output, 0),
 	}
 	block.AddTransaction(tx)
 
