@@ -137,15 +137,44 @@ func (m *Miner) createBlock() (*block.Block, error) {
 	// Convert []*types.Transaction to []*common.Transaction
 	commonTxs := make([]*common.Transaction, len(txs))
 	for i, tx := range txs {
-		commonTxs[i] = &common.Transaction{
+		commonTx := &common.Transaction{
 			Hash:      tx.Hash,
 			Version:   tx.Version,
 			Timestamp: tx.Timestamp,
-			From:      tx.From,
-			To:        tx.To,
-			Amount:    tx.Amount,
 			Data:      tx.Data,
+			Inputs:    make([]common.Input, len(tx.Inputs)),
+			Outputs:   make([]common.Output, len(tx.Outputs)),
 		}
+
+		// Copy inputs
+		for j, input := range tx.Inputs {
+			commonTx.Inputs[j] = common.Input{
+				PreviousTxHash:  input.PreviousTxHash,
+				PreviousTxIndex: input.PreviousTxIndex,
+				ScriptSig:       input.ScriptSig,
+				Sequence:        input.Sequence,
+			}
+		}
+
+		// Copy outputs
+		for j, output := range tx.Outputs {
+			commonTx.Outputs[j] = common.Output{
+				Value:        output.Value,
+				ScriptPubKey: output.ScriptPubKey,
+				Address:      output.Address,
+			}
+		}
+
+		// Set From, To, and Amount based on first input and output
+		if len(tx.Inputs) > 0 {
+			commonTx.From = []byte(tx.Inputs[0].Address)
+		}
+		if len(tx.Outputs) > 0 {
+			commonTx.To = []byte(tx.Outputs[0].Address)
+			commonTx.Amount = tx.Outputs[0].Value
+		}
+
+		commonTxs[i] = commonTx
 	}
 
 	// Create block header
@@ -207,10 +236,15 @@ func (m *Miner) createCoinbaseTx(height uint64) (*types.Transaction, error) {
 	return &types.Transaction{
 		Version:   1,
 		Timestamp: time.Now(),
-		From:      []byte{}, // Coinbase has no inputs
-		To:        []byte(m.miningAddress),
-		Amount:    reward,
-		Data:      []byte("coinbase"),
+		Inputs:    make([]*types.Input, 0), // Coinbase has no inputs
+		Outputs: []*types.Output{
+			{
+				Value:        reward,
+				ScriptPubKey: nil,
+				Address:      m.miningAddress,
+			},
+		},
+		Data: []byte("coinbase"),
 	}, nil
 }
 
