@@ -127,11 +127,8 @@ func (pm *PeerManager) connectToPeer(addr string) {
 	defer conn.Close()
 
 	// Create connection handler
-	peer := pm.GetPeer(addr)
-	if peer == nil {
-		return
+	if peer := pm.GetPeer(addr); peer != nil {
+		connection := NewConnection(conn, peer, pm)
+		connection.Start()
 	}
-
-	connection := NewConnection(conn, peer, pm)
-	connection.Start()
 }

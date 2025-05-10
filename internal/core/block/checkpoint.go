@@ -55,15 +55,15 @@ func (cm *CheckpointManager) ValidateBlock(block *Block) error {
 	defer cm.mu.RUnlock()
 
 	// Check if there's a checkpoint at this height
-	if checkpoint, exists := cm.checkpoints[block.Height]; exists {
+	if checkpoint, exists := cm.checkpoints[block.Header.Height]; exists {
 		// Verify block hash matches checkpoint
-		if !bytes.Equal(block.Hash, checkpoint.BlockHash) {
-			return fmt.Errorf("block hash does not match checkpoint at height %d", block.Height)
+		if !bytes.Equal(block.Header.Hash, checkpoint.BlockHash) {
+			return fmt.Errorf("block hash does not match checkpoint at height %d", block.Header.Height)
 		}
 
 		// Verify block timestamp is not before checkpoint
-		if block.Timestamp.Unix() < checkpoint.Timestamp {
-			return fmt.Errorf("block timestamp is before checkpoint at height %d", block.Height)
+		if block.Header.Timestamp.Unix() < checkpoint.Timestamp {
+			return fmt.Errorf("block timestamp is before checkpoint at height %d", block.Header.Height)
 		}
 	}
 
@@ -77,7 +77,7 @@ func (cm *CheckpointManager) ValidateChain(blocks []*Block) error {
 
 	// Sort blocks by height
 	sort.Slice(blocks, func(i, j int) bool {
-		return blocks[i].Height < blocks[j].Height
+		return blocks[i].Header.Height < blocks[j].Header.Height
 	})
 
 	// Validate each block
@@ -89,11 +89,11 @@ func (cm *CheckpointManager) ValidateChain(blocks []*Block) error {
 
 	// Validate chain continuity
 	for i := 1; i < len(blocks); i++ {
-		if blocks[i].Height != blocks[i-1].Height+1 {
-			return fmt.Errorf("chain discontinuity at height %d", blocks[i].Height)
+		if blocks[i].Header.Height != blocks[i-1].Header.Height+1 {
+			return fmt.Errorf("chain discontinuity at height %d", blocks[i].Header.Height)
 		}
-		if !bytes.Equal(blocks[i].PrevHash, blocks[i-1].Hash) {
-			return fmt.Errorf("invalid previous block hash at height %d", blocks[i].Height)
+		if !bytes.Equal(blocks[i].Header.PrevBlockHash, blocks[i-1].Header.Hash) {
+			return fmt.Errorf("invalid previous block hash at height %d", blocks[i].Header.Height)
 		}
 	}
 

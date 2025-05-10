@@ -126,24 +126,14 @@ const (
 	CircuitBreakerHalfOpen
 )
 
-// CircuitBreakerConfig holds the configuration for the circuit breaker.
-// This allows customization of failure protection behavior.
+// CircuitBreakerConfig holds configuration for the circuit breaker.
 type CircuitBreakerConfig struct {
-	// FailureThreshold is the number of failures before opening the circuit.
-	// After this many consecutive failures, the circuit will open.
-	FailureThreshold int
-
-	// ResetTimeout is the time to wait before attempting to close the circuit.
-	// After this duration, the circuit will move to half-open state.
-	ResetTimeout time.Duration
-
-	// HalfOpenMaxRequests is the maximum number of requests to allow in half-open state.
-	// This limits the load during recovery testing.
+	FailureThreshold    int
+	ResetTimeout        time.Duration
 	HalfOpenMaxRequests int
 }
 
 // DefaultCircuitBreakerConfig returns the default circuit breaker configuration.
-// This provides sensible defaults for failure protection.
 func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
 	return &CircuitBreakerConfig{
 		FailureThreshold:    5,
