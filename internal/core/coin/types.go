@@ -37,6 +37,10 @@ const (
 	MaxEphraimSupply  = 15_000_000
 	MaxManassehSupply = 15_000_000
 	MaxJosephSupply   = 3_000_000
+
+	// Maximum number of coins that can be converted to Joseph coins
+	MaxEphraimToJoseph  = 3_000_000
+	MaxManassehToJoseph = 3_000_000
 )
 
 // Coin represents a basic coin in the system
@@ -59,17 +63,21 @@ type SpecialCoin struct {
 
 // SupplyTracker keeps track of coin supply
 type SupplyTracker struct {
-	EphraimCount  uint64
-	ManassehCount uint64
-	JosephCount   uint64
+	EphraimCount          uint64
+	ManassehCount         uint64
+	JosephCount           uint64
+	EphraimToJosephCount  uint64
+	ManassehToJosephCount uint64
 }
 
 // NewSupplyTracker creates a new supply tracker
 func NewSupplyTracker() *SupplyTracker {
 	return &SupplyTracker{
-		EphraimCount:  0,
-		ManassehCount: 0,
-		JosephCount:   0,
+		EphraimCount:          0,
+		ManassehCount:         0,
+		JosephCount:           0,
+		EphraimToJosephCount:  0,
+		ManassehToJosephCount: 0,
 	}
 }
 
@@ -85,5 +93,13 @@ func (st *SupplyTracker) CanCreateManasseh() bool {
 
 // CanCreateJoseph checks if we can create more Joseph coins
 func (st *SupplyTracker) CanCreateJoseph() bool {
-	return st.JosephCount < MaxJosephSupply
+	return st.JosephCount < MaxJosephSupply &&
+		st.EphraimToJosephCount < MaxEphraimToJoseph &&
+		st.ManassehToJosephCount < MaxManassehToJoseph
+}
+
+// CanConvertToJoseph checks if we can convert Ephraim and Manasseh coins to Joseph
+func (st *SupplyTracker) CanConvertToJoseph() bool {
+	return st.EphraimToJosephCount < MaxEphraimToJoseph &&
+		st.ManassehToJosephCount < MaxManassehToJoseph
 }

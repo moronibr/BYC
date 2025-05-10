@@ -121,9 +121,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Joseph (1 Ephraim + 1 Manasseh)
 
 ### Supply Limits
-- 11 million Ephraim coins
-- 11 million Manasseh coins
-- 11 million Joseph coins
+- 15 million Ephraim coins (only 3 million can be converted to Joseph)
+- 15 million Manasseh coins (only 3 million can be converted to Joseph)
+- 3 million Joseph coins (created by combining 1 Ephraim + 1 Manasseh)
 
 ### Network Features
 - P2P network

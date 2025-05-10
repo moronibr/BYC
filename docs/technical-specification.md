@@ -123,19 +123,22 @@ These coins are created through combinations:
 ### Special Coins
 
 1. **Ephraim**
-   - Created upon Golden Block completion
-   - Limited to 11 million
+   - Total supply: 15,000,000
+   - Maximum convertible to Joseph: 3,000,000
+   - Produced by Golden Block completion
    - Cannot be transferred between chains
 
 2. **Manasseh**
-   - Created upon Silver Block completion
-   - Limited to 11 million
+   - Total supply: 15,000,000
+   - Maximum convertible to Joseph: 3,000,000
+   - Produced by Silver Block completion
    - Cannot be transferred between chains
 
 3. **Joseph**
+   - Total supply: 3,000,000
    - Created by combining 1 Ephraim + 1 Manasseh
-   - Limited to 11 million
-   - Highest value coin
+   - Limited by the number of convertible Ephraim and Manasseh coins
+   - Can be transferred between chains
 
 ## Network Protocol
 
