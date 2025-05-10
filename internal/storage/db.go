@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 	"go.etcd.io/bbolt"
 )
 
@@ -73,7 +74,7 @@ func (db *DB) SaveBlock(block *block.Block) error {
 		}
 
 		// Use block hash as key
-		return bucket.Put(block.Hash, data)
+		return bucket.Put(block.Header.Hash, data)
 	})
 }
 
@@ -173,7 +174,7 @@ func (db *DB) DeleteUTXO(txHash []byte, outputIndex uint32) error {
 }
 
 // SaveMempoolTx saves a transaction to the mempool
-func (db *DB) SaveMempoolTx(transaction block.Transaction) error {
+func (db *DB) SaveMempoolTx(transaction *common.Transaction) error {
 	return db.db.Update(func(dbtx *bbolt.Tx) error {
 		bucket := dbtx.Bucket([]byte("mempool"))
 		if bucket == nil {
@@ -187,13 +188,13 @@ func (db *DB) SaveMempoolTx(transaction block.Transaction) error {
 		}
 
 		// Use transaction hash as key
-		return bucket.Put(transaction.Hash(), data)
+		return bucket.Put(transaction.Hash, data)
 	})
 }
 
 // GetMempoolTx retrieves a transaction from the mempool
-func (db *DB) GetMempoolTx(txHash []byte) (*block.Transaction, error) {
-	var tx block.Transaction
+func (db *DB) GetMempoolTx(txHash []byte) (*common.Transaction, error) {
+	var tx common.Transaction
 
 	err := db.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("mempool"))
@@ -203,7 +204,7 @@ func (db *DB) GetMempoolTx(txHash []byte) (*block.Transaction, error) {
 
 		data := bucket.Get(txHash)
 		if data == nil {
-			return fmt.Errorf("transaction not found in mempool")
+			return fmt.Errorf("transaction not found")
 		}
 
 		return json.Unmarshal(data, &tx)
@@ -217,8 +218,8 @@ func (db *DB) GetMempoolTx(txHash []byte) (*block.Transaction, error) {
 }
 
 // GetAllMempoolTxs retrieves all transactions from the mempool
-func (db *DB) GetAllMempoolTxs() ([]*block.Transaction, error) {
-	var txs []*block.Transaction
+func (db *DB) GetAllMempoolTxs() ([]*common.Transaction, error) {
+	var transactions []*common.Transaction
 
 	err := db.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("mempool"))
@@ -227,11 +228,11 @@ func (db *DB) GetAllMempoolTxs() ([]*block.Transaction, error) {
 		}
 
 		return bucket.ForEach(func(k, v []byte) error {
-			var tx block.Transaction
+			var tx common.Transaction
 			if err := json.Unmarshal(v, &tx); err != nil {
 				return err
 			}
-			txs = append(txs, &tx)
+			transactions = append(transactions, &tx)
 			return nil
 		})
 	})
@@ -240,7 +241,7 @@ func (db *DB) GetAllMempoolTxs() ([]*block.Transaction, error) {
 		return nil, err
 	}
 
-	return txs, nil
+	return transactions, nil
 }
 
 // SaveChainState saves the current chain state
@@ -298,19 +299,20 @@ func (db *DB) GetChainState() (uint64, []byte, error) {
 }
 
 // StoreTransaction stores a transaction in the database
-func (db *DB) StoreTransaction(blockTx *block.Transaction) error {
-	return db.db.Update(func(dbtx *bbolt.Tx) error {
-		bucket := dbtx.Bucket([]byte("transactions"))
+func (db *DB) StoreTransaction(blockTx *common.Transaction) error {
+	return db.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte("transactions"))
 		if bucket == nil {
 			return fmt.Errorf("transactions bucket not found")
 		}
 
+		// Serialize transaction
 		data, err := json.Marshal(blockTx)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to serialize transaction: %v", err)
 		}
 
 		// Use transaction hash as key
-		return bucket.Put(blockTx.Hash(), data)
+		return bucket.Put(blockTx.Hash, data)
 	})
 }
