@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 )
 
 // FeeCalculator handles transaction fee calculations
@@ -28,7 +28,7 @@ func NewFeeCalculator(baseFee, feePerByte, minFee, maxFee int64) *FeeCalculator 
 }
 
 // CalculateFee calculates the fee for a transaction
-func (fc *FeeCalculator) CalculateFee(tx *block.Transaction) int64 {
+func (fc *FeeCalculator) CalculateFee(tx *common.Transaction) int64 {
 	// Calculate base fee
 	fee := fc.baseFee
 
@@ -37,7 +37,7 @@ func (fc *FeeCalculator) CalculateFee(tx *block.Transaction) int64 {
 	fee += size * fc.feePerByte
 
 	// Apply priority multiplier based on transaction age
-	age := time.Since(tx.Timestamp).Hours()
+	age := time.Since(tx.Timestamp()).Hours()
 	if age > 24 {
 		fee = int64(float64(fee) * fc.priorityMultiplier)
 	}
