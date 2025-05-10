@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/common"
 )
 
 func TestMineBlock(t *testing.T) {
@@ -83,17 +83,17 @@ func TestMiningReward(t *testing.T) {
 	}
 
 	rewardTx := block.Transactions[0]
-	if len(rewardTx.From) != 0 {
+	if len(rewardTx.From()) != 0 {
 		t.Fatal("Mining reward transaction has inputs")
 	}
 
-	if len(rewardTx.To) == 0 {
+	if len(rewardTx.To()) == 0 {
 		t.Fatal("Mining reward transaction has no outputs")
 	}
 
 	expectedReward := consensus.calculateBlockReward(block.Header.Height)
-	if rewardTx.Amount != expectedReward {
-		t.Fatalf("Invalid mining reward amount: got %d, want %d", rewardTx.Amount, expectedReward)
+	if rewardTx.Amount() != expectedReward {
+		t.Fatalf("Invalid mining reward amount: got %d, want %d", rewardTx.Amount(), expectedReward)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestTransactionValidation(t *testing.T) {
 	consensus := NewConsensus()
 
 	// Create test transaction
-	tx := types.NewTransaction(
+	tx := common.NewTransaction(
 		[]byte("test_from"),
 		[]byte("test_to"),
 		1000,
@@ -146,15 +146,16 @@ func TestTransactionValidation(t *testing.T) {
 	}
 
 	// Test oversized transaction
-	tx.Data = make([]byte, 1000001)
+	underlyingTx := tx.GetTransaction()
+	underlyingTx.Data = make([]byte, 1000001)
 	err = consensus.ValidateTransaction(tx)
 	if err == nil {
 		t.Fatal("Oversized transaction validation should fail")
 	}
 
 	// Test low fee transaction
-	tx.Data = []byte("test_data")
-	tx.Amount = 0
+	underlyingTx.Data = []byte("test_data")
+	underlyingTx.Outputs[0].Value = 0
 	err = consensus.ValidateTransaction(tx)
 	if err == nil {
 		t.Fatal("Low fee transaction validation should fail")
