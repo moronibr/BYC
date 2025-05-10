@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 )
 
 // Mempool represents the transaction mempool
@@ -18,7 +18,7 @@ type Mempool struct {
 
 // TransactionInfo holds transaction metadata
 type TransactionInfo struct {
-	Transaction *block.Transaction
+	Transaction *common.Transaction
 	AddedAt     time.Time
 	Priority    float64
 }
@@ -32,7 +32,7 @@ func NewMempool(maxSize int) *Mempool {
 }
 
 // AddTransaction adds a transaction to the mempool
-func (m *Mempool) AddTransaction(tx *block.Transaction) error {
+func (m *Mempool) AddTransaction(tx *common.Transaction) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -45,7 +45,7 @@ func (m *Mempool) AddTransaction(tx *block.Transaction) error {
 	priority := m.calculatePriority(tx)
 
 	// Add transaction to mempool
-	m.transactions[string(tx.Hash)] = &TransactionInfo{
+	m.transactions[string(tx.Hash())] = &TransactionInfo{
 		Transaction: tx,
 		AddedAt:     time.Now(),
 		Priority:    priority,
@@ -63,7 +63,7 @@ func (m *Mempool) RemoveTransaction(txHash []byte) {
 }
 
 // GetTransaction retrieves a transaction from the mempool
-func (m *Mempool) GetTransaction(txHash []byte) (*block.Transaction, bool) {
+func (m *Mempool) GetTransaction(txHash []byte) (*common.Transaction, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -76,11 +76,11 @@ func (m *Mempool) GetTransaction(txHash []byte) (*block.Transaction, bool) {
 }
 
 // GetTransactions returns all transactions in the mempool
-func (m *Mempool) GetTransactions() []*block.Transaction {
+func (m *Mempool) GetTransactions() []*common.Transaction {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	transactions := make([]*block.Transaction, 0, len(m.transactions))
+	transactions := make([]*common.Transaction, 0, len(m.transactions))
 	for _, info := range m.transactions {
 		transactions = append(transactions, info.Transaction)
 	}
@@ -89,7 +89,7 @@ func (m *Mempool) GetTransactions() []*block.Transaction {
 }
 
 // GetPendingTransactions returns pending transactions sorted by priority
-func (m *Mempool) GetPendingTransactions() []*block.Transaction {
+func (m *Mempool) GetPendingTransactions() []*common.Transaction {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -103,7 +103,7 @@ func (m *Mempool) GetPendingTransactions() []*block.Transaction {
 	sortTransactionsByPriority(infos)
 
 	// Extract transactions
-	transactions := make([]*block.Transaction, len(infos))
+	transactions := make([]*common.Transaction, len(infos))
 	for i, info := range infos {
 		transactions[i] = info.Transaction
 	}
@@ -112,14 +112,14 @@ func (m *Mempool) GetPendingTransactions() []*block.Transaction {
 }
 
 // calculatePriority calculates the priority of a transaction
-func (m *Mempool) calculatePriority(tx *block.Transaction) float64 {
+func (m *Mempool) calculatePriority(tx *common.Transaction) float64 {
 	// Priority is based on:
 	// 1. Transaction amount
 	// 2. Transaction age
 	// 3. Gas price (if applicable)
 
 	// For now, use a simple priority calculation
-	return float64(tx.Amount)
+	return float64(tx.Amount())
 }
 
 // sortTransactionsByPriority sorts transactions by priority
