@@ -501,6 +501,10 @@ func (pow *ProofOfWork) RunAdaptive() (int64, []byte, error) {
 		return 0, nil, err
 	}
 
+	// Adjust difficulty based on current conditions
+	pow.target = pow.adjustDifficulty()
+	pow.metrics.RecordDifficultyChange(pow.target.BitLen())
+
 	var lastErr error
 	for retry := 0; retry < pow.config.MaxRetries; retry++ {
 		// Check system resources
