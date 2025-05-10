@@ -15,6 +15,7 @@ import (
 	"github.com/youngchain/internal/config"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/mining"
 	"github.com/youngchain/internal/logger"
 	"github.com/youngchain/internal/network"
@@ -98,8 +99,10 @@ func main() {
 	case 2: // Mine
 		selectedCoinType = getCoinChoice()
 		fmt.Printf("\nStarting mining node for %s coins...\n", selectedCoinType)
+
+		// Initialize mining components
 		miner = mining.NewMiner(goldenGenesis)
-		miner.StartMining(selectedCoinType)
+		miner.StartMining()
 		defer miner.StopMining()
 		log.Printf("Starting Brigham Young Chain node (miner) on port 8333")
 
@@ -135,12 +138,13 @@ func main() {
 			// If this is a mining node, check if a block was mined
 			if choice == 2 && miner != nil {
 				// Check if the miner has found a block
-				if miner.CurrentBlock.Hash != nil && len(miner.CurrentBlock.Hash) > 0 {
+				currentBlock := miner.GetCurrentBlock()
+				if currentBlock != nil && currentBlock.Header.Hash != nil && len(currentBlock.Header.Hash) > 0 {
 					// Save the mined block to the database
-					if err := db.SaveBlock(miner.CurrentBlock); err != nil {
+					if err := db.SaveBlock(currentBlock); err != nil {
 						log.Printf("Error saving mined block: %v", err)
 					} else {
-						log.Printf("Mined new block with hash: %x", miner.CurrentBlock.Hash)
+						log.Printf("Mined new block with hash: %x", currentBlock.Header.Hash)
 
 						// Update statistics
 						statsMutex.Lock()
@@ -148,9 +152,9 @@ func main() {
 						statsMutex.Unlock()
 
 						// Create a new block for mining
-						newBlock := block.NewBlock(miner.CurrentBlock.Hash, miner.CurrentBlock.Header.Difficulty)
-						miner.CurrentBlock = newBlock
-						miner.StartMining(selectedCoinType)
+						newBlock := block.NewBlock(currentBlock.Header.Hash, uint64(currentBlock.Header.Difficulty))
+						miner.SetCurrentBlock(newBlock)
+						miner.StartMining()
 					}
 				}
 			}
@@ -230,39 +234,27 @@ func getCoinChoice() coin.CoinType {
 
 // createGenesisBlock creates the genesis block for either chain
 func createGenesisBlock(blockType block.BlockType) *block.Block {
-	// Create genesis block with empty previous hash and initial difficulty
-	genesis := block.NewBlock([]byte{}, block.GetInitialDifficulty(blockType))
-
-	// Add genesis message
-	var message string
-	if blockType == block.GoldenBlock {
-		message = "In the beginning of the Golden Chain..."
-	} else {
-		message = "In the beginning of the Silver Chain..."
-	}
+	// Create genesis block
+	genesis := block.NewBlock(nil, 0)
+	genesis.Header.Version = 1
+	genesis.Header.Timestamp = time.Now()
+	genesis.Header.Difficulty = block.GetInitialDifficulty(blockType)
 
 	// Create genesis transaction
-	tx := &block.Transaction{
-		Version: 1,
-		Inputs:  []block.TxInput{},
-		Outputs: []block.TxOutput{
-			{
-				Value:    50, // Initial mining reward
-				Script:   []byte(message),
-				CoinType: coin.Leah, // Start with base unit
-			},
-		},
-		LockTime: 0,
-		CoinType: coin.Leah,
+	tx := common.NewTransaction(
+		nil,                              // From (empty for genesis)
+		[]byte("genesis_reward_address"), // To
+		1000000000,                       // Amount (1 billion)
+		[]byte("Genesis transaction"),
+	)
+
+	// Add transaction to block
+	if err := genesis.AddTransaction(tx); err != nil {
+		log.Fatalf("Failed to add genesis transaction: %v", err)
 	}
 
-	genesis.AddTransaction(tx)
-
-	// Calculate merkle root
-	genesis.UpdateMerkleRoot()
-
-	// Calculate hash for the genesis block
-	genesis.Hash = genesis.CalculateHash()
+	// Calculate block hash
+	genesis.Header.Hash = genesis.CalculateHash()
 
 	return genesis
 }
