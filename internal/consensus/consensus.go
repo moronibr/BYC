@@ -11,6 +11,7 @@ import (
 
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/interfaces"
 )
 
@@ -177,7 +178,7 @@ func (c *Consensus) addMiningReward(block *block.Block) error {
 		nil, // From is nil for coinbase
 		c.miningAddress,
 		reward,
-		[]byte("mining reward"),
+		nil, // Data is nil for coinbase
 	)
 
 	// Add transaction to block
@@ -480,16 +481,12 @@ func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress s
 
 	// Add mining reward transaction
 	reward := c.calculateBlockReward(newBlock.Header.Height)
-	rewardTx := &common.Transaction{
-		Version:   1,
-		Timestamp: time.Now(),
-		From:      nil,                  // From (empty for mining reward)
-		To:        []byte(minerAddress), // To
-		Amount:    reward,               // Value
-		Data:      nil,                  // Data
-		Inputs:    make([]common.Input, 0),
-		Outputs:   make([]common.Output, 0),
-	}
+	rewardTx := common.NewTransaction(
+		nil,                  // From (empty for mining reward)
+		[]byte(minerAddress), // To
+		reward,               // Value
+		nil,                  // Data
+	)
 	if err := newBlock.AddTransaction(rewardTx); err != nil {
 		return nil, err
 	}
@@ -498,28 +495,32 @@ func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress s
 	pendingTxs := chain.GetPendingTransactions()
 	for _, tx := range pendingTxs {
 		// Convert types.Transaction to common.Transaction
-		commonTx := &common.Transaction{
-			Version:   tx.Version,
-			Timestamp: tx.Timestamp,
-			From:      []byte(tx.Inputs[0].Address),  // Use first input's address as From
-			To:        []byte(tx.Outputs[0].Address), // Use first output's address as To
-			Amount:    tx.Outputs[0].Value,           // Use first output's value as Amount
-			Data:      tx.Data,
-			Inputs:    make([]common.Input, len(tx.Inputs)),
-			Outputs:   make([]common.Output, len(tx.Outputs)),
-		}
+		commonTx := common.NewTransaction(
+			[]byte(tx.Inputs[0].Address),  // From
+			[]byte(tx.Outputs[0].Address), // To
+			tx.Outputs[0].Value,           // Amount
+			tx.Data,                       // Data
+		)
+
+		// Get the underlying transaction
+		underlyingTx := commonTx.GetTransaction()
+
 		// Copy inputs
+		underlyingTx.Inputs = make([]*types.Input, len(tx.Inputs))
 		for i, input := range tx.Inputs {
-			commonTx.Inputs[i] = common.Input{
+			underlyingTx.Inputs[i] = &types.Input{
 				PreviousTxHash:  input.PreviousTxHash,
 				PreviousTxIndex: input.PreviousTxIndex,
 				ScriptSig:       input.ScriptSig,
 				Sequence:        input.Sequence,
+				Address:         input.Address,
 			}
 		}
+
 		// Copy outputs
+		underlyingTx.Outputs = make([]*types.Output, len(tx.Outputs))
 		for i, output := range tx.Outputs {
-			commonTx.Outputs[i] = common.Output{
+			underlyingTx.Outputs[i] = &types.Output{
 				Value:        output.Value,
 				ScriptPubKey: output.ScriptPubKey,
 				Address:      output.Address,

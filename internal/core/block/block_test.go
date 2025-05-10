@@ -22,15 +22,12 @@ func TestNewBlock(t *testing.T) {
 
 func TestBlock_AddTransaction(t *testing.T) {
 	block := NewBlock([]byte("prev_hash"), 1)
-	tx := &common.Transaction{
-		Version: 1,
-		From:    []byte("from"),
-		To:      []byte("to"),
-		Amount:  100,
-		Data:    []byte("data"),
-		Inputs:  make([]common.Input, 0),
-		Outputs: make([]common.Output, 0),
-	}
+	tx := common.NewTransaction(
+		[]byte("from"),
+		[]byte("to"),
+		100,
+		[]byte("data"),
+	)
 
 	block.AddTransaction(tx)
 
@@ -46,29 +43,23 @@ func TestBlock_CalculateMerkleRoot(t *testing.T) {
 	assert.NotNil(t, root)
 
 	// Test with one transaction
-	tx := &common.Transaction{
-		Version: 1,
-		From:    []byte("from"),
-		To:      []byte("to"),
-		Amount:  100,
-		Data:    []byte("data"),
-		Inputs:  make([]common.Input, 0),
-		Outputs: make([]common.Output, 0),
-	}
+	tx := common.NewTransaction(
+		[]byte("from"),
+		[]byte("to"),
+		100,
+		[]byte("data"),
+	)
 	block.AddTransaction(tx)
 	root = block.CalculateMerkleRoot()
 	assert.NotNil(t, root)
 
 	// Test with multiple transactions
-	tx2 := &common.Transaction{
-		Version: 1,
-		From:    []byte("from2"),
-		To:      []byte("to2"),
-		Amount:  200,
-		Data:    []byte("data2"),
-		Inputs:  make([]common.Input, 0),
-		Outputs: make([]common.Output, 0),
-	}
+	tx2 := common.NewTransaction(
+		[]byte("from2"),
+		[]byte("to2"),
+		200,
+		[]byte("data2"),
+	)
 	block.AddTransaction(tx2)
 	root = block.CalculateMerkleRoot()
 	assert.NotNil(t, root)
@@ -84,15 +75,12 @@ func TestBlock_CalculateHash(t *testing.T) {
 
 func TestBlock_Copy(t *testing.T) {
 	block := NewBlock([]byte("prev_hash"), 1)
-	tx := &common.Transaction{
-		Version: 1,
-		From:    []byte("from"),
-		To:      []byte("to"),
-		Amount:  100,
-		Data:    []byte("data"),
-		Inputs:  make([]common.Input, 0),
-		Outputs: make([]common.Output, 0),
-	}
+	tx := common.NewTransaction(
+		[]byte("from"),
+		[]byte("to"),
+		100,
+		[]byte("data"),
+	)
 	block.AddTransaction(tx)
 
 	blockCopy := block.Copy()
@@ -104,6 +92,7 @@ func TestBlock_Copy(t *testing.T) {
 	assert.Len(t, blockCopy.Transactions, 1)
 
 	// Verify deep copy
-	blockCopy.Transactions[0].Amount = 200
-	assert.NotEqual(t, block.Transactions[0].Amount, blockCopy.Transactions[0].Amount)
+	underlyingTx := blockCopy.Transactions[0].GetTransaction()
+	underlyingTx.Outputs[0].Value = 200
+	assert.NotEqual(t, block.Transactions[0].Amount(), blockCopy.Transactions[0].Amount())
 }
