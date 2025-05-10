@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/block"
-	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -14,7 +13,7 @@ func TestMineBlock(t *testing.T) {
 	consensus := NewConsensus()
 
 	// Create test block
-	block := block.NewBlock([]byte("test"), consensus.GetDifficulty())
+	block := block.NewBlock([]byte("test"), uint64(consensus.GetDifficulty()))
 	block.Header.Height = 1
 	block.Header.Timestamp = time.Now()
 
@@ -25,7 +24,7 @@ func TestMineBlock(t *testing.T) {
 	}
 
 	// Verify block hash
-	if len(block.Hash) == 0 {
+	if len(block.Header.Hash) == 0 {
 		t.Fatal("Block hash is empty")
 	}
 
@@ -43,7 +42,7 @@ func TestDifficultyAdjustment(t *testing.T) {
 	// Create test blocks
 	blocks := make([]*block.Block, DifficultyAdjustmentInterval)
 	for i := 0; i < DifficultyAdjustmentInterval; i++ {
-		blocks[i] = block.NewBlock([]byte("test"), consensus.GetDifficulty())
+		blocks[i] = block.NewBlock([]byte("test"), uint64(consensus.GetDifficulty()))
 		blocks[i].Header.Height = uint64(i + 1)
 		blocks[i].Header.Timestamp = time.Now().Add(time.Duration(i) * TargetBlockTime)
 	}
@@ -68,7 +67,7 @@ func TestMiningReward(t *testing.T) {
 	consensus := NewConsensus()
 
 	// Create test block
-	block := block.NewBlock([]byte("test"), consensus.GetDifficulty())
+	block := block.NewBlock([]byte("test"), uint64(consensus.GetDifficulty()))
 	block.Header.Height = 1
 	block.Header.Timestamp = time.Now()
 
@@ -84,17 +83,17 @@ func TestMiningReward(t *testing.T) {
 	}
 
 	rewardTx := block.Transactions[0]
-	if len(rewardTx.Inputs) != 0 {
+	if len(rewardTx.From) != 0 {
 		t.Fatal("Mining reward transaction has inputs")
 	}
 
-	if len(rewardTx.Outputs) != 1 {
-		t.Fatal("Mining reward transaction has multiple outputs")
+	if len(rewardTx.To) == 0 {
+		t.Fatal("Mining reward transaction has no outputs")
 	}
 
 	expectedReward := consensus.calculateBlockReward(block.Header.Height)
-	if rewardTx.Outputs[0].Value != expectedReward {
-		t.Fatalf("Invalid mining reward amount: got %d, want %d", rewardTx.Outputs[0].Value, expectedReward)
+	if rewardTx.Amount != expectedReward {
+		t.Fatalf("Invalid mining reward amount: got %d, want %d", rewardTx.Amount, expectedReward)
 	}
 }
 
@@ -103,7 +102,7 @@ func TestBlockTimeValidation(t *testing.T) {
 	consensus := NewConsensus()
 
 	// Create test block
-	block := block.NewBlock([]byte("test"), consensus.GetDifficulty())
+	block := block.NewBlock([]byte("test"), uint64(consensus.GetDifficulty()))
 	block.Header.Height = 1
 
 	// Test future block
@@ -133,20 +132,12 @@ func TestTransactionValidation(t *testing.T) {
 	consensus := NewConsensus()
 
 	// Create test transaction
-	tx := &types.Transaction{
-		Version: 1,
-		Inputs:  make([]*types.Input, 0),
-		Outputs: []*types.Output{
-			{
-				Value:        1000,
-				ScriptPubKey: []byte("test"),
-				Address:      "test_address",
-			},
-		},
-		LockTime: 0,
-		Fee:      100,
-		CoinType: coin.Leah,
-	}
+	tx := types.NewTransaction(
+		[]byte("test_from"),
+		[]byte("test_to"),
+		1000,
+		[]byte("test_data"),
+	)
 
 	// Validate transaction
 	err := consensus.ValidateTransaction(tx)
@@ -155,15 +146,15 @@ func TestTransactionValidation(t *testing.T) {
 	}
 
 	// Test oversized transaction
-	tx.Outputs[0].ScriptPubKey = make([]byte, 1000001)
+	tx.Data = make([]byte, 1000001)
 	err = consensus.ValidateTransaction(tx)
 	if err == nil {
 		t.Fatal("Oversized transaction validation should fail")
 	}
 
 	// Test low fee transaction
-	tx.Outputs[0].ScriptPubKey = []byte("test")
-	tx.Fee = 0
+	tx.Data = []byte("test_data")
+	tx.Amount = 0
 	err = consensus.ValidateTransaction(tx)
 	if err == nil {
 		t.Fatal("Low fee transaction validation should fail")
@@ -177,7 +168,7 @@ func TestChainSelection(t *testing.T) {
 	// Create test chains
 	chains := make([]*block.Block, 3)
 	for i := 0; i < 3; i++ {
-		chains[i] = block.NewBlock([]byte("test"), consensus.GetDifficulty())
+		chains[i] = block.NewBlock([]byte("test"), uint64(consensus.GetDifficulty()))
 		chains[i].Header.Height = uint64(i + 1)
 		chains[i].Header.Timestamp = time.Now()
 	}
