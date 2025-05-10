@@ -49,7 +49,7 @@ func (db *Database) SaveBlock(block *block.Block) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	db.blocks[string(block.Hash)] = block
+	db.blocks[string(block.Header.Hash)] = block
 	return nil
 }
 
