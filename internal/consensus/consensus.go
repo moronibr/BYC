@@ -3,12 +3,14 @@ package consensus
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/interfaces"
 )
@@ -37,6 +39,12 @@ const (
 
 	// Maximum future block time in seconds
 	MaxFutureBlockTime = 7200 // 2 hours
+
+	// Maximum transaction size in bytes
+	MaxTransactionSize = 1000000 // 1MB
+
+	// Maximum transaction data size in bytes
+	MaxTransactionDataSize = 1000000 // 1MB
 )
 
 // BlockChain defines the interface for blockchain operations
@@ -66,6 +74,12 @@ type Consensus struct {
 
 	// Current block reward
 	blockReward uint64
+
+	// Mining address
+	miningAddress []byte
+
+	// Blockchain
+	blockchain BlockChain
 }
 
 // NewConsensus creates a new consensus engine
@@ -73,7 +87,7 @@ func NewConsensus() *Consensus {
 	return &Consensus{}
 }
 
-// MineBlock mines a new block
+// MineBlock mines a block
 func (c *Consensus) MineBlock(block *block.Block) error {
 	// Validate block time
 	if err := c.validateBlockTime(block); err != nil {
@@ -85,58 +99,48 @@ func (c *Consensus) MineBlock(block *block.Block) error {
 		return err
 	}
 
-	// Set initial nonce
-	block.Header.Nonce = 0
-
-	// Calculate target hash
-	target := c.calculateTarget()
-
 	// Mine block
-	for {
+	target := c.GetTarget()
+	for block.Header.Nonce < math.MaxUint32 {
 		// Calculate block hash
-		hash := block.CalculateHash()
+		block.Header.Hash = block.CalculateHash()
 
-		// Check if hash meets difficulty target
-		if bytes.Compare(hash, target) <= 0 {
-			block.Hash = hash
+		// Check if hash meets target
+		if bytes.Compare(block.Header.Hash, target) <= 0 {
 			return nil
 		}
 
 		// Increment nonce
-		if block.Header.Nonce == math.MaxUint32 {
-			return fmt.Errorf("failed to find valid nonce")
-		}
 		block.Header.Nonce++
 	}
+
+	return errors.New("failed to find valid nonce")
 }
 
 // ValidateBlock validates a block
 func (c *Consensus) ValidateBlock(block *block.Block) error {
-	// Verify block hash
-	calculatedHash := block.CalculateHash()
-	if !bytes.Equal(calculatedHash, block.Hash) {
-		return fmt.Errorf("invalid block hash")
-	}
-
-	// Verify difficulty
-	target := c.calculateTarget()
-	if bytes.Compare(block.Hash, target) > 0 {
-		return fmt.Errorf("block hash does not meet difficulty target")
-	}
-
-	// Verify block time
+	// Validate block time
 	if err := c.validateBlockTime(block); err != nil {
 		return err
 	}
 
-	// Verify block size
-	if block.Size() > MaxBlockSize {
-		return fmt.Errorf("block size exceeds maximum")
+	// Validate block hash
+	calculatedHash := block.CalculateHash()
+	if !bytes.Equal(block.Header.Hash, calculatedHash) {
+		return errors.New("invalid block hash")
 	}
 
-	// Verify mining reward
-	if err := c.verifyMiningReward(block); err != nil {
-		return err
+	// Validate block target
+	target := c.GetTarget()
+	if bytes.Compare(block.Header.Hash, target) > 0 {
+		return errors.New("block hash does not meet target")
+	}
+
+	// Validate transactions
+	for _, tx := range block.Transactions {
+		if err := c.ValidateTransaction(tx); err != nil {
+			return fmt.Errorf("invalid transaction: %v", err)
+		}
 	}
 
 	return nil
@@ -159,23 +163,31 @@ func (c *Consensus) validateBlockTime(block *block.Block) error {
 	return nil
 }
 
-// addMiningReward adds the mining reward transaction to the block
+// addMiningReward adds a mining reward transaction to the block
 func (c *Consensus) addMiningReward(block *block.Block) error {
-	// Calculate current block reward
+	// Calculate block reward
 	reward := c.calculateBlockReward(block.Header.Height)
 
 	// Create mining reward transaction
 	rewardTx := types.NewTransaction(
-		nil,                     // From (empty for mining reward)
-		[]byte("mining_reward"), // To
-		reward,                  // Value
-		nil,                     // Data
+		nil, // From is nil for coinbase
+		c.miningAddress,
+		reward,
+		[]byte("mining reward"),
 	)
 
-	// Add transaction to block
-	block.Transactions = append([]*types.Transaction{rewardTx}, block.Transactions...)
+	// Convert types.Transaction to common.Transaction
+	commonTx := &common.Transaction{
+		Version:   rewardTx.Version,
+		Timestamp: rewardTx.Timestamp,
+		From:      rewardTx.From,
+		To:        rewardTx.To,
+		Amount:    rewardTx.Amount,
+		Data:      rewardTx.Data,
+	}
 
-	return nil
+	// Add transaction to block
+	return block.AddTransaction(commonTx)
 }
 
 // verifyMiningReward verifies the mining reward transaction
@@ -217,20 +229,16 @@ func (c *Consensus) calculateBlockReward(height uint64) uint64 {
 	return uint64(reward)
 }
 
-// SelectBestChain selects the best chain from multiple candidates
+// SelectBestChain selects the best chain from a list of chains
 func (c *Consensus) SelectBestChain(chains []*block.Block) *block.Block {
 	if len(chains) == 0 {
 		return nil
 	}
 
-	var bestChain *block.Block
-	var maxWork uint64
-
+	// Find chain with highest height
+	bestChain := chains[0]
 	for _, chain := range chains {
-		// Calculate chain work
-		work := c.calculateChainWork(chain)
-		if work > maxWork {
-			maxWork = work
+		if chain.Header.Height > bestChain.Header.Height {
 			bestChain = chain
 		}
 	}
@@ -326,16 +334,21 @@ func (c *Consensus) calculateTarget() []byte {
 	return target
 }
 
-// ValidateTransaction validates a transaction for mining
+// ValidateTransaction validates a transaction
 func (c *Consensus) ValidateTransaction(tx *types.Transaction) error {
-	// Check transaction size
-	if tx.Size() > 1000000 { // 1MB limit
-		return fmt.Errorf("transaction too large")
+	// Validate transaction size
+	if tx.Size() > MaxTransactionSize {
+		return errors.New("transaction too large")
 	}
 
-	// Check transaction fee
-	if tx.Fee < c.calculateMinimumFee(tx) {
-		return fmt.Errorf("transaction fee too low")
+	// Validate transaction amount
+	if tx.Amount == 0 {
+		return errors.New("invalid transaction amount")
+	}
+
+	// Validate transaction data
+	if len(tx.Data) > MaxTransactionDataSize {
+		return errors.New("transaction data too large")
 	}
 
 	return nil
@@ -513,4 +526,71 @@ func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress s
 	newBlock.UpdateMerkleRoot()
 
 	return newBlock, nil
+}
+
+// AddBlock adds a block to the chain
+func (c *Consensus) AddBlock(block *block.Block) error {
+	// Validate block
+	if err := c.ValidateBlock(block); err != nil {
+		return err
+	}
+
+	// Get last block
+	lastBlock, err := c.blockchain.GetLastBlock()
+	if err != nil {
+		return err
+	}
+
+	// Validate block height
+	if block.Header.Height != lastBlock.Header.Height+1 {
+		return errors.New("invalid block height")
+	}
+
+	// Validate previous block hash
+	if !bytes.Equal(block.Header.PrevBlockHash, lastBlock.Header.Hash) {
+		return errors.New("invalid previous block hash")
+	}
+
+	// Add block to chain
+	return c.blockchain.AddBlock(block)
+}
+
+// CreateBlock creates a new block
+func (c *Consensus) CreateBlock() (*block.Block, error) {
+	// Get last block
+	lastBlock, err := c.blockchain.GetLastBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create new block
+	newBlock := block.NewBlock(lastBlock.Header.Hash, lastBlock.Header.Height+1)
+	newBlock.Header.Timestamp = time.Now()
+	newBlock.Header.Difficulty = uint32(c.GetDifficulty())
+
+	// Add transactions
+	for _, tx := range c.txPool.GetBest() {
+		// Convert types.Transaction to common.Transaction
+		commonTx := &common.Transaction{
+			Version:   tx.Version,
+			Timestamp: tx.Timestamp,
+			From:      tx.From,
+			To:        tx.To,
+			Amount:    tx.Amount,
+			Data:      tx.Data,
+		}
+		if err := newBlock.AddTransaction(commonTx); err != nil {
+			return nil, err
+		}
+	}
+
+	return newBlock, nil
+}
+
+// GetTarget returns the current target difficulty
+func (c *Consensus) GetTarget() []byte {
+	target := make([]byte, 32)
+	difficulty := c.GetDifficulty()
+	binary.BigEndian.PutUint32(target[0:4], difficulty)
+	return target
 }
