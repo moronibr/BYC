@@ -77,13 +77,31 @@ func (t *Transaction) Timestamp() time.Time {
 }
 
 // Inputs returns the transaction inputs
-func (t *Transaction) Inputs() []*types.Input {
-	return t.tx.Inputs
+func (t *Transaction) Inputs() []*Input {
+	inputs := make([]*Input, len(t.tx.Inputs))
+	for i, input := range t.tx.Inputs {
+		inputs[i] = &Input{
+			PreviousTxHash:  input.PreviousTxHash,
+			PreviousTxIndex: input.PreviousTxIndex,
+			ScriptSig:       input.ScriptSig,
+			Sequence:        input.Sequence,
+			Address:         input.Address,
+		}
+	}
+	return inputs
 }
 
 // Outputs returns the transaction outputs
-func (t *Transaction) Outputs() []*types.Output {
-	return t.tx.Outputs
+func (t *Transaction) Outputs() []*Output {
+	outputs := make([]*Output, len(t.tx.Outputs))
+	for i, output := range t.tx.Outputs {
+		outputs[i] = &Output{
+			Value:        output.Value,
+			ScriptPubKey: output.ScriptPubKey,
+			Address:      output.Address,
+		}
+	}
+	return outputs
 }
 
 // LockTime returns the transaction lock time
@@ -104,6 +122,11 @@ func (t *Transaction) CoinType() coin.CoinType {
 // Data returns the transaction data
 func (t *Transaction) Data() []byte {
 	return t.tx.Data
+}
+
+// Witness returns the transaction witness data
+func (t *Transaction) Witness() [][]byte {
+	return t.tx.Witness
 }
 
 // Copy creates a deep copy of the transaction
@@ -130,12 +153,32 @@ func (t *Transaction) IsCoinbase() bool {
 
 // Input represents a transaction input
 type Input struct {
-	*types.Input
+	// Previous transaction hash
+	PreviousTxHash []byte
+
+	// Previous transaction output index
+	PreviousTxIndex uint32
+
+	// Input script
+	ScriptSig []byte
+
+	// Sequence number
+	Sequence uint32
+
+	// Input address
+	Address string
 }
 
 // Output represents a transaction output
 type Output struct {
-	*types.Output
+	// Output value
+	Value uint64
+
+	// Output script
+	ScriptPubKey []byte
+
+	// Output address
+	Address string
 }
 
 // UTXO represents an unspent transaction output

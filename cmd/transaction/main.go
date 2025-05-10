@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/transaction"
 	"github.com/youngchain/internal/core/types"
 	"github.com/youngchain/internal/network"
@@ -136,7 +137,7 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 	tx.Fee = fee
 
 	// Save transaction
-	if err := txStore.SaveTransaction(tx); err != nil {
+	if err := txStore.SaveTransaction((*common.Transaction)(tx)); err != nil {
 		log.Fatalf("Failed to save transaction: %v", err)
 	}
 

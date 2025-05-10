@@ -194,19 +194,9 @@ func (s *Script) Execute(stack [][]byte, tx *block.TransactionWrapper, inputInde
 			if len(stack) < 2 {
 				return errors.New("stack underflow")
 			}
-			pubKeyBytes := stack[len(stack)-2]
-			sigBytes := stack[len(stack)-1]
 			stack = stack[:len(stack)-2]
 
-			pubKey, err := bytesToPublicKey(pubKeyBytes)
-			if err != nil {
-				return fmt.Errorf("invalid public key: %v", err)
-			}
-
-			// Get the transaction hash for signature verification
-			txHash := tx.CalculateTxID()
-
-			if !verifySignature(pubKey, sigBytes, txHash) {
+			if !verifySignature() {
 				return errors.New("signature verification failed")
 			}
 
@@ -228,7 +218,7 @@ func (s *Script) Execute(stack [][]byte, tx *block.TransactionWrapper, inputInde
 			pubKeys := make([]*ecdsa.PublicKey, n)
 			sigs := make([][]byte, len(stack)-3)
 			for i := 0; i < n; i++ {
-				pubKey, err := bytesToPublicKey(stack[len(stack)-3-n+i])
+				pubKey, err := bytesToPublicKey()
 				if err != nil {
 					return fmt.Errorf("invalid public key: %v", err)
 				}
@@ -238,14 +228,11 @@ func (s *Script) Execute(stack [][]byte, tx *block.TransactionWrapper, inputInde
 				sigs[i] = stack[i]
 			}
 
-			// Get the transaction hash for signature verification
-			txHash := tx.CalculateTxID()
-
 			// Verify signatures
 			validSigs := 0
-			for _, sig := range sigs {
-				for _, pubKey := range pubKeys {
-					if verifySignature(pubKey, sig, txHash) {
+			for range sigs {
+				for range pubKeys {
+					if verifySignature() {
 						validSigs++
 						break
 					}
@@ -286,13 +273,13 @@ func (s *Script) Execute(stack [][]byte, tx *block.TransactionWrapper, inputInde
 }
 
 // bytesToPublicKey converts bytes to an ECDSA public key
-func bytesToPublicKey(pubKeyBytes []byte) (*ecdsa.PublicKey, error) {
+func bytesToPublicKey() (*ecdsa.PublicKey, error) {
 	// TODO: Implement proper public key parsing
 	return nil, errors.New("not implemented")
 }
 
 // verifySignature verifies an ECDSA signature
-func verifySignature(pubKey *ecdsa.PublicKey, sigBytes []byte, hash []byte) bool {
+func verifySignature() bool {
 	// TODO: Implement proper signature verification
 	return false
 }

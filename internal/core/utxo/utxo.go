@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/script"
 )
 
@@ -28,88 +30,144 @@ type UTXO struct {
 	IsSegWit    bool
 }
 
-// UTXOSet manages the set of unspent transaction outputs
+// UTXOSet represents a set of unspent transaction outputs
 type UTXOSet struct {
-	utxos map[string]*UTXO // key: txHash:outIndex
-	mu    sync.RWMutex
+	// Map of transaction hash to map of output index to UTXO
+	utxos map[string]map[uint32]*UTXO
+	// Mutex for thread safety
+	mu sync.RWMutex
+}
+
+// UTXOSetInterface defines the interface for UTXO set operations
+type UTXOSetInterface interface {
+	// GetUTXO returns a UTXO by its transaction hash and output index
+	GetUTXO(txHash []byte, outIndex uint32) (*UTXO, error)
+	// AddUTXO adds a new UTXO to the set
+	AddUTXO(utxo *UTXO) error
+	// RemoveUTXO removes a UTXO from the set
+	RemoveUTXO(txHash []byte, outIndex uint32) error
+	// GetBalance returns the balance of an address
+	GetBalance(address []byte) (uint64, error)
+	// UpdateWithBlock updates the UTXO set with a new block
+	UpdateWithBlock(block *block.Block) error
 }
 
 // NewUTXOSet creates a new UTXO set
 func NewUTXOSet() *UTXOSet {
 	return &UTXOSet{
-		utxos: make(map[string]*UTXO),
+		utxos: make(map[string]map[uint32]*UTXO),
 	}
 }
 
-// AddUTXO adds a UTXO to the set
-func (us *UTXOSet) AddUTXO(utxo *UTXO) error {
-	us.mu.Lock()
-	defer us.mu.Unlock()
+// GetUTXO returns a UTXO by its transaction hash and output index
+func (u *UTXOSet) GetUTXO(txHash []byte, outIndex uint32) (*UTXO, error) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 
-	// Check UTXO set size
-	if len(us.utxos) >= MaxUTXOSetSize {
-		return fmt.Errorf("utxo set is full")
+	txHashStr := hex.EncodeToString(txHash)
+	if utxos, ok := u.utxos[txHashStr]; ok {
+		if utxo, ok := utxos[outIndex]; ok {
+			return utxo, nil
+		}
 	}
+	return nil, fmt.Errorf("UTXO not found")
+}
 
-	// Check UTXO value
-	if utxo.Amount > MaxUTXOValue {
-		return fmt.Errorf("utxo value exceeds maximum")
+// AddUTXO adds a new UTXO to the set
+func (u *UTXOSet) AddUTXO(utxo *UTXO) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	txHashStr := hex.EncodeToString(utxo.TxHash)
+	if _, ok := u.utxos[txHashStr]; !ok {
+		u.utxos[txHashStr] = make(map[uint32]*UTXO)
 	}
-
-	// Create key
-	key := utxoKey(utxo.TxHash, utxo.OutIndex)
-
-	// Add UTXO
-	us.utxos[key] = utxo
-
+	u.utxos[txHashStr][utxo.OutIndex] = utxo
 	return nil
 }
 
 // RemoveUTXO removes a UTXO from the set
-func (us *UTXOSet) RemoveUTXO(txHash []byte, outIndex uint32) {
-	us.mu.Lock()
-	defer us.mu.Unlock()
+func (u *UTXOSet) RemoveUTXO(txHash []byte, outIndex uint32) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 
-	key := utxoKey(txHash, outIndex)
-	delete(us.utxos, key)
+	txHashStr := hex.EncodeToString(txHash)
+	if utxos, ok := u.utxos[txHashStr]; ok {
+		if _, ok := utxos[outIndex]; ok {
+			delete(utxos, outIndex)
+			if len(utxos) == 0 {
+				delete(u.utxos, txHashStr)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("UTXO not found")
 }
 
-// GetUTXO retrieves a UTXO from the set
-func (us *UTXOSet) GetUTXO(txHash []byte, outIndex uint32) (*UTXO, bool) {
-	us.mu.RLock()
-	defer us.mu.RUnlock()
+// GetBalance returns the balance of an address
+func (u *UTXOSet) GetBalance(address []byte) (uint64, error) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
 
-	key := utxoKey(txHash, outIndex)
-	utxo, exists := us.utxos[key]
-	return utxo, exists
+	var balance uint64
+	for _, utxos := range u.utxos {
+		for range utxos {
+			// TODO: Implement address extraction from script and compare to address
+			// if bytes.Equal(utxo.ScriptPub.GetAddress(), address) {
+			// 	balance += utxo.Amount
+			// }
+		}
+	}
+	return balance, nil
+}
+
+// UpdateWithBlock updates the UTXO set with a new block
+func (u *UTXOSet) UpdateWithBlock(block *block.Block) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	for _, tx := range block.Transactions {
+		// Remove spent UTXOs
+		for _, input := range tx.Inputs() {
+			err := u.RemoveUTXO(input.PreviousTxHash, input.PreviousTxIndex)
+			if err != nil {
+				return fmt.Errorf("error removing spent UTXO: %w", err)
+			}
+		}
+
+		// Add new UTXOs
+		for i, output := range tx.Outputs() {
+			scriptObj := script.NewScript()
+			scriptObj.AddData(output.ScriptPubKey)
+			utxo := &UTXO{
+				TxHash:      tx.Hash(),
+				OutIndex:    uint32(i),
+				Amount:      output.Value,
+				ScriptPub:   scriptObj,
+				BlockHeight: block.Header.Height,
+				IsCoinbase:  tx.IsCoinbase(),
+				IsSegWit:    len(tx.Witness()) > 0,
+			}
+			err := u.AddUTXO(utxo)
+			if err != nil {
+				return fmt.Errorf("error adding new UTXO: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // GetUTXOsByAddress retrieves all UTXOs for an address
-func (us *UTXOSet) GetUTXOsByAddress(address string) []*UTXO {
-	us.mu.RLock()
-	defer us.mu.RUnlock()
-
-	var utxos []*UTXO
-	for _, utxo := range us.utxos {
-		if utxo.ScriptPub.MatchesAddress(address) {
-			utxos = append(utxos, utxo)
+func (u *UTXOSet) GetUTXOsByAddress(address string) []*UTXO {
+	var result []*UTXO
+	for _, utxos := range u.utxos {
+		for _, utxo := range utxos {
+			if utxo.ScriptPub.MatchesAddress(address) {
+				result = append(result, utxo)
+			}
 		}
 	}
-	return utxos
-}
-
-// GetBalance returns the total balance for an address
-func (us *UTXOSet) GetBalance(address string) uint64 {
-	us.mu.RLock()
-	defer us.mu.RUnlock()
-
-	var balance uint64
-	for _, utxo := range us.utxos {
-		if utxo.ScriptPub.MatchesAddress(address) {
-			balance += utxo.Amount
-		}
-	}
-	return balance
+	return result
 }
 
 // Size returns the number of UTXOs in the set
@@ -117,7 +175,11 @@ func (us *UTXOSet) Size() int {
 	us.mu.RLock()
 	defer us.mu.RUnlock()
 
-	return len(us.utxos)
+	var count int
+	for _, utxos := range us.utxos {
+		count += len(utxos)
+	}
+	return count
 }
 
 // utxoKey creates a key for a UTXO
@@ -166,4 +228,65 @@ func (utxo *UTXO) Clone() *UTXO {
 		IsCoinbase:  utxo.IsCoinbase,
 		IsSegWit:    utxo.IsSegWit,
 	}
+}
+
+func (u *UTXO) GetAddress() string {
+	// TODO: Implement proper address extraction from script
+	return ""
+}
+
+func (u *UTXOSet) Update(tx *common.Transaction) error {
+	// Handle inputs (spending UTXOs)
+	inputs := tx.Inputs()
+	for _, input := range inputs {
+		// Skip coinbase inputs
+		if input.PreviousTxHash == nil {
+			continue
+		}
+
+		// Create key for the UTXO being spent
+		key := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
+		delete(u.utxos, key)
+	}
+
+	// Handle outputs (creating new UTXOs)
+	outputs := tx.Outputs()
+	for i, output := range outputs {
+		// Create new UTXO
+		script := script.NewScript()
+		script.AddData(output.ScriptPubKey)
+
+		utxo := &UTXO{
+			TxHash:      tx.Hash(),
+			OutIndex:    uint32(i),
+			Amount:      output.Value,
+			ScriptPub:   script,
+			BlockHeight: 0, // TODO: Get from block
+			IsCoinbase:  tx.IsCoinbase(),
+			IsSegWit:    len(tx.Witness()) > 0, // Check if transaction has witness data
+		}
+
+		// Add to UTXO set
+		key := fmt.Sprintf("%x:%d", utxo.TxHash, utxo.OutIndex)
+		if _, ok := u.utxos[key]; !ok {
+			u.utxos[key] = make(map[uint32]*UTXO)
+		}
+		u.utxos[key][utxo.OutIndex] = utxo
+	}
+
+	return nil
+}
+
+// All returns a flat slice of all UTXOs in the set
+func (u *UTXOSet) All() []*UTXO {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
+	var utxos []*UTXO
+	for _, utxoMap := range u.utxos {
+		for _, utxo := range utxoMap {
+			utxos = append(utxos, utxo)
+		}
+	}
+	return utxos
 }

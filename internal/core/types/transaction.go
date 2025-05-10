@@ -38,6 +38,9 @@ type Transaction struct {
 
 	// Transaction data
 	Data []byte
+
+	// Witness data for SegWit transactions
+	Witness [][]byte
 }
 
 // Input represents a transaction input
@@ -78,6 +81,7 @@ func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 		Fee:       0,
 		CoinType:  coin.Leah,
 		Data:      data,
+		Witness:   make([][]byte, 0),
 	}
 
 	// Add input
@@ -163,6 +167,7 @@ func (tx *Transaction) Copy() *Transaction {
 		CoinType:  tx.CoinType,
 		Data:      make([]byte, len(tx.Data)),
 		Hash:      make([]byte, len(tx.Hash)),
+		Witness:   make([][]byte, len(tx.Witness)),
 	}
 
 	// Copy inputs
@@ -188,6 +193,12 @@ func (tx *Transaction) Copy() *Transaction {
 		copy(txCopy.Outputs[i].ScriptPubKey, output.ScriptPubKey)
 	}
 
+	// Copy witness data
+	for i, witness := range tx.Witness {
+		txCopy.Witness[i] = make([]byte, len(witness))
+		copy(txCopy.Witness[i], witness)
+	}
+
 	copy(txCopy.Data, tx.Data)
 	copy(txCopy.Hash, tx.Hash)
 
@@ -210,18 +221,18 @@ func (tx *Transaction) Size() int {
 		size += 4 // PreviousTxIndex
 		size += len(input.ScriptSig)
 		size += 4 // Sequence
-		size += len(input.Address)
 	}
 
 	// Add size of outputs
 	for _, output := range tx.Outputs {
 		size += 8 // Value
 		size += len(output.ScriptPubKey)
-		size += len(output.Address)
 	}
 
-	// Add size of coin type
-	size += len(tx.CoinType)
+	// Add size of witness data
+	for _, witness := range tx.Witness {
+		size += len(witness)
+	}
 
 	return size
 }

@@ -103,9 +103,40 @@ func (s *Server) SetDB(db *storage.Database) {
 
 // HandleMessage handles incoming network messages
 func (s *Server) HandleMessage(msg interface{}) error {
-	switch tx := msg.(type) {
+	if msg == nil {
+		return fmt.Errorf("received nil message")
+	}
+
+	switch m := msg.(type) {
 	case *common.Transaction:
-		return s.ProcessTransaction(tx)
+		return s.ProcessTransaction(m)
+	case *messages.BlockMessage:
+		if m.Block == nil {
+			return fmt.Errorf("received nil block in block message")
+		}
+
+		// Validate block header
+		if err := s.validateBlockHeader(m.Block); err != nil {
+			return fmt.Errorf("invalid block header: %v", err)
+		}
+
+		// Validate block and its transactions using consensus
+		if err := s.validateBlockTransactions(m.Block); err != nil {
+			return fmt.Errorf("invalid block: %v", err)
+		}
+
+		// Update chain state
+		if err := s.UpdateChainState(m.Block); err != nil {
+			return fmt.Errorf("failed to update chain state: %v", err)
+		}
+
+		// Broadcast block to other peers
+		return s.BroadcastBlock(m.Block)
+	case *messages.TransactionMessage:
+		if m.Transaction == nil {
+			return fmt.Errorf("received nil transaction in transaction message")
+		}
+		return s.ProcessTransaction(m.Transaction)
 	default:
 		return fmt.Errorf("unknown message type: %T", msg)
 	}
@@ -128,53 +159,6 @@ func (s *Server) ProcessTransaction(tx *common.Transaction) error {
 			fmt.Printf("Failed to send transaction to peer %s: %v\n", peer.ID(), err)
 		}
 	}
-
-	return nil
-}
-
-// processBlock processes a block
-func (s *Server) processBlock(block *block.Block) error {
-	// Validate block hash
-	calculatedHash := block.CalculateHash()
-	if !bytes.Equal(calculatedHash, block.Header.Hash) {
-		return fmt.Errorf("invalid block hash")
-	}
-
-	// Validate block header
-	if err := s.validateBlockHeader(block); err != nil {
-		return fmt.Errorf("invalid block header: %v", err)
-	}
-
-	// Validate transactions
-	if err := s.validateBlockTransactions(block); err != nil {
-		return fmt.Errorf("invalid block transactions: %v", err)
-	}
-
-	// Save block to database
-	if err := s.db.SaveBlock(block); err != nil {
-		return fmt.Errorf("failed to save block: %v", err)
-	}
-
-	// Update chain state
-	if err := s.UpdateChainState(block); err != nil {
-		return fmt.Errorf("failed to update chain state: %v", err)
-	}
-
-	// Adjust difficulty
-	if err := s.consensus.AdjustDifficulty(block); err != nil {
-		return fmt.Errorf("failed to adjust difficulty: %v", err)
-	}
-
-	// Broadcast block to peers
-	blockMsg := &messages.BlockMessage{
-		Block:     block,
-		BlockType: "new",
-	}
-	msgData, err := json.Marshal(blockMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal block message: %v", err)
-	}
-	s.peerManager.Broadcast(msgData)
 
 	return nil
 }
@@ -209,17 +193,20 @@ func (s *Server) validateBlockHeader(block *block.Block) error {
 
 // validateBlockTransactions validates all transactions in the block
 func (s *Server) validateBlockTransactions(block *block.Block) error {
-	for _, tx := range block.Transactions {
-		if err := s.txPool.AddTransaction(tx); err != nil {
-			return fmt.Errorf("transaction validation failed: %v", err)
-		}
-	}
-
-	return nil
+	// Use consensus engine to validate the entire block
+	return s.consensus.ValidateBlock(block)
 }
 
 // UpdateChainState updates the chain state
 func (s *Server) UpdateChainState(block *block.Block) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate block using consensus
+	if err := s.consensus.ValidateBlock(block); err != nil {
+		return fmt.Errorf("invalid block: %v", err)
+	}
+
 	// Get current chain state
 	_, bestBlockHash, err := s.db.GetChainState()
 	if err != nil {
@@ -234,6 +221,12 @@ func (s *Server) UpdateChainState(block *block.Block) error {
 
 	// If new block has higher height, update chain state
 	if block.Header.Height > bestBlock.Header.Height {
+		// Verify block connects to our chain
+		if !bytes.Equal(block.Header.PrevBlockHash, bestBlockHash) {
+			// TODO: Handle chain reorganization
+			return fmt.Errorf("block does not connect to our chain")
+		}
+
 		if err := s.db.UpdateChainState(block.Header.Hash, block.Header.Height); err != nil {
 			return fmt.Errorf("failed to update chain state: %v", err)
 		}
@@ -334,6 +327,10 @@ func (s *Server) BroadcastBlock(block *block.Block) error {
 
 // BroadcastTransaction broadcasts a transaction to all peers
 func (s *Server) BroadcastTransaction(tx *common.Transaction) error {
+	if tx == nil {
+		return fmt.Errorf("cannot broadcast nil transaction")
+	}
+
 	// Create transaction message
 	msg := &messages.TransactionMessage{
 		Transaction: tx,
@@ -344,13 +341,7 @@ func (s *Server) BroadcastTransaction(tx *common.Transaction) error {
 		return fmt.Errorf("failed to marshal transaction message: %v", err)
 	}
 
-	// Broadcast to all peers
-	for _, peer := range s.peers {
-		if err := peer.Send(data); err != nil {
-			// Log error but continue with other peers
-			fmt.Printf("Failed to send transaction to peer %s: %v\n", peer.ID(), err)
-		}
-	}
-
+	// Broadcast using peer manager
+	s.peerManager.Broadcast(data)
 	return nil
 }

@@ -1,81 +1,77 @@
 package storage
 
 import (
+	"sync"
+
+	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/utxo"
 )
 
-// UTXOAdapter adapts utxo.UTXOSet to storage.UTXOSet
+// UTXOAdapter adapts utxo.UTXOSet to a generic interface
+// (if you need to implement an interface, do so here)
 type UTXOAdapter struct {
 	utxoSet *utxo.UTXOSet
+	mu      sync.RWMutex
 }
 
-// NewUTXOAdapter creates a new UTXO adapter
+// NewUTXOAdapter creates a new UTXOAdapter
 func NewUTXOAdapter(utxoSet *utxo.UTXOSet) *UTXOAdapter {
 	return &UTXOAdapter{
 		utxoSet: utxoSet,
 	}
 }
 
-// GetUTXO gets a UTXO from the set
-func (a *UTXOAdapter) GetUTXO(txHash []byte, outputIndex uint32) (*UTXO, bool) {
-	utxo, exists := a.utxoSet.GetUTXO(txHash, outputIndex)
-	if !exists {
-		return nil, false
-	}
+// GetUTXO retrieves a UTXO by its transaction hash and output index
+func (a *UTXOAdapter) GetUTXO(txHash []byte, outputIndex uint32) (*utxo.UTXO, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 
-	return &UTXO{
-		TxHash:      utxo.TxHash,
-		OutputIndex: utxo.OutIndex,
-		Value:       utxo.Amount,
-		Script:      utxo.ScriptPub.Serialize(),
-		Height:      utxo.BlockHeight,
-	}, true
+	return a.utxoSet.GetUTXO(txHash, outputIndex)
 }
 
 // AddUTXO adds a UTXO to the set
-func (a *UTXOAdapter) AddUTXO(utxo *UTXO) error {
-	utxoObj := &utxo.UTXO{
-		TxHash:      utxo.TxHash,
-		OutIndex:    utxo.OutputIndex,
-		Amount:      utxo.Value,
-		ScriptPub:   nil, // TODO: Convert script to *script.Script
-		BlockHeight: utxo.Height,
-		IsCoinbase:  false,
-		IsSegWit:    false,
-	}
+func (a *UTXOAdapter) AddUTXO(utxoObj *utxo.UTXO) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	return a.utxoSet.AddUTXO(utxoObj)
 }
 
-// SpendUTXO marks a UTXO as spent
-func (a *UTXOAdapter) SpendUTXO(txHash []byte, outputIndex uint32, height uint64) {
-	a.utxoSet.RemoveUTXO(txHash, outputIndex)
+// RemoveUTXO removes a UTXO from the set
+func (a *UTXOAdapter) RemoveUTXO(txHash []byte, outputIndex uint32) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.utxoSet.RemoveUTXO(txHash, outputIndex)
 }
 
-// PruneSpent prunes spent UTXOs up to a certain height
-func (a *UTXOAdapter) PruneSpent(height uint64) error {
-	// No-op for now as utxo.UTXOSet doesn't have pruning
-	return nil
+// GetBalance gets the balance for an address
+func (a *UTXOAdapter) GetBalance(address string, coinType interface{}) (uint64, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	var balance uint64
+	for _, utxo := range a.utxoSet.All() {
+		if utxo.ScriptPub != nil && utxo.ScriptPub.MatchesAddress(address) {
+			// TODO: Handle coinType if needed
+			balance += utxo.Amount
+		}
+	}
+	return balance, nil
 }
 
-// GetUTXOCount returns the number of UTXOs
-func (a *UTXOAdapter) GetUTXOCount() int {
-	return a.utxoSet.Size()
+// GetAllUTXOs returns all UTXOs in the set
+func (a *UTXOAdapter) GetAllUTXOs() []*utxo.UTXO {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	return a.utxoSet.All()
 }
 
-// GetSpentCount returns the number of spent UTXOs
-func (a *UTXOAdapter) GetSpentCount() int {
-	// No-op for now as utxo.UTXOSet doesn't track spent UTXOs
-	return 0
-}
+// UpdateWithBlock updates the UTXO set with a new block
+func (a *UTXOAdapter) UpdateWithBlock(block *block.Block) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-// Serialize serializes the UTXO set
-func (a *UTXOAdapter) Serialize() []byte {
-	// No-op for now as utxo.UTXOSet doesn't have serialization
-	return nil
-}
-
-// Deserialize deserializes the UTXO set
-func (a *UTXOAdapter) Deserialize(data []byte) error {
-	// No-op for now as utxo.UTXOSet doesn't have deserialization
-	return nil
+	return a.utxoSet.UpdateWithBlock(block)
 }

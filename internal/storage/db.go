@@ -317,3 +317,36 @@ func (db *DB) StoreTransaction(blockTx *common.Transaction) error {
 		return bucket.Put(blockTx.Hash(), data)
 	})
 }
+
+// GetBlockByHeight retrieves a block by its height
+func (db *DB) GetBlockByHeight(height uint64) (*block.Block, error) {
+	var result *block.Block
+
+	err := db.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte("blocks"))
+		if bucket == nil {
+			return fmt.Errorf("blocks bucket not found")
+		}
+
+		// Iterate through all blocks to find one with matching height
+		cursor := bucket.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			var block block.Block
+			if err := json.Unmarshal(v, &block); err != nil {
+				continue
+			}
+			if block.Header.Height == height {
+				result = &block
+				return nil
+			}
+		}
+
+		return fmt.Errorf("block not found at height %d", height)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}

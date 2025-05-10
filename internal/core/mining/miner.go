@@ -36,7 +36,7 @@ type Miner struct {
 	// Block store
 	blockStore storage.BlockStore
 	// UTXO set
-	utxoSet *utxo.UTXOSet
+	utxoSet utxo.UTXOSetInterface
 	// Mining address
 	miningAddress string
 	// Mining status
@@ -46,7 +46,7 @@ type Miner struct {
 }
 
 // NewMiner creates a new miner
-func NewMiner(txPool *transaction.TxPool, blockStore storage.BlockStore, utxoSet *utxo.UTXOSet, miningAddress string) *Miner {
+func NewMiner(txPool *transaction.TxPool, blockStore storage.BlockStore, utxoSet utxo.UTXOSetInterface, miningAddress string) *Miner {
 	target := big.NewInt(1)
 	target.Lsh(target, uint(256-TargetBits))
 

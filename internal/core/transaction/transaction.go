@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -22,38 +23,38 @@ var (
 
 // Transaction represents a cryptocurrency transaction
 type Transaction struct {
-	Version  uint32
-	Inputs   []*Input
-	Outputs  []*Output
-	LockTime uint32
-	Fee      uint64
-	CoinType coin.CoinType
+	Version  uint32        `json:"version"`
+	Inputs   []*Input      `json:"inputs"`
+	Outputs  []*Output     `json:"outputs"`
+	LockTime uint32        `json:"lockTime"`
+	Fee      uint64        `json:"fee"`
+	CoinType coin.CoinType `json:"coinType"`
 }
 
 // Input represents a transaction input
 type Input struct {
-	PreviousTxHash  []byte
-	PreviousTxIndex uint32
-	ScriptSig       []byte
-	Sequence        uint32
+	PreviousTxHash  []byte `json:"previousTxHash"`
+	PreviousTxIndex uint32 `json:"previousTxIndex"`
+	ScriptSig       []byte `json:"scriptSig"`
+	Sequence        uint32 `json:"sequence"`
 }
 
 // Output represents a transaction output
 type Output struct {
-	Value        uint64
-	ScriptPubKey []byte
-	Address      string
+	Value        uint64 `json:"value"`
+	ScriptPubKey []byte `json:"scriptPubKey"`
+	Address      string `json:"address"`
 }
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxHash    []byte
-	TxIndex   uint32
-	Value     uint64
-	Address   string
-	CoinType  coin.CoinType
-	IsSpent   bool
-	BlockHash []byte
+	TxHash    []byte        `json:"txHash"`
+	TxIndex   uint32        `json:"txIndex"`
+	Value     uint64        `json:"value"`
+	Address   string        `json:"address"`
+	CoinType  coin.CoinType `json:"coinType"`
+	IsSpent   bool          `json:"isSpent"`
+	BlockHash []byte        `json:"blockHash"`
 }
 
 // TransactionPool manages pending transactions
@@ -283,4 +284,31 @@ func (tx *Transaction) Size() int {
 	size += len(tx.CoinType)
 
 	return size
+}
+
+// MarshalJSON implements custom JSON marshaling for Transaction
+func (tx *Transaction) MarshalJSON() ([]byte, error) {
+	type Alias Transaction
+	return json.Marshal(&struct {
+		*Alias
+		Hash string `json:"hash"`
+	}{
+		Alias: (*Alias)(tx),
+		Hash:  fmt.Sprintf("%x", tx.CalculateHash()),
+	})
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for Transaction
+func (tx *Transaction) UnmarshalJSON(data []byte) error {
+	type Alias Transaction
+	aux := &struct {
+		*Alias
+		Hash string `json:"hash"`
+	}{
+		Alias: (*Alias)(tx),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	return nil
 }

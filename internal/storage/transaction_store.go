@@ -200,8 +200,3 @@ func (ts *TransactionStore) GetBalance(address string, coinType coin.CoinType) (
 
 	return balance, err
 }
-
-// calculateHash calculates the hash of a transaction
-func calculateHash(tx *common.Transaction) []byte {
-	return tx.Hash()
-}

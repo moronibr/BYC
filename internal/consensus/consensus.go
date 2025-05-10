@@ -148,6 +148,11 @@ func (c *Consensus) ValidateBlock(block *block.Block) error {
 		}
 	}
 
+	// Verify mining reward
+	if err := c.verifyMiningReward(block); err != nil {
+		return fmt.Errorf("invalid mining reward: %v", err)
+	}
+
 	return nil
 }
 
@@ -355,6 +360,12 @@ func (c *Consensus) ValidateTransaction(tx *common.Transaction) error {
 	// Validate amount
 	if tx.Amount() == 0 {
 		return errors.New("invalid amount")
+	}
+
+	// Check minimum fee
+	minFee := c.calculateMinimumFee(tx)
+	if tx.Fee() < minFee {
+		return fmt.Errorf("transaction fee too low: got %d, want at least %d", tx.Fee(), minFee)
 	}
 
 	return nil

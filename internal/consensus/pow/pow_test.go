@@ -154,7 +154,10 @@ func TestPrepareData(t *testing.T) {
 		t.Fatalf("Failed to create PoW: %v", err)
 	}
 
-	data := pow.prepareData(1)
+	data, err := pow.prepareData(1)
+	if err != nil {
+		t.Fatalf("Failed to prepare data: %v", err)
+	}
 	if len(data) == 0 {
 		t.Error("Expected non-empty data")
 	}

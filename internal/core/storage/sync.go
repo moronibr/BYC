@@ -306,9 +306,8 @@ func (us *UTXOSet) AddUTXO(utxo *UTXO) {
 func (us *UTXOSet) SpendUTXO(txHash []byte, outputIndex uint32, height uint64) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
-
 	key := fmt.Sprintf("%x:%d", txHash, outputIndex)
-	if utxo, exists := us.utxos[key]; exists {
+	if _, exists := us.utxos[key]; exists {
 		us.spent[key] = height
 		delete(us.utxos, key)
 	}

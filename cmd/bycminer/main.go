@@ -17,11 +17,12 @@ import (
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/mining"
-	"github.com/youngchain/internal/core/storage"
+	corestorage "github.com/youngchain/internal/core/storage"
 	"github.com/youngchain/internal/core/transaction"
 	"github.com/youngchain/internal/core/utxo"
 	"github.com/youngchain/internal/network"
 	"github.com/youngchain/internal/network/messages"
+	"github.com/youngchain/internal/storage"
 )
 
 var (
@@ -98,12 +99,23 @@ func main() {
 	go handleNetworkMessages()
 
 	// Initialize storage
-	blockStore := storage.NewBlockStore()
-	utxoSet := utxo.NewUTXOSet()
-	txPool := transaction.NewTxPool(1000, 1000, utxoSet)
+	db, err := storage.NewDB("byc.db")
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
 
-	// Initialize mining with initial block
-	latestBlock = block.NewBlock([]byte{}, uint64(block.GetInitialDifficulty(block.GoldenBlock)))
+	blockStore := corestorage.NewBlockStoreAdapter(db)
+
+	// Initialize UTXO set for miner
+	utxoSet := utxo.NewUTXOSet()
+	// Create adapter for transaction pool
+	utxoAdapter := corestorage.NewUTXOAdapter(utxoSet)
+
+	// Initialize transaction pool with adapter
+	txPool := transaction.NewTxPool(1000, 1, utxoAdapter)
+
+	// Initialize miner with real UTXO set
 	miner := mining.NewMiner(txPool, blockStore, utxoSet, *walletAddress)
 
 	// Start mining threads

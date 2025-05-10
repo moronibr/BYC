@@ -80,7 +80,7 @@ func (sm *StateManager) processTransaction(tx *common.Transaction, blockHeight u
 	for _, input := range inputs {
 		// Get UTXO
 		utxo, exists := sm.utxoSet.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
-		if !exists {
+		if exists != nil {
 			return fmt.Errorf("input not found: %x:%d", input.PreviousTxHash, input.PreviousTxIndex)
 		}
 
