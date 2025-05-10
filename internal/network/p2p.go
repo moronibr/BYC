@@ -3,12 +3,12 @@ package network
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/multiformats/go-multiaddr"
@@ -202,12 +202,12 @@ func (n *Node) BroadcastTransaction(tx []byte) error {
 }
 
 // handleBlockchainStream handles incoming blockchain streams
-func (n *Node) handleBlockchainStream(stream net.Stream) {
+func (n *Node) handleBlockchainStream(stream network.Stream) {
 	// Implement blockchain stream handling logic
 }
 
 // handleTransactionStream handles incoming transaction streams
-func (n *Node) handleTransactionStream(stream net.Stream) {
+func (n *Node) handleTransactionStream(stream network.Stream) {
 	// Implement transaction stream handling logic
 }
 
