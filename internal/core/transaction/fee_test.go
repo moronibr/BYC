@@ -13,11 +13,12 @@ func TestFeeCalculator(t *testing.T) {
 
 	t.Run("Basic Fee Calculation", func(t *testing.T) {
 		// Create a test transaction
-		tx := &common.Transaction{
-			Version: 1,
-			Inputs:  []common.Input{{}},
-			Outputs: []common.Output{{}},
-		}
+		tx := common.NewTransaction(
+			[]byte("from_address"),
+			[]byte("to_address"),
+			1000,
+			[]byte("test_data"),
+		)
 
 		// Calculate fee
 		fee := calculator.CalculateFee(tx)
@@ -41,11 +42,12 @@ func TestFeeCalculator(t *testing.T) {
 		calculator.SetPriorityMultiplier(1.5)
 
 		// Create a test transaction
-		tx := &common.Transaction{
-			Version: 1,
-			Inputs:  []common.Input{{}},
-			Outputs: []common.Output{{}},
-		}
+		tx := common.NewTransaction(
+			[]byte("from_address"),
+			[]byte("to_address"),
+			1000,
+			[]byte("test_data"),
+		)
 
 		// Calculate fee
 		fee := calculator.CalculateFee(tx)
