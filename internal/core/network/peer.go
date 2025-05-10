@@ -91,18 +91,20 @@ func (pm *PeerManager) GetRandomPeers(count int) []*Peer {
 func (pm *PeerManager) DiscoverPeers() error {
 	// Try bootstrap nodes first
 	for _, addr := range pm.bootstrap {
-		peer, err := pm.connectToPeer(addr)
-		if err == nil {
-			pm.AddPeer(peer)
+		if p, err := pm.connectToPeer(addr); err == nil {
+			if err := pm.AddPeer(p); err != nil {
+				continue
+			}
 		}
 	}
 
 	// Ask existing peers for more peers
 	peers := pm.GetRandomPeers(5)
-	for _, peer := range peers {
+	for _, p := range peers {
 		// Send getaddr message
-		msg := NewMessage(0, MsgGetAddr, nil)
-		// TODO: Send message to peer
+		if err := p.SendMessage(NewMessage(0, MsgInv, nil)); err != nil {
+			continue
+		}
 	}
 
 	return nil
@@ -176,4 +178,10 @@ func (pm *PeerManager) SetBootstrapPeers(peers []string) {
 	defer pm.mu.Unlock()
 
 	pm.bootstrap = peers
+}
+
+// SendMessage sends a message to the peer
+func (p *Peer) SendMessage(msg *Message) error {
+	// TODO: Implement message sending
+	return nil
 }
