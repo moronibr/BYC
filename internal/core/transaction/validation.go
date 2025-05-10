@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/types"
 )
 
 // ValidationError represents a transaction validation error
@@ -52,11 +53,13 @@ func validateBasicStructure(tx *common.Transaction) error {
 		return &ValidationError{Code: 1, Message: "transaction is nil"}
 	}
 
-	if len(tx.Inputs) == 0 {
+	inputs := tx.Inputs()
+	if len(inputs) == 0 {
 		return &ValidationError{Code: 2, Message: "transaction has no inputs"}
 	}
 
-	if len(tx.Outputs) == 0 {
+	outputs := tx.Outputs()
+	if len(outputs) == 0 {
 		return &ValidationError{Code: 3, Message: "transaction has no outputs"}
 	}
 
@@ -68,7 +71,8 @@ func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 	var totalInput uint64
 	spentUTXOs := make(map[string]bool)
 
-	for _, input := range tx.Inputs {
+	inputs := tx.Inputs()
+	for _, input := range inputs {
 		// Check for double spend within the transaction
 		key := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
 		if spentUTXOs[key] {
@@ -91,7 +95,7 @@ func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 		}
 
 		// Validate signature
-		if !validateSignature(&input, utxo) {
+		if !validateSignature(input, utxo) {
 			return &ValidationError{Code: 8, Message: "invalid signature"}
 		}
 
@@ -100,7 +104,8 @@ func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 
 	// Check if inputs are sufficient
 	var totalOutput uint64
-	for _, output := range tx.Outputs {
+	outputs := tx.Outputs()
+	for _, output := range outputs {
 		totalOutput += output.Value
 	}
 
@@ -115,7 +120,8 @@ func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 
 // validateOutputs validates the outputs of a transaction
 func validateOutputs(tx *common.Transaction) error {
-	for _, output := range tx.Outputs {
+	outputs := tx.Outputs()
+	for _, output := range outputs {
 		if output.Value == 0 {
 			return &ValidationError{Code: 10, Message: "output value cannot be zero"}
 		}
@@ -136,7 +142,9 @@ func validateOutputs(tx *common.Transaction) error {
 func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
 	// Calculate total input and output values
 	var totalInput, totalOutput uint64
-	for _, input := range tx.Inputs {
+
+	inputs := tx.Inputs()
+	for _, input := range inputs {
 		utxo, err := utxoGetter.GetUTXO(input.PreviousTxHash, input.PreviousTxIndex)
 		if err != nil {
 			return &ValidationError{Code: 13, Message: fmt.Sprintf("failed to get UTXO: %v", err)}
@@ -144,7 +152,8 @@ func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
 		totalInput += utxo.Amount
 	}
 
-	for _, output := range tx.Outputs {
+	outputs := tx.Outputs()
+	for _, output := range outputs {
 		totalOutput += output.Value
 	}
 
@@ -159,7 +168,7 @@ func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
 }
 
 // validateSignature validates the signature of a transaction input
-func validateSignature(input *common.Input, utxo *common.UTXO) bool {
+func validateSignature(input *types.Input, utxo *common.UTXO) bool {
 	// TODO: Implement signature validation
 	return true
 }
