@@ -149,7 +149,7 @@ func CreateTimeLockedScript(lockTime uint32, script *Script) *Script {
 }
 
 // Execute executes the script
-func (s *Script) Execute(stack [][]byte, tx *block.Transaction, inputIndex int) error {
+func (s *Script) Execute(stack [][]byte, tx *block.TransactionWrapper, inputIndex int) error {
 	for _, inst := range s.Instructions {
 		switch inst.OpCode {
 		case OP_DUP:
@@ -198,33 +198,90 @@ func (s *Script) Execute(stack [][]byte, tx *block.Transaction, inputIndex int) 
 			sigBytes := stack[len(stack)-1]
 			stack = stack[:len(stack)-2]
 
-			// Convert bytes to ECDSA public key
 			pubKey, err := bytesToPublicKey(pubKeyBytes)
 			if err != nil {
 				return fmt.Errorf("invalid public key: %v", err)
 			}
 
-			// Verify signature
-			if !verifySignature(pubKey, sigBytes, tx.Hash) {
-				return errors.New("invalid signature")
+			// Get the transaction hash for signature verification
+			txHash := tx.CalculateTxID()
+
+			if !verifySignature(pubKey, sigBytes, txHash) {
+				return errors.New("signature verification failed")
 			}
+
 			stack = append(stack, []byte{1})
 
 		case OP_CHECKMULTISIG:
 			if len(stack) < 3 {
 				return errors.New("stack underflow")
 			}
-			// TODO: Implement multi-signature verification
-			stack = append(stack, []byte{1})
+
+			// Get the number of public keys and required signatures
+			n := int(stack[len(stack)-1][0])
+			m := int(stack[len(stack)-2][0])
+			if m > n {
+				return errors.New("invalid number of required signatures")
+			}
+
+			// Get the public keys and signatures
+			pubKeys := make([]*ecdsa.PublicKey, n)
+			sigs := make([][]byte, len(stack)-3)
+			for i := 0; i < n; i++ {
+				pubKey, err := bytesToPublicKey(stack[len(stack)-3-n+i])
+				if err != nil {
+					return fmt.Errorf("invalid public key: %v", err)
+				}
+				pubKeys[i] = pubKey
+			}
+			for i := 0; i < len(stack)-3; i++ {
+				sigs[i] = stack[i]
+			}
+
+			// Get the transaction hash for signature verification
+			txHash := tx.CalculateTxID()
+
+			// Verify signatures
+			validSigs := 0
+			for _, sig := range sigs {
+				for _, pubKey := range pubKeys {
+					if verifySignature(pubKey, sig, txHash) {
+						validSigs++
+						break
+					}
+				}
+			}
+
+			// Clear the stack
+			stack = stack[:0]
+
+			if validSigs >= m {
+				stack = append(stack, []byte{1})
+			} else {
+				stack = append(stack, []byte{0})
+			}
+
+		case OP_CHECKLOCKTIMEVERIFY:
+			if len(stack) < 1 {
+				return errors.New("stack underflow")
+			}
+
+			lockTime := binary.LittleEndian.Uint32(stack[len(stack)-1])
+			if lockTime > tx.LockTime() {
+				return errors.New("lock time not satisfied")
+			}
 
 		default:
 			if inst.OpCode <= OP_16 {
 				stack = append(stack, []byte{byte(inst.OpCode - 80)})
-			} else if inst.Data != nil {
+			} else if inst.OpCode == OP_PUSHDATA1 || inst.OpCode == OP_PUSHDATA2 || inst.OpCode == OP_PUSHDATA4 {
 				stack = append(stack, inst.Data)
+			} else {
+				return fmt.Errorf("unsupported opcode: %x", inst.OpCode)
 			}
 		}
 	}
+
 	return nil
 }
 
