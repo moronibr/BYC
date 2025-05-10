@@ -21,13 +21,19 @@ type Transaction struct {
 	Timestamp time.Time
 
 	// Transaction inputs
-	From []byte
+	Inputs []*Input
 
 	// Transaction outputs
-	To []byte
+	Outputs []*Output
 
-	// Transaction amount
-	Amount uint64
+	// Transaction lock time
+	LockTime uint32
+
+	// Transaction fee
+	Fee uint64
+
+	// Transaction coin type
+	CoinType coin.CoinType
 
 	// Transaction data
 	Data []byte
@@ -39,6 +45,7 @@ type Input struct {
 	PreviousTxIndex uint32
 	ScriptSig       []byte
 	Sequence        uint32
+	Address         string
 }
 
 // Output represents a transaction output
@@ -64,11 +71,29 @@ func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 	tx := &Transaction{
 		Version:   1,
 		Timestamp: time.Now(),
-		From:      from,
-		To:        to,
-		Amount:    amount,
+		Inputs:    make([]*Input, 0),
+		Outputs:   make([]*Output, 0),
+		LockTime:  0,
+		Fee:       0,
+		CoinType:  coin.Leah,
 		Data:      data,
 	}
+
+	// Add input
+	tx.Inputs = append(tx.Inputs, &Input{
+		Address:         string(from),
+		ScriptSig:       nil,
+		Sequence:        0xffffffff,
+		PreviousTxHash:  nil,
+		PreviousTxIndex: 0,
+	})
+
+	// Add output
+	tx.Outputs = append(tx.Outputs, &Output{
+		Address:      string(to),
+		Value:        amount,
+		ScriptPubKey: nil,
+	})
 
 	// Calculate transaction hash
 	tx.Hash = tx.CalculateHash()
@@ -86,21 +111,36 @@ func (tx *Transaction) CalculateHash() []byte {
 	binary.BigEndian.PutUint32(versionBytes, tx.Version)
 	buf = append(buf, versionBytes...)
 
-	// Add timestamp
-	timestampBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(timestampBytes, uint64(tx.Timestamp.UnixNano()))
-	buf = append(buf, timestampBytes...)
+	// Add inputs
+	for _, input := range tx.Inputs {
+		buf = append(buf, input.PreviousTxHash...)
+		indexBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(indexBytes, input.PreviousTxIndex)
+		buf = append(buf, indexBytes...)
+		buf = append(buf, input.ScriptSig...)
+		seqBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(seqBytes, input.Sequence)
+		buf = append(buf, seqBytes...)
+	}
 
-	// Add from address
-	buf = append(buf, tx.From...)
+	// Add outputs
+	for _, output := range tx.Outputs {
+		valueBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(valueBytes, output.Value)
+		buf = append(buf, valueBytes...)
+		buf = append(buf, output.ScriptPubKey...)
+	}
 
-	// Add to address
-	buf = append(buf, tx.To...)
+	// Add lock time and fee
+	lockTimeBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lockTimeBytes, tx.LockTime)
+	buf = append(buf, lockTimeBytes...)
+	feeBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(feeBytes, tx.Fee)
+	buf = append(buf, feeBytes...)
 
-	// Add amount
-	amountBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(amountBytes, tx.Amount)
-	buf = append(buf, amountBytes...)
+	// Add coin type
+	buf = append(buf, []byte(tx.CoinType)...)
 
 	// Add data
 	buf = append(buf, tx.Data...)
@@ -114,16 +154,39 @@ func (tx *Transaction) CalculateHash() []byte {
 func (tx *Transaction) Copy() *Transaction {
 	txCopy := &Transaction{
 		Version:   tx.Version,
-		From:      make([]byte, len(tx.From)),
-		To:        make([]byte, len(tx.To)),
-		Amount:    tx.Amount,
-		Data:      make([]byte, len(tx.Data)),
 		Timestamp: tx.Timestamp,
+		Inputs:    make([]*Input, len(tx.Inputs)),
+		Outputs:   make([]*Output, len(tx.Outputs)),
+		LockTime:  tx.LockTime,
+		Fee:       tx.Fee,
+		CoinType:  tx.CoinType,
+		Data:      make([]byte, len(tx.Data)),
 		Hash:      make([]byte, len(tx.Hash)),
 	}
 
-	copy(txCopy.From, tx.From)
-	copy(txCopy.To, tx.To)
+	// Copy inputs
+	for i, input := range tx.Inputs {
+		txCopy.Inputs[i] = &Input{
+			PreviousTxHash:  make([]byte, len(input.PreviousTxHash)),
+			PreviousTxIndex: input.PreviousTxIndex,
+			ScriptSig:       make([]byte, len(input.ScriptSig)),
+			Sequence:        input.Sequence,
+			Address:         input.Address,
+		}
+		copy(txCopy.Inputs[i].PreviousTxHash, input.PreviousTxHash)
+		copy(txCopy.Inputs[i].ScriptSig, input.ScriptSig)
+	}
+
+	// Copy outputs
+	for i, output := range tx.Outputs {
+		txCopy.Outputs[i] = &Output{
+			Value:        output.Value,
+			ScriptPubKey: make([]byte, len(output.ScriptPubKey)),
+			Address:      output.Address,
+		}
+		copy(txCopy.Outputs[i].ScriptPubKey, output.ScriptPubKey)
+	}
+
 	copy(txCopy.Data, tx.Data)
 	copy(txCopy.Hash, tx.Hash)
 
@@ -134,12 +197,30 @@ func (tx *Transaction) Copy() *Transaction {
 func (tx *Transaction) Size() int {
 	size := 0
 
-	size += 4            // Version
-	size += len(tx.From) // From
-	size += len(tx.To)   // To
-	size += 8            // Amount
-	size += len(tx.Data) // Data
-	size += 8            // Timestamp
+	size += 4 // Version
+	size += 8 // Timestamp
+	size += 4 // LockTime
+	size += 8 // Fee
+	size += len(tx.Data)
+
+	// Add size of inputs
+	for _, input := range tx.Inputs {
+		size += len(input.PreviousTxHash)
+		size += 4 // PreviousTxIndex
+		size += len(input.ScriptSig)
+		size += 4 // Sequence
+		size += len(input.Address)
+	}
+
+	// Add size of outputs
+	for _, output := range tx.Outputs {
+		size += 8 // Value
+		size += len(output.ScriptPubKey)
+		size += len(output.Address)
+	}
+
+	// Add size of coin type
+	size += len(tx.CoinType)
 
 	return size
 }
@@ -151,19 +232,14 @@ func (tx *Transaction) Validate() error {
 		return errors.New("invalid version")
 	}
 
-	// Validate from address
-	if len(tx.From) == 0 {
-		return errors.New("invalid from address")
+	// Validate inputs
+	if len(tx.Inputs) == 0 {
+		return errors.New("invalid inputs")
 	}
 
-	// Validate to address
-	if len(tx.To) == 0 {
-		return errors.New("invalid to address")
-	}
-
-	// Validate amount
-	if tx.Amount == 0 {
-		return errors.New("invalid amount")
+	// Validate outputs
+	if len(tx.Outputs) == 0 {
+		return errors.New("invalid outputs")
 	}
 
 	// Validate timestamp
@@ -179,6 +255,11 @@ func (tx *Transaction) Validate() error {
 	// Validate data
 	if len(tx.Data) == 0 {
 		return errors.New("invalid data")
+	}
+
+	// Validate coin type
+	if tx.CoinType == "" {
+		return errors.New("invalid coin type")
 	}
 
 	return nil
