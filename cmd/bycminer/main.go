@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"os/signal"
 	"runtime"
@@ -88,11 +87,8 @@ func main() {
 		MaxPeers:   10,
 	}
 
-	// Create consensus engine
-	consensus := &mining.PoWConsensus{}
-
 	// Initialize network server
-	networkServer = network.NewServer(cfg, consensus)
+	networkServer = network.NewServer(cfg, nil)
 	if err := networkServer.Start(); err != nil {
 		log.Fatalf("Failed to start network server: %v", err)
 	}
@@ -102,9 +98,8 @@ func main() {
 	go handleNetworkMessages()
 
 	// Initialize storage
-	db := storage.NewMemoryDB()
-	blockStore := storage.NewMemoryBlockStore()
-	utxoSet := utxo.NewMemoryUTXOSet()
+	blockStore := storage.NewBlockStore()
+	utxoSet := utxo.NewUTXOSet()
 	txPool := transaction.NewTxPool(1000, 1000, utxoSet)
 
 	// Initialize mining with initial block
@@ -138,7 +133,6 @@ func main() {
 }
 
 func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopChan chan struct{}) {
-	nonce := uint32(threadID)
 	hashes := uint64(0)
 	lastReport := time.Now()
 
@@ -174,48 +168,17 @@ func mineThread(threadID int, miner *mining.Miner, coinType coin.CoinType, stopC
 			}
 			txMutex.Unlock()
 
-			// Update miner's current block
-			miner.SetBlock(blockCopy)
+			// Start mining
+			miner.StartMining()
 
-			// Calculate hash
-			hash := miner.MineBlock(nonce)
+			// Update statistics
 			hashes++
-
-			// Check if hash meets difficulty target
-			target := miner.GetTarget(coinType)
-			if new(big.Int).SetBytes(hash).Cmp(target) <= 0 {
-				// Found a valid block!
-				blockCopy.Header.Nonce = nonce
-				blockCopy.Header.Hash = hash
-
-				// Update statistics
-				statsMutex.Lock()
-				blocksFound++
-				statsMutex.Unlock()
-
-				// Submit block to network
-				submitBlock(blockCopy)
-
-				// Clear transaction pool after successful mining
-				txMutex.Lock()
-				transactions = []*common.Transaction{}
-				txMutex.Unlock()
-
-				// Reset nonce for next block
-				nonce = uint32(threadID)
-			} else {
-				// Increment nonce by 1 for next attempt
-				// This ensures we don't miss any potential nonce values
-				nonce++
-			}
-
-			// Report hashrate every second
 			if time.Since(lastReport) >= time.Second {
 				statsMutex.Lock()
 				hashrate = float64(hashes) / time.Since(lastReport).Seconds()
+				statsMutex.Unlock()
 				hashes = 0
 				lastReport = time.Now()
-				statsMutex.Unlock()
 			}
 		}
 	}

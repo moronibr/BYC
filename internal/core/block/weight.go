@@ -42,8 +42,8 @@ func (b *Block) CalculateBlockWeight() (*BlockWeight, error) {
 
 	// Calculate witness size
 	for _, tx := range b.Transactions {
-		if tx.Witness != nil {
-			witnessSize := tx.Witness.Size()
+		if tx.WitnessData != nil {
+			witnessSize := tx.WitnessData.Size()
 			weight.WitnessSize += witnessSize
 			weight.TotalSize += witnessSize
 		}
