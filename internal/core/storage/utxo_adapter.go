@@ -46,18 +46,11 @@ func (a *UTXOAdapter) RemoveUTXO(txHash []byte, outputIndex uint32) error {
 }
 
 // GetBalance gets the balance for an address
-func (a *UTXOAdapter) GetBalance(address string, coinType interface{}) (uint64, error) {
+func (a *UTXOAdapter) GetBalance(address []byte) (uint64, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	var balance uint64
-	for _, utxo := range a.utxoSet.All() {
-		if utxo.ScriptPub != nil && utxo.ScriptPub.MatchesAddress(address) {
-			// TODO: Handle coinType if needed
-			balance += utxo.Amount
-		}
-	}
-	return balance, nil
+	return a.utxoSet.GetBalance(address)
 }
 
 // GetAllUTXOs returns all UTXOs in the set

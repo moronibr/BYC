@@ -212,7 +212,7 @@ func createCoinbaseTx(minerAddress []byte, blockHeight uint64) *common.Transacti
 	tx := coinbase.GetTransaction()
 
 	// Overwrite the first input to be a coinbase input
-	tx.Inputs[0] = &types.Input{
+	tx.Inputs[0] = &types.TxInput{
 		PreviousTxHash:  nil,
 		PreviousTxIndex: 0xffffffff,
 		ScriptSig:       []byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
@@ -221,14 +221,14 @@ func createCoinbaseTx(minerAddress []byte, blockHeight uint64) *common.Transacti
 	}
 
 	// Overwrite the first output to be the mining reward
-	tx.Outputs[0] = &types.Output{
+	tx.Outputs[0] = &types.TxOutput{
 		Value:        BlockReward,
 		ScriptPubKey: []byte(fmt.Sprintf("Mining reward for block %d", blockHeight)),
 		Address:      string(minerAddress),
 	}
 
 	// Recalculate the hash
-	tx.Hash = tx.CalculateHash()
+	tx.CalculateHash()
 
 	return coinbase
 }

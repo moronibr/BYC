@@ -4,20 +4,26 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/youngchain/internal/core/types"
 )
 
-// Peer represents a network peer
+// Peer represents a connected peer in the network
 type Peer struct {
-	ID        uint64
-	Addr      net.Addr
-	Version   uint32
-	Services  uint64
-	LastSeen  time.Time
-	UserAgent string
-	mu        sync.RWMutex
+	ID          uint64
+	conn        net.Conn
+	Addr        net.Addr
+	Version     uint32
+	Services    uint64
+	UserAgent   string
+	lastSeen    time.Time
+	messageChan chan *types.Message
+	stopChan    chan struct{}
+	writeMutex  sync.Mutex
 }
 
 // PeerManager manages network peers
@@ -102,7 +108,8 @@ func (pm *PeerManager) DiscoverPeers() error {
 	peers := pm.GetRandomPeers(5)
 	for _, p := range peers {
 		// Send getaddr message
-		if err := p.SendMessage(NewMessage(0, MsgInv, nil)); err != nil {
+		msg := &types.Message{Type: types.GetAddrMsg, Payload: nil}
+		if err := p.SendMessage(msg); err != nil {
 			continue
 		}
 	}
@@ -120,7 +127,7 @@ func (pm *PeerManager) connectToPeer(addr string) (*Peer, error) {
 	// Create peer
 	peer := &Peer{
 		ID:       peerID,
-		LastSeen: time.Now(),
+		lastSeen: time.Now(),
 	}
 
 	// Parse address
@@ -142,7 +149,7 @@ func (pm *PeerManager) UpdatePeer(id uint64, version uint32, services uint64, us
 		peer.Version = version
 		peer.Services = services
 		peer.UserAgent = userAgent
-		peer.LastSeen = time.Now()
+		peer.lastSeen = time.Now()
 	}
 }
 
@@ -153,7 +160,7 @@ func (pm *PeerManager) Cleanup(maxAge time.Duration) {
 
 	now := time.Now()
 	for id, peer := range pm.peers {
-		if now.Sub(peer.LastSeen) > maxAge {
+		if now.Sub(peer.lastSeen) > maxAge {
 			delete(pm.peers, id)
 		}
 	}
@@ -180,8 +187,117 @@ func (pm *PeerManager) SetBootstrapPeers(peers []string) {
 	pm.bootstrap = peers
 }
 
+// NewPeer creates a new peer from a connection
+func NewPeer(conn net.Conn) *Peer {
+	return &Peer{
+		conn:        conn,
+		Addr:        conn.RemoteAddr(),
+		lastSeen:    time.Now(),
+		messageChan: make(chan *types.Message, 100),
+		stopChan:    make(chan struct{}),
+	}
+}
+
+// Start starts the peer's message handling
+func (p *Peer) Start() {
+	go p.readLoop()
+	go p.writeLoop()
+}
+
+// Stop stops the peer's message handling
+func (p *Peer) Stop() {
+	close(p.stopChan)
+	p.conn.Close()
+}
+
+// RemoteAddr returns the peer's remote address
+func (p *Peer) RemoteAddr() net.Addr {
+	return p.conn.RemoteAddr()
+}
+
 // SendMessage sends a message to the peer
-func (p *Peer) SendMessage(msg *Message) error {
-	// TODO: Implement message sending
+func (p *Peer) SendMessage(msg *types.Message) error {
+	p.writeMutex.Lock()
+	defer p.writeMutex.Unlock()
+
+	// Encode message
+	data, err := msg.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode message: %v", err)
+	}
+
+	// Write message length
+	if err := binary.Write(p.conn, binary.BigEndian, uint32(len(data))); err != nil {
+		return fmt.Errorf("failed to write message length: %v", err)
+	}
+
+	// Write message data
+	if _, err := p.conn.Write(data); err != nil {
+		return fmt.Errorf("failed to write message data: %v", err)
+	}
+
 	return nil
+}
+
+// readLoop reads messages from the connection
+func (p *Peer) readLoop() {
+	for {
+		select {
+		case <-p.stopChan:
+			return
+		default:
+			// Read message length
+			var length uint32
+			if err := binary.Read(p.conn, binary.BigEndian, &length); err != nil {
+				if err != io.EOF {
+					fmt.Printf("Error reading message length: %v\n", err)
+				}
+				return
+			}
+
+			// Read message data
+			data := make([]byte, length)
+			if _, err := io.ReadFull(p.conn, data); err != nil {
+				fmt.Printf("Error reading message data: %v\n", err)
+				return
+			}
+
+			// Decode message
+			msg := &types.Message{}
+			if err := msg.Decode(data); err != nil {
+				fmt.Printf("Error decoding message: %v\n", err)
+				continue
+			}
+
+			// Update last seen time
+			p.lastSeen = time.Now()
+
+			// Send message to channel
+			select {
+			case p.messageChan <- msg:
+			default:
+				fmt.Println("Message channel full, dropping message")
+			}
+		}
+	}
+}
+
+// writeLoop writes messages to the connection
+func (p *Peer) writeLoop() {
+	for {
+		select {
+		case <-p.stopChan:
+			return
+		case msg := <-p.messageChan:
+			if err := p.SendMessage(msg); err != nil {
+				fmt.Printf("Error sending message: %v\n", err)
+				return
+			}
+		}
+	}
+}
+
+// Add exported LastSeen method
+func (p *Peer) LastSeen() time.Time {
+	return p.lastSeen
 }

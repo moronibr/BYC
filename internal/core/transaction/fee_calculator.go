@@ -1,7 +1,6 @@
 package transaction
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -62,7 +61,7 @@ func NewEnhancedFeeCalculator() *EnhancedFeeCalculator {
 		avgBlockSize:  1000000, // 1MB
 		mempoolSize:   0,
 		maxRecentFees: 100,
-		baseFeeRate:   1, // 1 satoshi per byte base rate
+		baseFeeRate:   baseFeePerByte,
 	}
 }
 
@@ -100,69 +99,18 @@ func (fc *EnhancedFeeCalculator) CalculateEnhancedFee(tx *types.Transaction) uin
 	size := uint64(fc.CalculateTransactionSize(tx))
 	baseFee := size * fc.baseFeeRate
 
-	// Calculate priority-based fee adjustment
-	priority := fc.calculatePriority(tx)
-	priorityMultiplier := fc.getPriorityMultiplier(priority)
+	// Get all multipliers
+	priorityMultiplier := fc.getPriorityMultiplier(fc.calculatePriority(tx))
+	networkLoadMultiplier := fc.getNetworkLoadMultiplier()
+	mempoolMultiplier := fc.getMempoolMultiplier()
+	sizeMultiplier := fc.getSizeMultiplier(size)
+	timeMultiplier := fc.getTimeMultiplier(tx)
+	utxoAgeMultiplier := fc.getUTXOAgeMultiplier(tx)
 
-	return baseFee * priorityMultiplier
-}
+	// Combine all multipliers
+	totalMultiplier := float64(priorityMultiplier) * networkLoadMultiplier * mempoolMultiplier * sizeMultiplier * timeMultiplier * utxoAgeMultiplier
 
-// getTimeBasedMultiplier calculates fee multiplier based on transaction urgency
-func (fc *EnhancedFeeCalculator) getTimeBasedMultiplier(tx *types.Transaction) float64 {
-	timeToDeadline := time.Until(time.Unix(int64(tx.LockTime), 0))
-
-	switch {
-	case timeToDeadline <= urgentTimeThreshold:
-		return 2.0
-	case timeToDeadline <= standardTimeThreshold:
-		return 1.5
-	case timeToDeadline <= relaxedTimeThreshold:
-		return 1.2
-	default:
-		return 1.0
-	}
-}
-
-// getSizeBasedMultiplier calculates fee multiplier based on transaction size
-func (fc *EnhancedFeeCalculator) getSizeBasedMultiplier(size int) float64 {
-	switch {
-	case size <= smallTxSizeThreshold:
-		return 1.2 // Small transactions get a discount
-	case size <= mediumTxSizeThreshold:
-		return 1.0
-	case size <= largeTxSizeThreshold:
-		return 1.1
-	default:
-		return 1.3 // Large transactions pay more
-	}
-}
-
-// getUTXOAgeMultiplier calculates fee multiplier based on UTXO age
-func (fc *EnhancedFeeCalculator) getUTXOAgeMultiplier(tx *types.Transaction) float64 {
-	var totalAge time.Duration
-	var count int
-
-	for range tx.Inputs {
-		// TODO: Get actual UTXO age from blockchain
-		// For now, use a default value
-		age := 24 * time.Hour
-		totalAge += age
-		count++
-	}
-
-	if count == 0 {
-		return 1.0
-	}
-
-	avgAge := totalAge / time.Duration(count)
-	switch {
-	case avgAge <= youngUTXOThreshold:
-		return youngUTXOMultiplier
-	case avgAge <= mediumUTXOThreshold:
-		return mediumUTXOMultiplier
-	default:
-		return oldUTXOMultiplier
-	}
+	return uint64(float64(baseFee) * totalMultiplier)
 }
 
 // getNetworkLoadMultiplier calculates fee multiplier based on network load
@@ -191,24 +139,58 @@ func (fc *EnhancedFeeCalculator) getMempoolMultiplier() float64 {
 	}
 }
 
-// calculateMinimumFee calculates the minimum fee based on recent transaction fees
-func (fc *EnhancedFeeCalculator) calculateMinimumFee() uint64 {
-	fc.recentFeesLock.RLock()
-	defer fc.recentFeesLock.RUnlock()
+// getSizeMultiplier calculates fee multiplier based on transaction size
+func (fc *EnhancedFeeCalculator) getSizeMultiplier(size uint64) float64 {
+	switch {
+	case size <= smallTxSizeThreshold:
+		return 1.0
+	case size <= mediumTxSizeThreshold:
+		return 1.2
+	case size <= largeTxSizeThreshold:
+		return 1.5
+	default:
+		return 2.0
+	}
+}
 
-	if len(fc.recentFees) == 0 {
-		return baseFeePerByte * 100 // Default minimum fee
+// getTimeMultiplier calculates fee multiplier based on transaction time requirements
+func (fc *EnhancedFeeCalculator) getTimeMultiplier(tx *types.Transaction) float64 {
+	now := time.Now()
+	timeUntilValid := time.Duration(tx.LockTime-uint32(now.Unix())) * time.Second
+
+	switch {
+	case timeUntilValid <= urgentTimeThreshold:
+		return highPriorityMultiplier
+	case timeUntilValid <= standardTimeThreshold:
+		return mediumPriorityMultiplier
+	case timeUntilValid <= relaxedTimeThreshold:
+		return lowPriorityMultiplier
+	default:
+		return 1.0
+	}
+}
+
+// getUTXOAgeMultiplier calculates fee multiplier based on UTXO age
+func (fc *EnhancedFeeCalculator) getUTXOAgeMultiplier(tx *types.Transaction) float64 {
+	now := time.Now()
+	var oldestUTXOAge time.Duration
+
+	// Find the oldest UTXO age
+	for _, input := range tx.Inputs {
+		utxoAge := now.Sub(time.Unix(int64(input.Sequence), 0))
+		if utxoAge > oldestUTXOAge {
+			oldestUTXOAge = utxoAge
+		}
 	}
 
-	// Calculate median fee from recent transactions
-	sortedFees := make([]uint64, len(fc.recentFees))
-	copy(sortedFees, fc.recentFees)
-	sort.Slice(sortedFees, func(i, j int) bool {
-		return sortedFees[i] < sortedFees[j]
-	})
-
-	medianFee := sortedFees[len(sortedFees)/2]
-	return uint64(float64(medianFee) * 0.8) // 80% of median fee
+	switch {
+	case oldestUTXOAge <= youngUTXOThreshold:
+		return youngUTXOMultiplier
+	case oldestUTXOAge <= mediumUTXOThreshold:
+		return mediumUTXOMultiplier
+	default:
+		return oldUTXOMultiplier
+	}
 }
 
 // CalculateTransactionSize estimates the transaction size in bytes
@@ -274,11 +256,13 @@ func (fc *EnhancedFeeCalculator) calculatePriority(tx *types.Transaction) float6
 // getPriorityMultiplier returns the fee multiplier based on priority
 func (fc *EnhancedFeeCalculator) getPriorityMultiplier(priority float64) uint64 {
 	switch {
-	case priority >= 1.0:
-		return 2 // High priority: 2x fee
-	case priority >= 0.5:
-		return 1 // Standard priority: 1x fee
+	case priority >= highPriorityThreshold:
+		return uint64(highPriorityMultiplier*100) / 100
+	case priority >= mediumPriorityThreshold:
+		return uint64(mediumPriorityMultiplier*100) / 100
+	case priority >= lowPriorityThreshold:
+		return uint64(lowPriorityMultiplier*100) / 100
 	default:
-		return 1 // Low priority: 1x fee (minimum)
+		return 1
 	}
 }

@@ -257,7 +257,7 @@ func (ti *TransactionIndexData) Deserialize(data []byte) error {
 
 		// Deserialize transaction
 		tx := &types.Transaction{}
-		if err := tx.Deserialize(txData); err != nil {
+		if err := tx.Deserialize(bytes.NewBuffer(txData)); err != nil {
 			return err
 		}
 

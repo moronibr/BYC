@@ -113,10 +113,10 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 	amount uint64, toAddress string, coinType coin.CoinType) {
 
 	// Create transaction
-	inputs := []*types.Input{
+	inputs := []*types.TxInput{
 		// TODO: Select appropriate UTXOs
 	}
-	outputs := []*types.Output{
+	outputs := []*types.TxOutput{
 		{
 			Value:   amount,
 			Address: toAddress,
@@ -137,7 +137,8 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 	tx.Fee = fee
 
 	// Save transaction
-	if err := txStore.SaveTransaction((*common.Transaction)(tx)); err != nil {
+	txn := &common.Transaction{Tx: tx}
+	if err := txStore.SaveTransaction(txn); err != nil {
 		log.Fatalf("Failed to save transaction: %v", err)
 	}
 
@@ -192,7 +193,7 @@ func showHistory(historyStore *storage.TransactionHistoryStore, address string, 
 
 func estimateFee(feeCalculator *transaction.EnhancedFeeCalculator, amount uint64) {
 	// Create a sample transaction for fee estimation
-	inputs := []*types.Input{
+	inputs := []*types.TxInput{
 		{
 			PreviousTxHash:  make([]byte, 32),
 			PreviousTxIndex: 0,
@@ -200,7 +201,7 @@ func estimateFee(feeCalculator *transaction.EnhancedFeeCalculator, amount uint64
 			Sequence:        0xffffffff,
 		},
 	}
-	outputs := []*types.Output{
+	outputs := []*types.TxOutput{
 		{
 			Value:        amount,
 			ScriptPubKey: make([]byte, 25), // Typical P2PKH script size

@@ -74,7 +74,7 @@ func NewTransactionPool(maxSize int) *TransactionPool {
 }
 
 // CreateTransaction creates a new transaction
-func CreateTransaction(inputs []*types.Input, outputs []*types.Output, fee uint64, coinType coin.CoinType) *types.Transaction {
+func CreateTransaction(inputs []*types.TxInput, outputs []*types.TxOutput, fee uint64, coinType coin.CoinType) *types.Transaction {
 	return &types.Transaction{
 		Version:  1,
 		Inputs:   inputs,

@@ -169,6 +169,6 @@ func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
 // validateSignature validates the signature of a transaction input
 func validateSignature(input *common.Input, utxo *common.UTXO) bool {
 	// TODO: Implement signature validation
-	// When implementing, convert common.Input to types.Input as needed
+	// When implementing, convert common.Input to types.TxInput as needed
 	return true
 }

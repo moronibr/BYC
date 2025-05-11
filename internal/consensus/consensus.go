@@ -380,17 +380,6 @@ func (c *Consensus) calculateMinimumFee(tx *common.Transaction) uint64 {
 	return uint64(tx.Size()) * baseFeePerByte
 }
 
-// calculatePriority calculates the priority of a transaction
-func (c *Consensus) calculatePriority(tx *common.Transaction) float64 {
-	// Priority is based on fee per byte
-	fee := tx.Fee()
-	size := tx.Size()
-	if size == 0 {
-		return 0
-	}
-	return float64(fee) / float64(size)
-}
-
 // SyncChain synchronizes the blockchain with the network
 func (c *Consensus) SyncChain(chain interfaces.BlockChain, network interfaces.Network) error {
 	// Get current chain state
@@ -517,9 +506,9 @@ func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress s
 		underlyingTx := commonTx.GetTransaction()
 
 		// Copy inputs
-		underlyingTx.Inputs = make([]*types.Input, len(tx.Inputs))
+		underlyingTx.Inputs = make([]*types.TxInput, len(tx.Inputs))
 		for i, input := range tx.Inputs {
-			underlyingTx.Inputs[i] = &types.Input{
+			underlyingTx.Inputs[i] = &types.TxInput{
 				PreviousTxHash:  input.PreviousTxHash,
 				PreviousTxIndex: input.PreviousTxIndex,
 				ScriptSig:       input.ScriptSig,
@@ -529,9 +518,9 @@ func (c *Consensus) GetBlockTemplate(chain interfaces.BlockChain, minerAddress s
 		}
 
 		// Copy outputs
-		underlyingTx.Outputs = make([]*types.Output, len(tx.Outputs))
+		underlyingTx.Outputs = make([]*types.TxOutput, len(tx.Outputs))
 		for i, output := range tx.Outputs {
-			underlyingTx.Outputs[i] = &types.Output{
+			underlyingTx.Outputs[i] = &types.TxOutput{
 				Value:        output.Value,
 				ScriptPubKey: output.ScriptPubKey,
 				Address:      output.Address,

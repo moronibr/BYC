@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
+	"encoding/hex"
+	"encoding/json"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
@@ -12,39 +13,20 @@ import (
 
 // Transaction represents a blockchain transaction
 type Transaction struct {
-	// Transaction hash
-	Hash []byte
-
-	// Transaction version
-	Version uint32
-
-	// Transaction timestamp
+	Version   uint32
+	Inputs    []*TxInput
+	Outputs   []*TxOutput
+	LockTime  uint32
+	Hash      []byte
 	Timestamp time.Time
-
-	// Transaction inputs
-	Inputs []*Input
-
-	// Transaction outputs
-	Outputs []*Output
-
-	// Transaction lock time
-	LockTime uint32
-
-	// Transaction fee
-	Fee uint64
-
-	// Transaction coin type
-	CoinType coin.CoinType
-
-	// Transaction data
-	Data []byte
-
-	// Witness data for SegWit transactions
-	Witness [][]byte
+	Fee       uint64
+	CoinType  coin.CoinType
+	Data      []byte
+	Witness   [][]byte
 }
 
-// Input represents a transaction input
-type Input struct {
+// TxInput represents a transaction input
+type TxInput struct {
 	PreviousTxHash  []byte
 	PreviousTxIndex uint32
 	ScriptSig       []byte
@@ -52,8 +34,8 @@ type Input struct {
 	Address         string
 }
 
-// Output represents a transaction output
-type Output struct {
+// TxOutput represents a transaction output
+type TxOutput struct {
 	Value        uint64
 	ScriptPubKey []byte
 	Address      string
@@ -75,205 +57,142 @@ func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 	tx := &Transaction{
 		Version:   1,
 		Timestamp: time.Now(),
-		Inputs:    make([]*Input, 0),
-		Outputs:   make([]*Output, 0),
-		LockTime:  0,
-		Fee:       0,
-		CoinType:  coin.Leah,
 		Data:      data,
-		Witness:   make([][]byte, 0),
 	}
 
 	// Add input
-	tx.Inputs = append(tx.Inputs, &Input{
-		Address:         string(from),
-		ScriptSig:       nil,
-		Sequence:        0xffffffff,
-		PreviousTxHash:  nil,
-		PreviousTxIndex: 0,
-	})
+	if from != nil {
+		tx.AddInput(&TxInput{
+			Address: string(from),
+		})
+	}
 
 	// Add output
-	tx.Outputs = append(tx.Outputs, &Output{
-		Address:      string(to),
-		Value:        amount,
-		ScriptPubKey: nil,
-	})
+	if to != nil {
+		tx.AddOutput(&TxOutput{
+			Value:   amount,
+			Address: string(to),
+		})
+	}
 
-	// Calculate transaction hash
-	tx.Hash = tx.CalculateHash()
-
+	tx.CalculateHash()
 	return tx
 }
 
 // CalculateHash calculates the transaction hash
-func (tx *Transaction) CalculateHash() []byte {
-	// Create a buffer to store transaction data
-	buf := make([]byte, 0)
-
-	// Add version
+func (t *Transaction) CalculateHash() {
+	var data []byte
 	versionBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(versionBytes, tx.Version)
-	buf = append(buf, versionBytes...)
+	binary.LittleEndian.PutUint32(versionBytes, t.Version)
+	data = append(data, versionBytes...)
 
-	// Add inputs
-	for _, input := range tx.Inputs {
-		buf = append(buf, input.PreviousTxHash...)
-		indexBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(indexBytes, input.PreviousTxIndex)
-		buf = append(buf, indexBytes...)
-		buf = append(buf, input.ScriptSig...)
-		seqBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(seqBytes, input.Sequence)
-		buf = append(buf, seqBytes...)
+	for _, input := range t.Inputs {
+		data = append(data, input.PreviousTxHash...)
+		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, input.PreviousTxIndex)
+		data = append(data, input.ScriptSig...)
+		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, input.Sequence)
 	}
 
-	// Add outputs
-	for _, output := range tx.Outputs {
-		valueBytes := make([]byte, 8)
-		binary.BigEndian.PutUint64(valueBytes, output.Value)
-		buf = append(buf, valueBytes...)
-		buf = append(buf, output.ScriptPubKey...)
+	for _, output := range t.Outputs {
+		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, output.Value)
+		data = append(data, output.ScriptPubKey...)
 	}
 
-	// Add lock time and fee
-	lockTimeBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(lockTimeBytes, tx.LockTime)
-	buf = append(buf, lockTimeBytes...)
-	feeBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(feeBytes, tx.Fee)
-	buf = append(buf, feeBytes...)
+	binary.Write(bytes.NewBuffer(data), binary.LittleEndian, t.LockTime)
 
-	// Add coin type
-	buf = append(buf, []byte(tx.CoinType)...)
+	hash := sha256.Sum256(data)
+	t.Hash = hash[:]
+}
 
-	// Add data
-	buf = append(buf, tx.Data...)
+// AddInput adds an input to the transaction
+func (t *Transaction) AddInput(input *TxInput) {
+	t.Inputs = append(t.Inputs, input)
+}
 
-	// Calculate hash
-	hash := sha256.Sum256(buf)
-	return hash[:]
+// AddOutput adds an output to the transaction
+func (t *Transaction) AddOutput(output *TxOutput) {
+	t.Outputs = append(t.Outputs, output)
+}
+
+// Encode encodes the transaction to JSON
+func (tx *Transaction) Encode() ([]byte, error) {
+	return json.Marshal(tx)
+}
+
+// Decode decodes the transaction from JSON
+func (tx *Transaction) Decode(data []byte) error {
+	return json.Unmarshal(data, tx)
 }
 
 // Copy creates a deep copy of the transaction
-func (tx *Transaction) Copy() *Transaction {
-	txCopy := &Transaction{
-		Version:   tx.Version,
-		Timestamp: tx.Timestamp,
-		Inputs:    make([]*Input, len(tx.Inputs)),
-		Outputs:   make([]*Output, len(tx.Outputs)),
-		LockTime:  tx.LockTime,
-		Fee:       tx.Fee,
-		CoinType:  tx.CoinType,
-		Data:      make([]byte, len(tx.Data)),
-		Hash:      make([]byte, len(tx.Hash)),
-		Witness:   make([][]byte, len(tx.Witness)),
+func (t *Transaction) Copy() *Transaction {
+	tx := &Transaction{
+		Version:   t.Version,
+		LockTime:  t.LockTime,
+		Hash:      make([]byte, len(t.Hash)),
+		Timestamp: t.Timestamp,
+		Fee:       t.Fee,
+		CoinType:  t.CoinType,
+		Data:      make([]byte, len(t.Data)),
+		Witness:   make([][]byte, len(t.Witness)),
 	}
 
-	// Copy inputs
-	for i, input := range tx.Inputs {
-		txCopy.Inputs[i] = &Input{
+	copy(tx.Hash, t.Hash)
+	copy(tx.Data, t.Data)
+
+	for i, w := range t.Witness {
+		tx.Witness[i] = make([]byte, len(w))
+		copy(tx.Witness[i], w)
+	}
+
+	tx.Inputs = make([]*TxInput, len(t.Inputs))
+	for i, input := range t.Inputs {
+		tx.Inputs[i] = &TxInput{
 			PreviousTxHash:  make([]byte, len(input.PreviousTxHash)),
 			PreviousTxIndex: input.PreviousTxIndex,
 			ScriptSig:       make([]byte, len(input.ScriptSig)),
 			Sequence:        input.Sequence,
 			Address:         input.Address,
 		}
-		copy(txCopy.Inputs[i].PreviousTxHash, input.PreviousTxHash)
-		copy(txCopy.Inputs[i].ScriptSig, input.ScriptSig)
+		copy(tx.Inputs[i].PreviousTxHash, input.PreviousTxHash)
+		copy(tx.Inputs[i].ScriptSig, input.ScriptSig)
 	}
 
-	// Copy outputs
-	for i, output := range tx.Outputs {
-		txCopy.Outputs[i] = &Output{
+	tx.Outputs = make([]*TxOutput, len(t.Outputs))
+	for i, output := range t.Outputs {
+		tx.Outputs[i] = &TxOutput{
 			Value:        output.Value,
 			ScriptPubKey: make([]byte, len(output.ScriptPubKey)),
 			Address:      output.Address,
 		}
-		copy(txCopy.Outputs[i].ScriptPubKey, output.ScriptPubKey)
+		copy(tx.Outputs[i].ScriptPubKey, output.ScriptPubKey)
 	}
 
-	// Copy witness data
-	for i, witness := range tx.Witness {
-		txCopy.Witness[i] = make([]byte, len(witness))
-		copy(txCopy.Witness[i], witness)
-	}
-
-	copy(txCopy.Data, tx.Data)
-	copy(txCopy.Hash, tx.Hash)
-
-	return txCopy
+	return tx
 }
 
 // Size returns the size of the transaction in bytes
-func (tx *Transaction) Size() int {
-	size := 0
-
-	size += 4 // Version
-	size += 8 // Timestamp
-	size += 4 // LockTime
-	size += 8 // Fee
-	size += len(tx.Data)
-
-	// Add size of inputs
-	for _, input := range tx.Inputs {
-		size += len(input.PreviousTxHash)
-		size += 4 // PreviousTxIndex
+func (t *Transaction) Size() int {
+	size := 4 // Version
+	size += 1 // Input count
+	for _, input := range t.Inputs {
+		size += 32 // PreviousTxHash
+		size += 4  // PreviousTxIndex
 		size += len(input.ScriptSig)
 		size += 4 // Sequence
 	}
-
-	// Add size of outputs
-	for _, output := range tx.Outputs {
+	size += 1 // Output count
+	for _, output := range t.Outputs {
 		size += 8 // Value
 		size += len(output.ScriptPubKey)
 	}
-
-	// Add size of witness data
-	for _, witness := range tx.Witness {
-		size += len(witness)
-	}
-
+	size += 4 // LockTime
 	return size
 }
 
 // Validate validates the transaction
-func (tx *Transaction) Validate() error {
-	// Validate version
-	if tx.Version == 0 {
-		return errors.New("invalid version")
-	}
-
-	// Validate inputs
-	if len(tx.Inputs) == 0 {
-		return errors.New("invalid inputs")
-	}
-
-	// Validate outputs
-	if len(tx.Outputs) == 0 {
-		return errors.New("invalid outputs")
-	}
-
-	// Validate timestamp
-	if tx.Timestamp.IsZero() {
-		return errors.New("invalid timestamp")
-	}
-
-	// Validate hash
-	if len(tx.Hash) == 0 {
-		return errors.New("invalid hash")
-	}
-
-	// Validate data
-	if len(tx.Data) == 0 {
-		return errors.New("invalid data")
-	}
-
-	// Validate coin type
-	if tx.CoinType == "" {
-		return errors.New("invalid coin type")
-	}
-
+func (t *Transaction) Validate() error {
+	// TODO: Implement transaction validation
 	return nil
 }
 
@@ -294,9 +213,8 @@ func (tx *Transaction) Serialize() []byte {
 
 	// Write inputs
 	for _, input := range tx.Inputs {
-		// Write previous tx hash length and hash
-		binary.Write(buf, binary.BigEndian, uint32(len(input.PreviousTxHash)))
-		buf.Write(input.PreviousTxHash)
+		// Write previous tx hash
+		binary.Write(buf, binary.BigEndian, input.PreviousTxHash)
 
 		// Write previous tx index
 		binary.Write(buf, binary.BigEndian, input.PreviousTxIndex)
@@ -307,10 +225,6 @@ func (tx *Transaction) Serialize() []byte {
 
 		// Write sequence
 		binary.Write(buf, binary.BigEndian, input.Sequence)
-
-		// Write address length and address
-		binary.Write(buf, binary.BigEndian, uint32(len(input.Address)))
-		buf.WriteString(input.Address)
 	}
 
 	// Write number of outputs
@@ -324,10 +238,6 @@ func (tx *Transaction) Serialize() []byte {
 		// Write script pub key length and script pub key
 		binary.Write(buf, binary.BigEndian, uint32(len(output.ScriptPubKey)))
 		buf.Write(output.ScriptPubKey)
-
-		// Write address length and address
-		binary.Write(buf, binary.BigEndian, uint32(len(output.Address)))
-		buf.WriteString(output.Address)
 	}
 
 	// Write lock time
@@ -347,21 +257,12 @@ func (tx *Transaction) Serialize() []byte {
 	return buf.Bytes()
 }
 
-// Deserialize deserializes a transaction from bytes
-func (tx *Transaction) Deserialize(data []byte) error {
-	buf := bytes.NewReader(data)
-
+// Deserialize deserializes a transaction from a buffer
+func (tx *Transaction) Deserialize(buf *bytes.Buffer) error {
 	// Read version
 	if err := binary.Read(buf, binary.BigEndian, &tx.Version); err != nil {
 		return err
 	}
-
-	// Read timestamp
-	var timestamp uint64
-	if err := binary.Read(buf, binary.BigEndian, &timestamp); err != nil {
-		return err
-	}
-	tx.Timestamp = time.Unix(int64(timestamp), 0)
 
 	// Read number of inputs
 	var numInputs uint32
@@ -370,17 +271,12 @@ func (tx *Transaction) Deserialize(data []byte) error {
 	}
 
 	// Read inputs
-	tx.Inputs = make([]*Input, numInputs)
+	tx.Inputs = make([]*TxInput, numInputs)
 	for i := uint32(0); i < numInputs; i++ {
-		input := &Input{}
+		input := &TxInput{}
 
-		// Read previous tx hash length and hash
-		var hashLen uint32
-		if err := binary.Read(buf, binary.BigEndian, &hashLen); err != nil {
-			return err
-		}
-		input.PreviousTxHash = make([]byte, hashLen)
-		if _, err := buf.Read(input.PreviousTxHash); err != nil {
+		// Read previous tx hash
+		if err := binary.Read(buf, binary.BigEndian, &input.PreviousTxHash); err != nil {
 			return err
 		}
 
@@ -404,17 +300,6 @@ func (tx *Transaction) Deserialize(data []byte) error {
 			return err
 		}
 
-		// Read address length and address
-		var addrLen uint32
-		if err := binary.Read(buf, binary.BigEndian, &addrLen); err != nil {
-			return err
-		}
-		addrBytes := make([]byte, addrLen)
-		if _, err := buf.Read(addrBytes); err != nil {
-			return err
-		}
-		input.Address = string(addrBytes)
-
 		tx.Inputs[i] = input
 	}
 
@@ -425,9 +310,9 @@ func (tx *Transaction) Deserialize(data []byte) error {
 	}
 
 	// Read outputs
-	tx.Outputs = make([]*Output, numOutputs)
+	tx.Outputs = make([]*TxOutput, numOutputs)
 	for i := uint32(0); i < numOutputs; i++ {
-		output := &Output{}
+		output := &TxOutput{}
 
 		// Read value
 		if err := binary.Read(buf, binary.BigEndian, &output.Value); err != nil {
@@ -443,17 +328,6 @@ func (tx *Transaction) Deserialize(data []byte) error {
 		if _, err := buf.Read(output.ScriptPubKey); err != nil {
 			return err
 		}
-
-		// Read address length and address
-		var addrLen uint32
-		if err := binary.Read(buf, binary.BigEndian, &addrLen); err != nil {
-			return err
-		}
-		addrBytes := make([]byte, addrLen)
-		if _, err := buf.Read(addrBytes); err != nil {
-			return err
-		}
-		output.Address = string(addrBytes)
 
 		tx.Outputs[i] = output
 	}
@@ -490,13 +364,46 @@ func (tx *Transaction) Deserialize(data []byte) error {
 	}
 
 	// Calculate hash
-	tx.Hash = tx.CalculateHash()
+	tx.CalculateHash()
 
 	return nil
 }
 
-// IsCoinbase checks if the transaction is a coinbase transaction
-func (tx *Transaction) IsCoinbase() bool {
-	// A coinbase transaction has exactly one input with a zero previous tx hash
-	return len(tx.Inputs) == 1 && len(tx.Inputs[0].PreviousTxHash) == 0
+// IsCoinbase returns whether the transaction is a coinbase transaction
+func (t *Transaction) IsCoinbase() bool {
+	return len(t.Inputs) == 1 && len(t.Inputs[0].PreviousTxHash) == 0 && t.Inputs[0].PreviousTxIndex == 0xFFFFFFFF
+}
+
+// MarshalJSON implements json.Marshaler
+func (t *Transaction) MarshalJSON() ([]byte, error) {
+	type Alias Transaction
+	return json.Marshal(&struct {
+		Hash string `json:"hash"`
+		*Alias
+	}{
+		Hash:  hex.EncodeToString(t.Hash),
+		Alias: (*Alias)(t),
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (t *Transaction) UnmarshalJSON(data []byte) error {
+	type Alias Transaction
+	aux := &struct {
+		Hash string `json:"hash"`
+		*Alias
+	}{
+		Alias: (*Alias)(t),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Hash != "" {
+		hash, err := hex.DecodeString(aux.Hash)
+		if err != nil {
+			return err
+		}
+		t.Hash = hash
+	}
+	return nil
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -110,46 +109,6 @@ func NewNode(config *NodeConfig) (*Node, error) {
 	return node, nil
 }
 
-// start initializes and starts the node
-func (n *Node) start() error {
-	// Set up stream handlers
-	n.host.SetStreamHandler("/blockchain/1.0.0", n.handleBlockchainStream)
-	n.host.SetStreamHandler("/transaction/1.0.0", n.handleTransactionStream)
-
-	// Connect to bootstrap nodes
-	if err := n.connectBootstrapNodes(); err != nil {
-		return fmt.Errorf("failed to connect to bootstrap nodes: %v", err)
-	}
-
-	// Start peer discovery
-	go n.discoverPeers()
-
-	return nil
-}
-
-// connectBootstrapNodes connects to the bootstrap nodes
-func (n *Node) connectBootstrapNodes() error {
-	for _, addr := range n.config.BootstrapPeers {
-		ma, err := multiaddr.NewMultiaddr(addr)
-		if err != nil {
-			continue
-		}
-
-		peerInfo, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			continue
-		}
-
-		if err := n.host.Connect(n.ctx, *peerInfo); err != nil {
-			continue
-		}
-
-		n.addPeer(peerInfo.ID, ma)
-	}
-
-	return nil
-}
-
 // discoverPeers continuously discovers new peers
 func (n *Node) discoverPeers() {
 	ticker := time.NewTicker(5 * time.Minute)
@@ -163,19 +122,6 @@ func (n *Node) discoverPeers() {
 			// Implement peer discovery logic here
 			// This could use DHT, mDNS, or other discovery mechanisms
 		}
-	}
-}
-
-// addPeer adds a new peer to the node's peer list
-func (n *Node) addPeer(id peer.ID, addr multiaddr.Multiaddr) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	n.peers[id] = &P2PPeer{
-		ID:       id,
-		Address:  addr,
-		LastSeen: time.Now(),
-		IsActive: true,
 	}
 }
 
@@ -262,16 +208,6 @@ func (n *Node) BroadcastTransaction(tx []byte) error {
 	go n.cleanupInactivePeers()
 
 	return nil
-}
-
-// handleBlockchainStream handles incoming blockchain streams
-func (n *Node) handleBlockchainStream(stream network.Stream) {
-	// Implement blockchain stream handling logic
-}
-
-// handleTransactionStream handles incoming transaction streams
-func (n *Node) handleTransactionStream(stream network.Stream) {
-	// Implement transaction stream handling logic
 }
 
 // Close shuts down the node

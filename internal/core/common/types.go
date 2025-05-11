@@ -22,64 +22,64 @@ type Header struct {
 
 // Transaction represents a blockchain transaction
 type Transaction struct {
-	tx *types.Transaction
+	Tx *types.Transaction
 }
 
 // NewTransaction creates a new transaction
 func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 	return &Transaction{
-		tx: types.NewTransaction(from, to, amount, data),
+		Tx: types.NewTransaction(from, to, amount, data),
 	}
 }
 
 // GetTransaction returns the underlying types.Transaction
 func (t *Transaction) GetTransaction() *types.Transaction {
-	return t.tx
+	return t.Tx
 }
 
 // From returns the from address from the first input
 func (t *Transaction) From() []byte {
-	if len(t.tx.Inputs) > 0 {
-		return []byte(t.tx.Inputs[0].Address)
+	if len(t.Tx.Inputs) > 0 {
+		return []byte(t.Tx.Inputs[0].Address)
 	}
 	return nil
 }
 
 // To returns the to address from the first output
 func (t *Transaction) To() []byte {
-	if len(t.tx.Outputs) > 0 {
-		return []byte(t.tx.Outputs[0].Address)
+	if len(t.Tx.Outputs) > 0 {
+		return []byte(t.Tx.Outputs[0].Address)
 	}
 	return nil
 }
 
 // Amount returns the amount from the first output
 func (t *Transaction) Amount() uint64 {
-	if len(t.tx.Outputs) > 0 {
-		return t.tx.Outputs[0].Value
+	if len(t.Tx.Outputs) > 0 {
+		return t.Tx.Outputs[0].Value
 	}
 	return 0
 }
 
 // Hash returns the transaction hash
 func (t *Transaction) Hash() []byte {
-	return t.tx.Hash
+	return t.Tx.Hash
 }
 
 // Version returns the transaction version
 func (t *Transaction) Version() uint32 {
-	return t.tx.Version
+	return t.Tx.Version
 }
 
 // Timestamp returns the transaction timestamp
 func (t *Transaction) Timestamp() time.Time {
-	return t.tx.Timestamp
+	return t.Tx.Timestamp
 }
 
 // Inputs returns the transaction inputs
 func (t *Transaction) Inputs() []*Input {
-	inputs := make([]*Input, len(t.tx.Inputs))
-	for i, input := range t.tx.Inputs {
+	inputs := make([]*Input, len(t.Tx.Inputs))
+	for i, input := range t.Tx.Inputs {
 		inputs[i] = &Input{
 			PreviousTxHash:  input.PreviousTxHash,
 			PreviousTxIndex: input.PreviousTxIndex,
@@ -93,8 +93,8 @@ func (t *Transaction) Inputs() []*Input {
 
 // Outputs returns the transaction outputs
 func (t *Transaction) Outputs() []*Output {
-	outputs := make([]*Output, len(t.tx.Outputs))
-	for i, output := range t.tx.Outputs {
+	outputs := make([]*Output, len(t.Tx.Outputs))
+	for i, output := range t.Tx.Outputs {
 		outputs[i] = &Output{
 			Value:        output.Value,
 			ScriptPubKey: output.ScriptPubKey,
@@ -106,49 +106,49 @@ func (t *Transaction) Outputs() []*Output {
 
 // LockTime returns the transaction lock time
 func (t *Transaction) LockTime() uint32 {
-	return t.tx.LockTime
+	return t.Tx.LockTime
 }
 
 // Fee returns the transaction fee
 func (t *Transaction) Fee() uint64 {
-	return t.tx.Fee
+	return t.Tx.Fee
 }
 
 // CoinType returns the transaction coin type
 func (t *Transaction) CoinType() coin.CoinType {
-	return t.tx.CoinType
+	return t.Tx.CoinType
 }
 
 // Data returns the transaction data
 func (t *Transaction) Data() []byte {
-	return t.tx.Data
+	return t.Tx.Data
 }
 
 // Witness returns the transaction witness data
 func (t *Transaction) Witness() [][]byte {
-	return t.tx.Witness
+	return t.Tx.Witness
 }
 
 // Copy creates a deep copy of the transaction
 func (t *Transaction) Copy() *Transaction {
 	return &Transaction{
-		tx: t.tx.Copy(),
+		Tx: t.Tx.Copy(),
 	}
 }
 
 // Validate validates the transaction
 func (t *Transaction) Validate() error {
-	return t.tx.Validate()
+	return t.Tx.Validate()
 }
 
 // Size returns the size of the transaction in bytes
 func (t *Transaction) Size() int {
-	return t.tx.Size()
+	return t.Tx.Size()
 }
 
 // IsCoinbase returns whether the transaction is a coinbase transaction
 func (t *Transaction) IsCoinbase() bool {
-	return t.tx.IsCoinbase()
+	return t.Tx.IsCoinbase()
 }
 
 // Input represents a transaction input

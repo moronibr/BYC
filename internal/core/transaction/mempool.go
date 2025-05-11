@@ -139,7 +139,7 @@ func (mp *Mempool) GetAll() []*types.Transaction {
 }
 
 // IsInputSpent checks if an input is already spent in the mempool
-func (mp *Mempool) IsInputSpent(input *types.Input) bool {
+func (mp *Mempool) IsInputSpent(input *types.TxInput) bool {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
 

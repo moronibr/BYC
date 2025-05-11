@@ -535,7 +535,7 @@ func (w *Wallet) CreateTransaction(to string, amount uint64, nonce uint64) (*com
 	underlyingTx.LockTime = 0
 
 	// Add input
-	input := &types.Input{
+	input := &types.TxInput{
 		PreviousTxHash:  make([]byte, 32), // Placeholder for previous transaction hash
 		PreviousTxIndex: 0,                // Placeholder for output index
 		Address:         w.Address,
@@ -545,7 +545,7 @@ func (w *Wallet) CreateTransaction(to string, amount uint64, nonce uint64) (*com
 	underlyingTx.Inputs = append(underlyingTx.Inputs, input)
 
 	// Add output
-	output := &types.Output{
+	output := &types.TxOutput{
 		Address:      to,
 		Value:        amount,
 		ScriptPubKey: nil,
