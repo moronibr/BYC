@@ -25,10 +25,13 @@ type Signature struct {
 // SignTransaction signs a transaction with a private key
 func SignTransaction(tx *types.Transaction, privateKey *ecdsa.PrivateKey) (*Signature, error) {
 	// Calculate transaction hash
-	hash := tx.CalculateHash()
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return nil, fmt.Errorf("failed to calculate transaction hash")
+	}
 
 	// Sign the hash
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash)
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.Hash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign transaction: %v", err)
 	}
@@ -42,10 +45,13 @@ func SignTransaction(tx *types.Transaction, privateKey *ecdsa.PrivateKey) (*Sign
 // VerifySignature verifies a transaction signature
 func VerifySignature(tx *types.Transaction, signature *Signature, publicKey *ecdsa.PublicKey) bool {
 	// Calculate transaction hash
-	hash := tx.CalculateHash()
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return false
+	}
 
 	// Verify the signature
-	return ecdsa.Verify(publicKey, hash, signature.R, signature.S)
+	return ecdsa.Verify(publicKey, tx.Hash, signature.R, signature.S)
 }
 
 // GenerateKeyPair generates a new ECDSA key pair
@@ -80,16 +86,16 @@ type Script struct {
 func ValidateScript(script *Script, tx *types.Transaction, inputIndex int) bool {
 	switch script.Type {
 	case "P2PKH":
-		return validateP2PKH(script, tx, inputIndex)
+		return validateP2PKH(script, tx)
 	case "P2SH":
-		return validateP2SH(script, tx, inputIndex)
+		return validateP2SH()
 	default:
 		return false
 	}
 }
 
 // validateP2PKH validates a Pay-to-Public-Key-Hash script
-func validateP2PKH(script *Script, tx *types.Transaction, inputIndex int) bool {
+func validateP2PKH(script *Script, tx *types.Transaction) bool {
 	// Extract public key and signature from script
 	if len(script.Data) < 2 {
 		return false
@@ -116,7 +122,7 @@ func validateP2PKH(script *Script, tx *types.Transaction, inputIndex int) bool {
 }
 
 // validateP2SH validates a Pay-to-Script-Hash script
-func validateP2SH(script *Script, tx *types.Transaction, inputIndex int) bool {
+func validateP2SH() bool {
 	// TODO: Implement P2SH validation
 	return true
 }

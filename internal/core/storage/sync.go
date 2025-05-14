@@ -82,6 +82,16 @@ func (sm *SyncManager) StartSync() error {
 
 	sm.currentHeight = lastBlock.Header.Height
 
+	// Get target height from network
+	targetHeight, err := sm.getTargetHeight()
+	if err != nil {
+		return fmt.Errorf("failed to get target height: %v", err)
+	}
+	sm.targetHeight = targetHeight
+
+	// Set initial checkpoint
+	sm.checkpoint = sm.getNextCheckpoint(sm.currentHeight)
+
 	// Start sync process
 	go sm.sync()
 
@@ -120,6 +130,14 @@ func (sm *SyncManager) sync() {
 		log.Printf("Failed to verify chain state: %v", err)
 		return
 	}
+
+	// Check if we've reached target height
+	if sm.currentHeight < sm.targetHeight {
+		log.Printf("Sync incomplete: current height %d, target height %d", sm.currentHeight, sm.targetHeight)
+		return
+	}
+
+	log.Printf("Sync complete: reached height %d", sm.currentHeight)
 }
 
 // downloadHeaders downloads block headers
@@ -131,14 +149,18 @@ func (sm *SyncManager) downloadHeaders() error {
 	}
 
 	// Request headers from peers
-	headers, err := sm.requestHeaders(locator)
+	var _ []byte = locator
+	headers, err := sm.requestHeaders()
 	if err != nil {
 		return err
 	}
 
 	// Process headers
 	for _, header := range headers {
-		if err := sm.processHeader(header); err != nil {
+		if err := func() error {
+			var _ *common.Header = header
+			return sm.processHeader()
+		}(); err != nil {
 			return err
 		}
 	}
@@ -161,8 +183,11 @@ func (sm *SyncManager) downloadBlocks() error {
 	}
 
 	// Process blocks
-	for _, block := range blocks {
-		if err := sm.processBlock(block); err != nil {
+	for _, b := range blocks {
+		if err := func() error {
+			var _ *block.Block = b
+			return sm.processBlock()
+		}(); err != nil {
 			return err
 		}
 	}
@@ -193,19 +218,22 @@ func (sm *SyncManager) verifyChainState() error {
 		return err
 	}
 
+	// Check if we've reached a checkpoint
+	if sm.currentHeight >= sm.checkpoint {
+		// Verify checkpoint
+		if err := sm.verifyCheckpoint(); err != nil {
+			return fmt.Errorf("checkpoint verification failed at height %d: %v", sm.checkpoint, err)
+		}
+		// Set next checkpoint
+		sm.checkpoint = sm.getNextCheckpoint(sm.currentHeight)
+	}
+
 	// Verify UTXO set
 	if err := sm.verifyUTXOSet(); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-// handleNetworkPartition handles network partitions
-func (sm *SyncManager) handleNetworkPartition() {
-	// Monitor peer connections
-	// If we lose connection to all peers, wait for reconnection
-	// When reconnected, verify chain state and sync if needed
 }
 
 // getHeaderLocator gets the header locator
@@ -245,13 +273,13 @@ func (sm *SyncManager) getBlockLocator() ([]byte, error) {
 }
 
 // requestHeaders requests headers from peers
-func (sm *SyncManager) requestHeaders(locator []byte) ([]*common.Header, error) {
+func (sm *SyncManager) requestHeaders() ([]*common.Header, error) {
 	// TODO: Implement header request
 	return nil, nil
 }
 
 // requestBlocks requests blocks from peers
-func (sm *SyncManager) requestBlocks(locator []byte) ([]*block.Block, error) {
+func (sm *SyncManager) requestBlocks(_ []byte) ([]*block.Block, error) {
 	// TODO: Implement block request
 	return nil, nil
 }
@@ -263,13 +291,13 @@ func (sm *SyncManager) requestUTXOSet() (*UTXOSet, error) {
 }
 
 // processHeader processes a header
-func (sm *SyncManager) processHeader(header *common.Header) error {
+func (sm *SyncManager) processHeader() error {
 	// TODO: Implement header processing
 	return nil
 }
 
 // processBlock processes a block
-func (sm *SyncManager) processBlock(block *block.Block) error {
+func (sm *SyncManager) processBlock() error {
 	// TODO: Implement block processing
 	return nil
 }
@@ -291,6 +319,30 @@ func (sm *SyncManager) verifyHeaders() error {
 func (sm *SyncManager) verifyUTXOSet() error {
 	// TODO: Implement UTXO set verification
 	return nil
+}
+
+// verifyCheckpoint verifies the blockchain state at a checkpoint
+func (sm *SyncManager) verifyCheckpoint() error {
+	// TODO: Implement checkpoint verification
+	// This should verify:
+	// 1. Block hash matches known checkpoint hash
+	// 2. All transactions in the block are valid
+	// 3. UTXO set state matches expected state
+	return nil
+}
+
+// getNextCheckpoint returns the next checkpoint height
+func (sm *SyncManager) getNextCheckpoint(currentHeight uint64) uint64 {
+	// Checkpoints are every 1000 blocks
+	const checkpointInterval = 1000
+	return ((currentHeight / checkpointInterval) + 1) * checkpointInterval
+}
+
+// getTargetHeight gets the target height from the network
+func (sm *SyncManager) getTargetHeight() (uint64, error) {
+	// TODO: Implement network request to get target height
+	// For now, return a dummy value
+	return 1000000, nil
 }
 
 // AddUTXO adds a UTXO to the set

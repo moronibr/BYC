@@ -183,9 +183,14 @@ func (tp *TransactionPool) AddToPool(tx *types.Transaction) error {
 		return err
 	}
 
+	// Calculate hash
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return fmt.Errorf("failed to calculate transaction hash")
+	}
+
 	// Add to pool
-	txHash := tx.CalculateHash()
-	tp.transactions[string(txHash)] = tx
+	tp.transactions[string(tx.Hash)] = tx
 
 	// Update UTXO set
 	for _, input := range tx.Inputs {

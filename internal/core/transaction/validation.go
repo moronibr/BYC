@@ -94,7 +94,7 @@ func validateInputs(tx *common.Transaction, utxoGetter UTXOGetter) error {
 		}
 
 		// Validate signature
-		if !validateSignature(input, utxo) {
+		if !validateSignature() {
 			return &ValidationError{Code: 8, Message: "invalid signature"}
 		}
 
@@ -167,7 +167,7 @@ func validateFee(tx *common.Transaction, utxoGetter UTXOGetter) error {
 }
 
 // validateSignature validates the signature of a transaction input
-func validateSignature(input *common.Input, utxo *common.UTXO) bool {
+func validateSignature() bool {
 	// TODO: Implement signature validation
 	// When implementing, convert common.Input to types.TxInput as needed
 	return true

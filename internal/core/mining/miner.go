@@ -251,7 +251,8 @@ func calculateMerkleRoot(txs []*types.Transaction) []byte {
 	// Create leaf nodes
 	leaves := make([][]byte, len(txs))
 	for i, tx := range txs {
-		leaves[i] = tx.CalculateHash()
+		tx.CalculateHash()
+		leaves[i] = tx.Hash
 	}
 
 	// Build tree

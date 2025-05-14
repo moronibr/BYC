@@ -142,9 +142,10 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 		log.Fatalf("Failed to save transaction: %v", err)
 	}
 
-	// Add to history
+	// Calculate hash and add to history
+	tx.CalculateHash()
 	history := &storage.TransactionHistory{
-		TxHash:    tx.CalculateHash(),
+		TxHash:    tx.Hash,
 		Address:   toAddress,
 		Amount:    int64(amount),
 		Timestamp: time.Now().Unix(),
@@ -160,7 +161,7 @@ func sendTransaction(txStore *storage.TransactionStore, historyStore *storage.Tr
 		log.Printf("Failed to broadcast transaction: %v", err)
 	}
 
-	fmt.Printf("Transaction sent: %x\n", tx.CalculateHash())
+	fmt.Printf("Transaction sent: %x\n", tx.Hash)
 	fmt.Printf("Fee: %d\n", fee)
 }
 

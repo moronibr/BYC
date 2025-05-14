@@ -5,9 +5,17 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/youngchain/internal/core/storage"
+	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/types"
 )
+
+// UTXOSetInterface defines the interface for UTXO set operations
+type UTXOSetInterface interface {
+	GetUTXO(txHash []byte, outputIndex uint32) (*types.UTXO, bool)
+	AddUTXO(utxo *types.UTXO)
+	RemoveUTXO(txHash []byte, outputIndex uint32)
+	GetBalance(address string, coinType coin.CoinType) uint64
+}
 
 // TxPool manages the transaction pool
 type TxPool struct {
@@ -20,7 +28,7 @@ type TxPool struct {
 	// Priority queue for fee-based ordering
 	queue *txPriorityQueue
 	// UTXO set for validation
-	utxoSet *storage.UTXOSet
+	utxoSet UTXOSetInterface
 	mu      sync.RWMutex
 }
 
@@ -28,7 +36,7 @@ type TxPool struct {
 type txPriorityQueue []*types.Transaction
 
 // NewTxPool creates a new transaction pool
-func NewTxPool(maxSize int, minFeeRate uint64, utxoSet *storage.UTXOSet) *TxPool {
+func NewTxPool(maxSize int, minFeeRate uint64, utxoSet UTXOSetInterface) *TxPool {
 	pq := &txPriorityQueue{}
 	heap.Init(pq)
 	return &TxPool{
