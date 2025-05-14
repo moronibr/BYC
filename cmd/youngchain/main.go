@@ -61,6 +61,11 @@ func main() {
 		logger.Fatal("Failed to save genesis block", logger.Error2(err))
 	}
 
+	// Initialize chain state
+	if err := db.SaveChainState(0, genesisBlock.Header.Hash); err != nil {
+		logger.Fatal("Failed to initialize chain state", logger.Error2(err))
+	}
+
 	// Initialize P2P node
 	port := 8333
 	config := &network.NodeConfig{
@@ -137,10 +142,15 @@ func reportStats() {
 		lastHashCount = currentHashCount
 
 		uptime := time.Since(startTime).Round(time.Second)
+		totalHashes := currentHashCount
 
-		logger.Info("Mining stats",
-			logger.String("hashrate", fmt.Sprintf("%.2f H/s", hashesPerSecond)),
-			logger.Int64("blocks", int64(blocksFound)),
-			logger.Duration("uptime", uptime))
+		logger.Info("Mining Statistics",
+			logger.String("status", "active"),
+			logger.Float64("hash_rate", hashesPerSecond),
+			logger.String("hash_rate_unit", "H/s"),
+			logger.Int64("blocks_mined", int64(blocksFound)),
+			logger.Int64("total_hashes", int64(totalHashes)),
+			logger.Duration("uptime", uptime),
+			logger.String("mining_address", "miner_address"))
 	}
 }

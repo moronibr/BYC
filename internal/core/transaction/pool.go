@@ -35,6 +35,48 @@ type TxPool struct {
 // txPriorityQueue implements heap.Interface for transaction prioritization
 type txPriorityQueue []*types.Transaction
 
+// Len implements heap.Interface for txPriorityQueue
+func (pq txPriorityQueue) Len() int {
+	return len(pq)
+}
+
+// Less implements heap.Interface for txPriorityQueue
+func (pq txPriorityQueue) Less(i, j int) bool {
+	if pq[i] == nil || pq[j] == nil {
+		return false
+	}
+	if pq[i].Size() == 0 || pq[j].Size() == 0 {
+		return false
+	}
+	return pq[i].Fee/uint64(pq[i].Size()) > pq[j].Fee/uint64(pq[j].Size())
+}
+
+// Swap implements heap.Interface for txPriorityQueue
+func (pq txPriorityQueue) Swap(i, j int) {
+	if i < len(pq) && j < len(pq) {
+		pq[i], pq[j] = pq[j], pq[i]
+	}
+}
+
+// Push implements heap.Interface for txPriorityQueue
+func (pq *txPriorityQueue) Push(x interface{}) {
+	if tx, ok := x.(*types.Transaction); ok && tx != nil {
+		*pq = append(*pq, tx)
+	}
+}
+
+// Pop implements heap.Interface for txPriorityQueue
+func (pq *txPriorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	if n == 0 {
+		return nil
+	}
+	x := old[n-1]
+	*pq = old[0 : n-1]
+	return x
+}
+
 // NewTxPool creates a new transaction pool
 func NewTxPool(maxSize int, minFeeRate uint64, utxoSet UTXOSetInterface) *TxPool {
 	pq := &txPriorityQueue{}
@@ -119,14 +161,25 @@ func (p *TxPool) GetBest(maxSize int) []*types.Transaction {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	txs := make([]*types.Transaction, 0, maxSize)
-	tempQueue := make([]*types.Transaction, p.queue.Len())
-	copy(tempQueue, *p.queue)
-	tempPQ := txPriorityQueue(tempQueue)
+	// Create a copy of the queue
+	tempQueue := make([]*types.Transaction, 0, p.queue.Len())
+	for _, tx := range *p.queue {
+		if tx != nil {
+			tempQueue = append(tempQueue, tx)
+		}
+	}
 
-	for i := 0; i < maxSize && len(tempQueue) > 0; i++ {
+	// Create a new priority queue
+	tempPQ := txPriorityQueue(tempQueue)
+	heap.Init(&tempPQ)
+
+	// Get the best transactions
+	txs := make([]*types.Transaction, 0, maxSize)
+	for i := 0; i < maxSize && tempPQ.Len() > 0; i++ {
 		tx := heap.Pop(&tempPQ).(*types.Transaction)
-		txs = append(txs, tx)
+		if tx != nil {
+			txs = append(txs, tx)
+		}
 	}
 
 	return txs
@@ -180,30 +233,4 @@ func (p *TxPool) Clear() {
 	p.txs = make(map[string]*types.Transaction)
 	p.queue = &txPriorityQueue{}
 	heap.Init(p.queue)
-}
-
-// Implement heap.Interface for txPriorityQueue
-func (pq txPriorityQueue) Len() int { return len(pq) }
-
-func (pq txPriorityQueue) Less(i, j int) bool {
-	if pq[i].Size() == 0 || pq[j].Size() == 0 {
-		return false
-	}
-	return pq[i].Fee/uint64(pq[i].Size()) > pq[j].Fee/uint64(pq[j].Size())
-}
-
-func (pq txPriorityQueue) Swap(i, j int) {
-	pq[i], pq[j] = pq[j], pq[i]
-}
-
-func (pq *txPriorityQueue) Push(x interface{}) {
-	*pq = append(*pq, x.(*types.Transaction))
-}
-
-func (pq *txPriorityQueue) Pop() interface{} {
-	old := *pq
-	n := len(old)
-	x := old[n-1]
-	*pq = old[0 : n-1]
-	return x
 }

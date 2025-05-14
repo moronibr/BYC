@@ -58,20 +58,30 @@ func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 		Version:   1,
 		Timestamp: time.Now(),
 		Data:      data,
+		Inputs:    make([]*TxInput, 0),
+		Outputs:   make([]*TxOutput, 0),
+		Witness:   make([][]byte, 0),
+		LockTime:  0,
+		Fee:       0,
 	}
 
 	// Add input
 	if from != nil {
 		tx.AddInput(&TxInput{
-			Address: string(from),
+			PreviousTxHash:  make([]byte, 0),
+			PreviousTxIndex: 0,
+			ScriptSig:       make([]byte, 0),
+			Sequence:        0xffffffff,
+			Address:         string(from),
 		})
 	}
 
 	// Add output
 	if to != nil {
 		tx.AddOutput(&TxOutput{
-			Value:   amount,
-			Address: string(to),
+			Value:        amount,
+			ScriptPubKey: make([]byte, 0),
+			Address:      string(to),
 		})
 	}
 
@@ -81,25 +91,86 @@ func NewTransaction(from, to []byte, amount uint64, data []byte) *Transaction {
 
 // CalculateHash calculates the transaction hash
 func (t *Transaction) CalculateHash() {
-	var data []byte
+	// Initialize data slice
+	data := make([]byte, 0)
+
+	// Add version
 	versionBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(versionBytes, t.Version)
 	data = append(data, versionBytes...)
 
-	for _, input := range t.Inputs {
-		data = append(data, input.PreviousTxHash...)
-		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, input.PreviousTxIndex)
-		data = append(data, input.ScriptSig...)
-		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, input.Sequence)
+	// Add timestamp
+	timestampBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(timestampBytes, uint64(t.Timestamp.Unix()))
+	data = append(data, timestampBytes...)
+
+	// Add inputs
+	if t.Inputs != nil {
+		for _, input := range t.Inputs {
+			if input == nil {
+				continue
+			}
+			// Add previous transaction hash
+			if input.PreviousTxHash != nil {
+				data = append(data, input.PreviousTxHash...)
+			}
+			// Add previous transaction index
+			indexBytes := make([]byte, 4)
+			binary.LittleEndian.PutUint32(indexBytes, input.PreviousTxIndex)
+			data = append(data, indexBytes...)
+			// Add script signature
+			if input.ScriptSig != nil {
+				data = append(data, input.ScriptSig...)
+			}
+			// Add sequence
+			seqBytes := make([]byte, 4)
+			binary.LittleEndian.PutUint32(seqBytes, input.Sequence)
+			data = append(data, seqBytes...)
+		}
 	}
 
-	for _, output := range t.Outputs {
-		binary.Write(bytes.NewBuffer(data), binary.LittleEndian, output.Value)
-		data = append(data, output.ScriptPubKey...)
+	// Add outputs
+	if t.Outputs != nil {
+		for _, output := range t.Outputs {
+			if output == nil {
+				continue
+			}
+			// Add value
+			valueBytes := make([]byte, 8)
+			binary.LittleEndian.PutUint64(valueBytes, output.Value)
+			data = append(data, valueBytes...)
+			// Add script public key
+			if output.ScriptPubKey != nil {
+				data = append(data, output.ScriptPubKey...)
+			}
+		}
 	}
 
-	binary.Write(bytes.NewBuffer(data), binary.LittleEndian, t.LockTime)
+	// Add lock time
+	lockTimeBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lockTimeBytes, t.LockTime)
+	data = append(data, lockTimeBytes...)
 
+	// Add fee
+	feeBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(feeBytes, t.Fee)
+	data = append(data, feeBytes...)
+
+	// Add data
+	if t.Data != nil {
+		data = append(data, t.Data...)
+	}
+
+	// Add witness data
+	if t.Witness != nil {
+		for _, witness := range t.Witness {
+			if witness != nil {
+				data = append(data, witness...)
+			}
+		}
+	}
+
+	// Calculate hash
 	hash := sha256.Sum256(data)
 	t.Hash = hash[:]
 }
@@ -174,6 +245,7 @@ func (t *Transaction) Copy() *Transaction {
 // Size returns the size of the transaction in bytes
 func (t *Transaction) Size() int {
 	size := 4 // Version
+	size += 8 // Timestamp
 	size += 1 // Input count
 	for _, input := range t.Inputs {
 		size += 32 // PreviousTxHash
@@ -187,6 +259,7 @@ func (t *Transaction) Size() int {
 		size += len(output.ScriptPubKey)
 	}
 	size += 4 // LockTime
+	size += 8 // Fee
 	return size
 }
 

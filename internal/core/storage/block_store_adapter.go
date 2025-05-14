@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/storage"
 )
@@ -29,8 +31,14 @@ func (a *BlockStoreAdapter) PutBlock(block *block.Block) error {
 
 // GetLastBlock retrieves the last block in the chain
 func (a *BlockStoreAdapter) GetLastBlock() (*block.Block, error) {
-	// TODO: Implement this method
-	return nil, nil
+	// Get the current height from the database
+	height, _, err := a.db.GetChainState()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chain state: %v", err)
+	}
+
+	// Get the block at the current height (including height 0 for genesis block)
+	return a.db.GetBlockByHeight(height)
 }
 
 // DeleteBlock removes a block from storage

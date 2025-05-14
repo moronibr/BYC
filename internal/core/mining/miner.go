@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/storage"
 	"github.com/youngchain/internal/core/transaction"
@@ -70,16 +71,6 @@ func (m *Miner) StartMining() {
 	go m.mine()
 }
 
-// StopMining stops the mining process
-func (m *Miner) StopMining() {
-	if !m.isMining {
-		return
-	}
-
-	m.isMining = false
-	close(m.stopChan)
-}
-
 // mine performs the mining process
 func (m *Miner) mine() {
 	for m.isMining {
@@ -90,10 +81,14 @@ func (m *Miner) mine() {
 			continue
 		}
 
+		// Set current block
+		m.currentBlock = block
+
 		// Mine the block
 		nonce, err := m.mineBlock(block)
 		if err != nil {
 			fmt.Printf("Error mining block: %v\n", err)
+			m.currentBlock = nil
 			continue
 		}
 
@@ -103,15 +98,79 @@ func (m *Miner) mine() {
 		// Save the block
 		if err := m.blockStore.PutBlock(block); err != nil {
 			fmt.Printf("Error saving block: %v\n", err)
+			m.currentBlock = nil
 			continue
 		}
 
 		// Update UTXO set
 		if err := m.updateUTXOSet(block); err != nil {
 			fmt.Printf("Error updating UTXO set: %v\n", err)
+			m.currentBlock = nil
 			continue
 		}
+
+		// Clear current block after successful mining
+		m.currentBlock = nil
 	}
+}
+
+// GetCurrentBlock returns the current block being mined
+func (m *Miner) GetCurrentBlock() *block.Block {
+	return m.currentBlock
+}
+
+// StopMining stops the mining proscess
+func (m *Miner) StopMining() {
+	if !m.isMining {
+		return
+	}
+
+	m.isMining = false
+	m.currentBlock = nil
+	close(m.stopChan)
+}
+
+// createCoinbaseTx creates a new coinbase transaction
+func createCoinbaseTx(minerAddress []byte, blockHeight uint64) *common.Transaction {
+	// Create a new transaction with empty data
+	tx := &types.Transaction{
+		Version:   1,
+		Timestamp: time.Now(),
+		Data:      []byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
+		Inputs:    make([]*types.TxInput, 1),
+		Outputs:   make([]*types.TxOutput, 1),
+		Witness:   make([][]byte, 0),
+		LockTime:  0,
+		Fee:       0,
+		Hash:      make([]byte, 0),
+		CoinType:  coin.Leah,
+	}
+
+	// Set up coinbase input
+	tx.Inputs[0] = &types.TxInput{
+		PreviousTxHash:  make([]byte, 0),
+		PreviousTxIndex: 0xffffffff,
+		ScriptSig:       []byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
+		Sequence:        0xffffffff,
+		Address:         "",
+	}
+
+	// Set up mining reward output
+	tx.Outputs[0] = &types.TxOutput{
+		Value:        BlockReward,
+		ScriptPubKey: []byte(fmt.Sprintf("Mining reward for block %d", blockHeight)),
+		Address:      string(minerAddress),
+	}
+
+	// Calculate hash
+	tx.CalculateHash()
+
+	// Create common transaction wrapper
+	commonTx := &common.Transaction{
+		Tx: tx,
+	}
+
+	return commonTx
 }
 
 // createBlock creates a new block to mine
@@ -122,50 +181,97 @@ func (m *Miner) createBlock() (*block.Block, error) {
 		return nil, fmt.Errorf("failed to get last block: %v", err)
 	}
 
-	// Get transactions from pool
-	txs := m.txPool.GetBest(1000) // Get up to 1000 transactions
-
-	// Create coinbase transaction
+	// Create coinbase transaction first
 	coinbaseTx := createCoinbaseTx([]byte(m.miningAddress), lastBlock.Header.Height+1)
+	if coinbaseTx == nil || coinbaseTx.Tx == nil {
+		return nil, fmt.Errorf("failed to create coinbase transaction")
+	}
 
-	// Add coinbase transaction to the beginning
-	txs = append([]*types.Transaction{coinbaseTx.GetTransaction()}, txs...)
+	// Initialize transactions slice with coinbase
+	txs := []*types.Transaction{coinbaseTx.Tx}
 
-	// Convert []*types.Transaction to []*common.Transaction using the public constructor
-	commonTxs := make([]*common.Transaction, len(txs))
-	for i, tx := range txs {
-		// Use the public constructor to create a new common.Transaction
-		if len(tx.Inputs) > 0 && len(tx.Outputs) > 0 {
-			commonTxs[i] = common.NewTransaction(
-				[]byte(tx.Inputs[0].Address),
-				[]byte(tx.Outputs[0].Address),
-				tx.Outputs[0].Value,
-				tx.Data,
-			)
-		} else {
-			// Fallback for transactions with no inputs or outputs
-			commonTxs[i] = common.NewTransaction(nil, nil, 0, tx.Data)
+	// Get transactions from pool
+	poolTxs := m.txPool.GetBest(1000) // Get up to 1000 transactions
+	if len(poolTxs) > 0 {
+		// Filter out nil transactions
+		for _, tx := range poolTxs {
+			if tx != nil {
+				txs = append(txs, tx)
+			}
 		}
+	}
+
+	// Convert []*types.Transaction to []*common.Transaction
+	commonTxs := make([]*common.Transaction, 0, len(txs))
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+
+		// Create a new common transaction with the existing transaction
+		commonTx := &common.Transaction{
+			Tx: tx,
+		}
+
+		// Ensure the transaction is properly initialized
+		if commonTx.Tx.Inputs == nil {
+			commonTx.Tx.Inputs = make([]*types.TxInput, 0)
+		}
+		if commonTx.Tx.Outputs == nil {
+			commonTx.Tx.Outputs = make([]*types.TxOutput, 0)
+		}
+		if commonTx.Tx.Witness == nil {
+			commonTx.Tx.Witness = make([][]byte, 0)
+		}
+		if commonTx.Tx.Data == nil {
+			commonTx.Tx.Data = make([]byte, 0)
+		}
+
+		// Calculate hash if not already set
+		if commonTx.Tx.Hash == nil {
+			commonTx.Tx.CalculateHash()
+		}
+
+		commonTxs = append(commonTxs, commonTx)
+	}
+
+	// Ensure we have at least the coinbase transaction
+	if len(commonTxs) == 0 {
+		return nil, fmt.Errorf("no valid transactions for block")
+	}
+
+	// Calculate Merkle root
+	merkleRoot := calculateMerkleRoot(txs)
+	if merkleRoot == nil {
+		return nil, fmt.Errorf("failed to calculate Merkle root")
 	}
 
 	// Create block header
 	header := &common.Header{
 		Version:       1,
 		PrevBlockHash: lastBlock.Header.Hash,
-		MerkleRoot:    calculateMerkleRoot(txs),
+		MerkleRoot:    merkleRoot,
 		Timestamp:     time.Now(),
 		Difficulty:    TargetBits,
 		Height:        lastBlock.Header.Height + 1,
 	}
 
 	// Create block
-	return &block.Block{
+	newBlock := &block.Block{
 		Header:       header,
 		Transactions: commonTxs,
 		BlockSize:    0, // Will be calculated when needed
 		Weight:       0, // Will be calculated when needed
 		IsValid:      true,
-	}, nil
+	}
+
+	// Calculate block hash
+	newBlock.Header.Hash = newBlock.CalculateHash()
+	if newBlock.Header.Hash == nil {
+		return nil, fmt.Errorf("failed to calculate block hash")
+	}
+
+	return newBlock, nil
 }
 
 // mineBlock mines a block
@@ -198,41 +304,6 @@ func (m *Miner) mineBlock(block *block.Block) (uint32, error) {
 	return 0, fmt.Errorf("max nonce reached")
 }
 
-// createCoinbaseTx creates a new coinbase transaction
-func createCoinbaseTx(minerAddress []byte, blockHeight uint64) *common.Transaction {
-	// Use the public constructor to create a new common.Transaction
-	coinbase := common.NewTransaction(
-		nil, // From (empty for coinbase)
-		minerAddress,
-		BlockReward,
-		[]byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
-	)
-
-	// Modify the underlying types.Transaction
-	tx := coinbase.GetTransaction()
-
-	// Overwrite the first input to be a coinbase input
-	tx.Inputs[0] = &types.TxInput{
-		PreviousTxHash:  nil,
-		PreviousTxIndex: 0xffffffff,
-		ScriptSig:       []byte(fmt.Sprintf("Coinbase transaction for block %d", blockHeight)),
-		Sequence:        0xffffffff,
-		Address:         "",
-	}
-
-	// Overwrite the first output to be the mining reward
-	tx.Outputs[0] = &types.TxOutput{
-		Value:        BlockReward,
-		ScriptPubKey: []byte(fmt.Sprintf("Mining reward for block %d", blockHeight)),
-		Address:      string(minerAddress),
-	}
-
-	// Recalculate the hash
-	tx.CalculateHash()
-
-	return coinbase
-}
-
 // calculateBlockReward calculates the block reward for a given height
 func calculateBlockReward(height uint64) uint64 {
 	halvings := height / HalvingInterval
@@ -249,10 +320,31 @@ func calculateMerkleRoot(txs []*types.Transaction) []byte {
 	}
 
 	// Create leaf nodes
-	leaves := make([][]byte, len(txs))
-	for i, tx := range txs {
-		tx.CalculateHash()
-		leaves[i] = tx.Hash
+	leaves := make([][]byte, 0, len(txs))
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+
+		// Ensure transaction hash is calculated
+		if tx.Hash == nil {
+			tx.CalculateHash()
+		}
+
+		// Skip if hash is still nil
+		if tx.Hash == nil {
+			continue
+		}
+
+		// Create a copy of the hash to avoid modifying the original
+		hashCopy := make([]byte, len(tx.Hash))
+		copy(hashCopy, tx.Hash)
+		leaves = append(leaves, hashCopy)
+	}
+
+	// If no valid leaves, return nil
+	if len(leaves) == 0 {
+		return nil
 	}
 
 	// Build tree
@@ -260,16 +352,24 @@ func calculateMerkleRoot(txs []*types.Transaction) []byte {
 		var newLeaves [][]byte
 		for i := 0; i < len(leaves); i += 2 {
 			if i+1 == len(leaves) {
-				newLeaves = append(newLeaves, leaves[i])
+				// If odd number of leaves, duplicate the last one
+				lastLeaf := make([]byte, len(leaves[i]))
+				copy(lastLeaf, leaves[i])
+				newLeaves = append(newLeaves, lastLeaf)
 				continue
 			}
-			concat := append(leaves[i], leaves[i+1]...)
+
+			// Concatenate and hash pairs of leaves
+			concat := make([]byte, len(leaves[i])+len(leaves[i+1]))
+			copy(concat, leaves[i])
+			copy(concat[len(leaves[i]):], leaves[i+1])
 			hash := sha256.Sum256(concat)
 			newLeaves = append(newLeaves, hash[:])
 		}
 		leaves = newLeaves
 	}
 
+	// Return the root hash
 	return leaves[0]
 }
 
@@ -318,32 +418,5 @@ func (m *Miner) adjustDifficulty() error {
 	// }
 
 	// For now, skip actual adjustment logic
-	return nil
-}
-
-// validateTransaction validates a transaction
-func validateTransaction(tx *common.Transaction) error {
-	// Get the underlying transaction
-	underlyingTx := tx.GetTransaction()
-
-	// Validate transaction
-	if err := underlyingTx.Validate(); err != nil {
-		return err
-	}
-
-	// Check inputs
-	for _, input := range underlyingTx.Inputs {
-		if input == nil {
-			return fmt.Errorf("transaction has nil input")
-		}
-	}
-
-	// Check outputs
-	for _, output := range underlyingTx.Outputs {
-		if output == nil {
-			return fmt.Errorf("transaction has nil output")
-		}
-	}
-
 	return nil
 }
