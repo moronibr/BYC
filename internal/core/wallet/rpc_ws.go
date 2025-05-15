@@ -30,6 +30,97 @@ type WSEvent struct {
 	Payload interface{} `json:"payload"`
 }
 
+// WSEventType represents the type of WebSocket event
+type WSEventType string
+
+const (
+	// Device Events
+	EventDeviceConnected    WSEventType = "device_connected"
+	EventDeviceDisconnected WSEventType = "device_disconnected"
+	EventDeviceLocked       WSEventType = "device_locked"
+	EventDeviceUnlocked     WSEventType = "device_unlocked"
+	EventDeviceInitialized  WSEventType = "device_initialized"
+	EventDeviceWiped        WSEventType = "device_wiped"
+
+	// Firmware Events
+	EventFirmwareUpdateStarted  WSEventType = "firmware_update_started"
+	EventFirmwareUpdateProgress WSEventType = "firmware_update_progress"
+	EventFirmwareUpdateComplete WSEventType = "firmware_update_complete"
+	EventFirmwareUpdateFailed   WSEventType = "firmware_update_failed"
+	EventFirmwareVersionChanged WSEventType = "firmware_version_changed"
+
+	// Security Events
+	EventPinChanged        WSEventType = "pin_changed"
+	EventPassphraseChanged WSEventType = "passphrase_changed"
+	EventBackupCreated     WSEventType = "backup_created"
+	EventBackupRestored    WSEventType = "backup_restored"
+	EventSecurityAlert     WSEventType = "security_alert"
+	EventInvalidPinAttempt WSEventType = "invalid_pin_attempt"
+
+	// Transaction Events
+	EventTransactionStarted   WSEventType = "transaction_started"
+	EventTransactionSigned    WSEventType = "transaction_signed"
+	EventTransactionBroadcast WSEventType = "transaction_broadcast"
+	EventTransactionConfirmed WSEventType = "transaction_confirmed"
+	EventTransactionFailed    WSEventType = "transaction_failed"
+
+	// System Events
+	EventBatteryLow      WSEventType = "battery_low"
+	EventBatteryCritical WSEventType = "battery_critical"
+	EventDeviceError     WSEventType = "device_error"
+	EventDeviceWarning   WSEventType = "device_warning"
+	EventDeviceInfo      WSEventType = "device_info"
+)
+
+// DeviceEvent represents a device-related event
+type DeviceEvent struct {
+	DeviceID  string                 `json:"device_id"`
+	Model     string                 `json:"model"`
+	Status    string                 `json:"status"`
+	Timestamp int64                  `json:"timestamp"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// FirmwareEvent represents a firmware-related event
+type FirmwareEvent struct {
+	DeviceID  string  `json:"device_id"`
+	Version   string  `json:"version"`
+	Progress  float64 `json:"progress,omitempty"`
+	Status    string  `json:"status"`
+	Timestamp int64   `json:"timestamp"`
+	Error     string  `json:"error,omitempty"`
+}
+
+// SecurityEvent represents a security-related event
+type SecurityEvent struct {
+	DeviceID  string                 `json:"device_id"`
+	EventType string                 `json:"event_type"`
+	Severity  string                 `json:"severity"`
+	Timestamp int64                  `json:"timestamp"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// TransactionEvent represents a transaction-related event
+type TransactionEvent struct {
+	DeviceID  string `json:"device_id"`
+	TxHash    string `json:"tx_hash"`
+	Status    string `json:"status"`
+	Timestamp int64  `json:"timestamp"`
+	Amount    uint64 `json:"amount,omitempty"`
+	Fee       uint64 `json:"fee,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// SystemEvent represents a system-related event
+type SystemEvent struct {
+	DeviceID  string                 `json:"device_id"`
+	EventType string                 `json:"event_type"`
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	Timestamp int64                  `json:"timestamp"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
 // SecurityConfig represents security configuration
 type SecurityConfig struct {
 	IPWhitelist    []string
@@ -212,6 +303,151 @@ func (s *WSServer) handleEvent(c *WSClient, event *WSEvent) {
 	case "ping":
 		c.lastPing = time.Now()
 		c.send <- []byte(`{"type":"pong"}`)
+	case string(EventDeviceConnected):
+		if deviceEvent, ok := event.Payload.(*DeviceEvent); ok {
+			s.broadcastDeviceEvent(deviceEvent)
+		}
+	case string(EventFirmwareUpdateProgress):
+		if firmwareEvent, ok := event.Payload.(*FirmwareEvent); ok {
+			s.broadcastFirmwareEvent(firmwareEvent)
+		}
+	case string(EventSecurityAlert):
+		if securityEvent, ok := event.Payload.(*SecurityEvent); ok {
+			s.broadcastSecurityEvent(securityEvent)
+		}
+	case string(EventTransactionStarted):
+		if txEvent, ok := event.Payload.(*TransactionEvent); ok {
+			s.broadcastTransactionEvent(txEvent)
+		}
+	case string(EventBatteryLow):
+		if systemEvent, ok := event.Payload.(*SystemEvent); ok {
+			s.broadcastSystemEvent(systemEvent)
+		}
+	}
+}
+
+// broadcastDeviceEvent broadcasts a device event to relevant clients
+func (s *WSServer) broadcastDeviceEvent(event *DeviceEvent) {
+	data, err := json.Marshal(&WSEvent{
+		Type:    string(EventDeviceConnected),
+		Payload: event,
+	})
+	if err != nil {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for client := range s.clients {
+		if client.deviceID == event.DeviceID {
+			select {
+			case client.send <- data:
+			default:
+				close(client.send)
+				delete(s.clients, client)
+			}
+		}
+	}
+}
+
+// broadcastFirmwareEvent broadcasts a firmware event to relevant clients
+func (s *WSServer) broadcastFirmwareEvent(event *FirmwareEvent) {
+	data, err := json.Marshal(&WSEvent{
+		Type:    string(EventFirmwareUpdateProgress),
+		Payload: event,
+	})
+	if err != nil {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for client := range s.clients {
+		if client.deviceID == event.DeviceID {
+			select {
+			case client.send <- data:
+			default:
+				close(client.send)
+				delete(s.clients, client)
+			}
+		}
+	}
+}
+
+// broadcastSecurityEvent broadcasts a security event to relevant clients
+func (s *WSServer) broadcastSecurityEvent(event *SecurityEvent) {
+	data, err := json.Marshal(&WSEvent{
+		Type:    string(EventSecurityAlert),
+		Payload: event,
+	})
+	if err != nil {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for client := range s.clients {
+		if client.deviceID == event.DeviceID {
+			select {
+			case client.send <- data:
+			default:
+				close(client.send)
+				delete(s.clients, client)
+			}
+		}
+	}
+}
+
+// broadcastTransactionEvent broadcasts a transaction event to relevant clients
+func (s *WSServer) broadcastTransactionEvent(event *TransactionEvent) {
+	data, err := json.Marshal(&WSEvent{
+		Type:    string(EventTransactionStarted),
+		Payload: event,
+	})
+	if err != nil {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for client := range s.clients {
+		if client.deviceID == event.DeviceID {
+			select {
+			case client.send <- data:
+			default:
+				close(client.send)
+				delete(s.clients, client)
+			}
+		}
+	}
+}
+
+// broadcastSystemEvent broadcasts a system event to relevant clients
+func (s *WSServer) broadcastSystemEvent(event *SystemEvent) {
+	data, err := json.Marshal(&WSEvent{
+		Type:    string(EventBatteryLow),
+		Payload: event,
+	})
+	if err != nil {
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for client := range s.clients {
+		if client.deviceID == event.DeviceID {
+			select {
+			case client.send <- data:
+			default:
+				close(client.send)
+				delete(s.clients, client)
+			}
+		}
 	}
 }
 
