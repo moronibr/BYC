@@ -406,3 +406,50 @@ func (tx *Transaction) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// GetHash returns the transaction hash
+func (tx *Transaction) GetHash() []byte {
+	return tx.HashBytes
+}
+
+// GetInputs returns the transaction inputs
+func (tx *Transaction) GetInputs() []*types.TxInput {
+	inputs := make([]*types.TxInput, len(tx.Inputs))
+	for i, input := range tx.Inputs {
+		inputs[i] = &types.TxInput{
+			PreviousTxHash: input.PreviousTxHash,
+			OutputIndex:    input.OutputIndex,
+			ScriptSig:      input.ScriptSig,
+			Sequence:       input.Sequence,
+		}
+	}
+	return inputs
+}
+
+// GetOutputs returns the transaction outputs
+func (tx *Transaction) GetOutputs() []*types.TxOutput {
+	outputs := make([]*types.TxOutput, len(tx.Outputs))
+	for i, output := range tx.Outputs {
+		outputs[i] = &types.TxOutput{
+			Value:        output.Value,
+			ScriptPubKey: output.ScriptPubKey,
+		}
+	}
+	return outputs
+}
+
+// GetFee returns the transaction fee
+func (tx *Transaction) GetFee() int64 {
+	return tx.Fee
+}
+
+// GetCoinType returns the transaction coin type
+func (tx *Transaction) GetCoinType() coin.Type {
+	return tx.CoinType
+}
+
+// Verify verifies the transaction signature
+func (tx *Transaction) Verify() bool {
+	// TODO: Implement signature verification
+	return true
+}
