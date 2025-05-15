@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/block"
+	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -39,6 +40,14 @@ type Consensus struct {
 	goldenChain *ChainConsensus
 	silverChain *ChainConsensus
 	mu          sync.RWMutex
+}
+
+func (c *Consensus) ValidateBlockHeader(header *common.Header) any {
+	panic("unimplemented")
+}
+
+func (c *Consensus) ValidateTransactions(transactions []*common.Transaction) any {
+	panic("unimplemented")
 }
 
 // ChainConsensus represents consensus for a single chain
