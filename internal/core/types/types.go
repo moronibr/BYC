@@ -55,6 +55,8 @@ type Transaction struct {
 	CoinType  coin.Type   `json:"coinType"`
 	Hash      []byte      `json:"hash"`
 	Signature []byte      `json:"signature"`
+	Data      []byte      `json:"data"`
+	Witness   [][]byte    `json:"witness"`
 }
 
 // TxInput represents a transaction input
@@ -63,12 +65,14 @@ type TxInput struct {
 	OutputIndex    uint32 `json:"outputIndex"`
 	ScriptSig      []byte `json:"scriptSig"`
 	Sequence       uint32 `json:"sequence"`
+	Address        string `json:"address"`
 }
 
 // TxOutput represents a transaction output
 type TxOutput struct {
 	Value        int64  `json:"value"`
 	ScriptPubKey []byte `json:"scriptPubKey"`
+	Address      string `json:"address"`
 }
 
 // UTXO represents an unspent transaction output
@@ -140,6 +144,8 @@ func NewTransaction(version uint32, coinType coin.Type) *Transaction {
 		Outputs:  make([]*TxOutput, 0),
 		LockTime: uint32(time.Now().Unix()),
 		CoinType: coinType,
+		Data:     make([]byte, 0),
+		Witness:  make([][]byte, 0),
 	}
 }
 
@@ -251,10 +257,17 @@ func (tx *Transaction) Copy() *Transaction {
 		CoinType:  tx.CoinType,
 		Hash:      make([]byte, len(tx.Hash)),
 		Signature: make([]byte, len(tx.Signature)),
+		Data:      make([]byte, len(tx.Data)),
+		Witness:   make([][]byte, len(tx.Witness)),
 	}
 
 	copy.Hash = append(copy.Hash, tx.Hash...)
 	copy.Signature = append(copy.Signature, tx.Signature...)
+	copy.Data = append(copy.Data, tx.Data...)
+
+	for i, witness := range tx.Witness {
+		copy.Witness[i] = append([]byte{}, witness...)
+	}
 
 	copy.Inputs = make([]*TxInput, len(tx.Inputs))
 	for i, input := range tx.Inputs {
@@ -263,6 +276,7 @@ func (tx *Transaction) Copy() *Transaction {
 			OutputIndex:    input.OutputIndex,
 			ScriptSig:      append([]byte{}, input.ScriptSig...),
 			Sequence:       input.Sequence,
+			Address:        input.Address,
 		}
 	}
 
@@ -271,6 +285,7 @@ func (tx *Transaction) Copy() *Transaction {
 		copy.Outputs[i] = &TxOutput{
 			Value:        output.Value,
 			ScriptPubKey: append([]byte{}, output.ScriptPubKey...),
+			Address:      output.Address,
 		}
 	}
 
@@ -314,5 +329,34 @@ func (tx *Transaction) Size() int {
 	// CoinType
 	size += len(tx.CoinType)
 
+	// Data
+	size += 4 // Data length
+	size += len(tx.Data)
+
+	// Witness
+	size += 4 // Witness count
+	for _, witness := range tx.Witness {
+		size += 4 // Witness length
+		size += len(witness)
+	}
+
 	return size
+}
+
+// AddOutput adds an output to the transaction
+func (tx *Transaction) AddOutput(value int64, scriptPubKey []byte) {
+	tx.Outputs = append(tx.Outputs, &TxOutput{
+		Value:        value,
+		ScriptPubKey: scriptPubKey,
+	})
+}
+
+// AddInput adds an input to the transaction
+func (tx *Transaction) AddInput(previousTxHash []byte, outputIndex uint32, scriptSig []byte) {
+	tx.Inputs = append(tx.Inputs, &TxInput{
+		PreviousTxHash: previousTxHash,
+		OutputIndex:    outputIndex,
+		ScriptSig:      scriptSig,
+		Sequence:       0xffffffff,
+	})
 }

@@ -1,13 +1,12 @@
 package block
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
-	"github.com/youngchain/internal/core/transaction"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -61,12 +60,20 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	defer bc.mu.Unlock()
 
 	// Validate block
-	if err := bc.validateBlock(block); err != nil {
-		return err
+	if err := block.Validate(); err != nil {
+		return fmt.Errorf("invalid block: %v", err)
+	}
+
+	// Check if block is already in the chain
+	for _, b := range bc.Chain {
+		if bytes.Equal(b.Hash, block.Hash) {
+			return fmt.Errorf("block already exists")
+		}
 	}
 
 	// Add block to chain
 	bc.Chain = append(bc.Chain, block)
+
 	return nil
 }
 
@@ -87,7 +94,7 @@ func (bc *Blockchain) GetBlockByHash(hash []byte) *Block {
 	defer bc.mu.RUnlock()
 
 	for _, block := range bc.Chain {
-		if string(block.Hash) == string(hash) {
+		if bytes.Equal(block.Hash, hash) {
 			return block
 		}
 	}
@@ -95,11 +102,11 @@ func (bc *Blockchain) GetBlockByHash(hash []byte) *Block {
 }
 
 // GetBlockByHeight returns a block by its height
-func (bc *Blockchain) GetBlockByHeight(height int) *Block {
+func (bc *Blockchain) GetBlockByHeight(height uint64) *Block {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return nil
 	}
 	return bc.Chain[height]
@@ -146,87 +153,86 @@ func (bc *Blockchain) validateBlock(block *Block) error {
 		return fmt.Errorf("invalid coin type")
 	}
 
-	// Validate block hash
-	if !block.ValidateHash() {
-		return fmt.Errorf("invalid block hash")
+	// Validate block
+	if err := block.Validate(); err != nil {
+		return fmt.Errorf("invalid block: %v", err)
 	}
 
 	return nil
 }
 
 // GetBlockHash returns the hash of a block at the given height
-func (bc *Blockchain) GetBlockHash(height int) []byte {
+func (bc *Blockchain) GetBlockHash(height uint64) []byte {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return nil
 	}
 	return bc.Chain[height].Hash
 }
 
 // GetBlockHeader returns the header of a block at the given height
-func (bc *Blockchain) GetBlockHeader(height int) *BlockHeader {
+func (bc *Blockchain) GetBlockHeader(height uint64) *types.BlockHeader {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return nil
 	}
 	return bc.Chain[height].Header
 }
 
 // GetBlockTransactions returns the transactions of a block at the given height
-func (bc *Blockchain) GetBlockTransactions(height int) []*transaction.Transaction {
+func (bc *Blockchain) GetBlockTransactions(height uint64) []*types.Transaction {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return nil
 	}
 	return bc.Chain[height].Transactions
 }
 
 // GetBlockSize returns the size of a block at the given height
-func (bc *Blockchain) GetBlockSize(height int) int {
+func (bc *Blockchain) GetBlockSize(height uint64) int {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return 0
 	}
-	data, _ := json.Marshal(bc.Chain[height])
-	return len(data)
+	return bc.Chain[height].Size
 }
 
 // GetBlockTime returns the timestamp of a block at the given height
-func (bc *Blockchain) GetBlockTime(height int) uint64 {
+func (bc *Blockchain) GetBlockTime(height uint64) uint64 {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return 0
 	}
 	return bc.Chain[height].Timestamp
 }
 
 // GetBlockDifficulty returns the difficulty of a block at the given height
-func (bc *Blockchain) GetBlockDifficulty(height int) uint32 {
+func (bc *Blockchain) GetBlockDifficulty(height uint64) uint32 {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return 0
 	}
 	return bc.Chain[height].Difficulty
 }
 
 // GetBlockCoinType returns the coin type of a block at the given height
-func (bc *Blockchain) GetBlockCoinType(height int) coin.Type {
+func (bc *Blockchain) GetBlockCoinType(height uint64) coin.Type {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	if height < 0 || height >= len(bc.Chain) {
+	if height >= uint64(len(bc.Chain)) {
 		return ""
 	}
 	return bc.Chain[height].CoinType
@@ -240,7 +246,7 @@ func (bc *Blockchain) GetBlocks() []*Block {
 }
 
 // GetBlocksByType returns blocks of a specific type
-func (bc *Blockchain) GetBlocksByType(blockType BlockType) []*Block {
+func (bc *Blockchain) GetBlocksByType(blockType types.BlockType) []*Block {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
@@ -261,7 +267,7 @@ func (bc *Blockchain) GetTransactionByHash(hash []byte) *types.Transaction {
 
 	for _, block := range bc.Chain {
 		for _, tx := range block.Transactions {
-			if tx.Hash == hash {
+			if bytes.Equal(tx.Hash, hash) {
 				return tx
 			}
 		}
@@ -279,13 +285,13 @@ func (bc *Blockchain) GetTransactionsByAddress(address string) []*types.Transact
 	for _, block := range bc.Chain {
 		for _, tx := range block.Transactions {
 			for _, input := range tx.Inputs {
-				if input.ScriptSig == address {
+				if input.Address == address {
 					transactions = append(transactions, tx)
 					break
 				}
 			}
 			for _, output := range tx.Outputs {
-				if output.ScriptPubKey == address {
+				if output.Address == address {
 					transactions = append(transactions, tx)
 					break
 				}
@@ -294,4 +300,14 @@ func (bc *Blockchain) GetTransactionsByAddress(address string) []*types.Transact
 	}
 
 	return transactions
+}
+
+// GetAllBlocks returns all blocks in the chain
+func (bc *Blockchain) GetAllBlocks() []*Block {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	blocks := make([]*Block, len(bc.Chain))
+	copy(blocks, bc.Chain)
+	return blocks
 }

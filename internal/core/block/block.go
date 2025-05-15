@@ -12,14 +12,6 @@ import (
 	"github.com/youngchain/internal/core/types"
 )
 
-// BlockType represents the type of block
-type BlockType string
-
-const (
-	GoldenBlock BlockType = "golden"
-	SilverBlock BlockType = "silver"
-)
-
 // Block represents a block in the blockchain
 type Block struct {
 	Header       *types.BlockHeader

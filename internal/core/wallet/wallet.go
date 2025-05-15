@@ -21,12 +21,12 @@ type Wallet struct {
 	PrivateKey *ecdsa.PrivateKey
 	PublicKey  *ecdsa.PublicKey
 	Address    string
-	CoinType   coin.CoinType
+	CoinType   coin.Type
 	mu         sync.RWMutex
 }
 
 // NewWallet creates a new wallet
-func NewWallet(coinType coin.CoinType) (*Wallet, error) {
+func NewWallet(coinType coin.Type) (*Wallet, error) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate private key: %v", err)
@@ -86,17 +86,19 @@ func (w *Wallet) SignTransaction(tx *types.Transaction) error {
 	defer w.mu.RUnlock()
 
 	// Create signature hash
-	hash := tx.CalculateHash()
+	if err := tx.CalculateHash(); err != nil {
+		return fmt.Errorf("failed to calculate hash: %v", err)
+	}
 
 	// Sign hash
-	r, s, err := ecdsa.Sign(rand.Reader, w.PrivateKey, hash)
+	r, s, err := ecdsa.Sign(rand.Reader, w.PrivateKey, tx.GetHash())
 	if err != nil {
 		return fmt.Errorf("failed to sign transaction: %v", err)
 	}
 
 	// Add signature to transaction
 	signature := append(r.Bytes(), s.Bytes()...)
-	tx.Witness = append(tx.Witness, signature)
+	tx.Signature = signature
 
 	return nil
 }
@@ -106,9 +108,11 @@ func (w *Wallet) CreateTransaction(to string, amount uint64, fee uint64) (*types
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	tx := types.NewTransaction(nil, []byte(to), amount, nil)
-	tx.Fee = fee
-	tx.CoinType = w.CoinType
+	tx := types.NewTransaction(1, w.CoinType)
+	tx.Fee = int64(fee)
+
+	// Add output
+	tx.AddOutput(int64(amount), []byte(to))
 
 	// Sign transaction
 	if err := w.SignTransaction(tx); err != nil {
@@ -130,8 +134,8 @@ func (w *Wallet) GetBalance(utxoSet UTXOSetInterface) (uint64, error) {
 	}
 
 	for _, utxo := range utxos {
-		if utxo.CoinType == w.CoinType && !utxo.IsSpent {
-			balance += utxo.Value
+		if utxo.CoinType == w.CoinType && !utxo.Spent {
+			balance += uint64(utxo.Value)
 		}
 	}
 

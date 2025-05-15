@@ -12,7 +12,6 @@ import (
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
-	"github.com/youngchain/internal/core/wallet"
 )
 
 var (
@@ -24,14 +23,16 @@ var (
 
 // Transaction represents a cryptocurrency transaction
 type Transaction struct {
-	Version   uint32        `json:"version"`
-	Inputs    []Input       `json:"inputs"`
-	Outputs   []Output      `json:"outputs"`
-	LockTime  uint32        `json:"lockTime"`
-	Fee       int64         `json:"fee"`
-	CoinType  coin.CoinType `json:"coinType"`
-	Hash      []byte        `json:"hash"`
-	Signature []byte        `json:"signature"`
+	Version   uint32    `json:"version"`
+	Inputs    []Input   `json:"inputs"`
+	Outputs   []Output  `json:"outputs"`
+	LockTime  uint32    `json:"lockTime"`
+	Fee       int64     `json:"fee"`
+	CoinType  coin.Type `json:"coinType"`
+	HashBytes []byte    `json:"hash"`
+	Signature []byte    `json:"signature"`
+	Data      []byte    `json:"data"`
+	Witness   [][]byte  `json:"witness"`
 }
 
 // Input represents a transaction input
@@ -50,14 +51,14 @@ type Output struct {
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxHash       []byte        `json:"txHash"`
-	OutputIndex  uint32        `json:"txIndex"`
-	Value        int64         `json:"value"`
-	ScriptPubKey []byte        `json:"scriptPubKey"`
-	Spent        bool          `json:"isSpent"`
-	Address      string        `json:"address"`
-	CoinType     coin.CoinType `json:"coinType"`
-	BlockHash    []byte        `json:"blockHash"`
+	TxHash       []byte    `json:"txHash"`
+	OutputIndex  uint32    `json:"txIndex"`
+	Value        int64     `json:"value"`
+	ScriptPubKey []byte    `json:"scriptPubKey"`
+	Spent        bool      `json:"isSpent"`
+	Address      string    `json:"address"`
+	CoinType     coin.Type `json:"coinType"`
+	BlockHash    []byte    `json:"blockHash"`
 }
 
 // TransactionPool manages pending transactions
@@ -78,22 +79,15 @@ func NewTransactionPool(maxSize int) *TransactionPool {
 }
 
 // NewTransaction creates a new transaction
-func NewTransaction(version uint32, coinType coin.CoinType) *Transaction {
+func NewTransaction(version uint32, coinType coin.Type) *Transaction {
 	return &Transaction{
 		Version:  version,
 		Inputs:   make([]Input, 0),
 		Outputs:  make([]Output, 0),
 		LockTime: uint32(time.Now().Unix()),
 		CoinType: coinType,
-	}
-}
-
-// NewTxPool creates a new transaction pool
-func NewTxPool(maxSize int, utxoSet wallet.UTXOSetInterface) *TransactionPool {
-	return &TransactionPool{
-		transactions: make(map[string]*types.Transaction),
-		utxos:        make(map[string]*types.UTXO),
-		maxSize:      maxSize,
+		Data:     make([]byte, 0),
+		Witness:  make([][]byte, 0),
 	}
 }
 
@@ -119,13 +113,13 @@ func (tx *Transaction) AddOutput(value int64, scriptPubKey []byte) {
 func (tx *Transaction) CalculateHash() {
 	data, _ := json.Marshal(tx)
 	hash := sha256.Sum256(data)
-	tx.Hash = hash[:]
+	tx.HashBytes = hash[:]
 }
 
 // Sign signs the transaction with the given private key
 func (tx *Transaction) Sign(privateKey *ecdsa.PrivateKey) error {
 	tx.CalculateHash()
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.Hash)
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.HashBytes)
 	if err != nil {
 		return err
 	}
@@ -337,9 +331,9 @@ func (tp *TransactionPool) GetBalance(address string, coinType coin.Type) int64 
 	return balance
 }
 
-// Hash returns the transaction hash
+// Hash returns the transaction hash as a common.Hash
 func (tx *Transaction) Hash() common.Hash {
-	return common.BytesToHash(tx.Hash)
+	return common.BytesToHash(tx.HashBytes)
 }
 
 // FeeRate calculates the fee rate in satoshis per byte
@@ -394,7 +388,7 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		Hash string `json:"hash"`
 	}{
 		Alias: (*Alias)(tx),
-		Hash:  fmt.Sprintf("%x", tx.Hash),
+		Hash:  fmt.Sprintf("%x", tx.HashBytes),
 	})
 }
 
