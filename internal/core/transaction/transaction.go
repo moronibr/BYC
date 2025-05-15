@@ -1,66 +1,70 @@
 package transaction
 
 import (
-	"bytes"
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
+	"github.com/youngchain/internal/core/wallet"
 )
 
 var (
-	ErrInvalidTransaction = errors.New("invalid transaction")
-	ErrInsufficientFunds  = errors.New("insufficient funds")
-	ErrInvalidSignature   = errors.New("invalid signature")
-	ErrDoubleSpend        = errors.New("double spend detected")
+	ErrInvalidTransaction = fmt.Errorf("invalid transaction")
+	ErrInsufficientFunds  = fmt.Errorf("insufficient funds")
+	ErrInvalidSignature   = fmt.Errorf("invalid signature")
+	ErrDoubleSpend        = fmt.Errorf("double spend detected")
 )
 
 // Transaction represents a cryptocurrency transaction
 type Transaction struct {
-	Version  uint32        `json:"version"`
-	Inputs   []*Input      `json:"inputs"`
-	Outputs  []*Output     `json:"outputs"`
-	LockTime uint32        `json:"lockTime"`
-	Fee      uint64        `json:"fee"`
-	CoinType coin.CoinType `json:"coinType"`
+	Version   uint32        `json:"version"`
+	Inputs    []Input       `json:"inputs"`
+	Outputs   []Output      `json:"outputs"`
+	LockTime  uint32        `json:"lockTime"`
+	Fee       int64         `json:"fee"`
+	CoinType  coin.CoinType `json:"coinType"`
+	Hash      []byte        `json:"hash"`
+	Signature []byte        `json:"signature"`
 }
 
 // Input represents a transaction input
 type Input struct {
-	PreviousTxHash  []byte `json:"previousTxHash"`
-	PreviousTxIndex uint32 `json:"previousTxIndex"`
-	ScriptSig       []byte `json:"scriptSig"`
-	Sequence        uint32 `json:"sequence"`
+	PreviousTxHash []byte `json:"previousTxHash"`
+	OutputIndex    uint32 `json:"outputIndex"`
+	ScriptSig      []byte `json:"scriptSig"`
+	Sequence       uint32 `json:"sequence"`
 }
 
 // Output represents a transaction output
 type Output struct {
-	Value        uint64 `json:"value"`
+	Value        int64  `json:"value"`
 	ScriptPubKey []byte `json:"scriptPubKey"`
-	Address      string `json:"address"`
 }
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxHash    []byte        `json:"txHash"`
-	TxIndex   uint32        `json:"txIndex"`
-	Value     uint64        `json:"value"`
-	Address   string        `json:"address"`
-	CoinType  coin.CoinType `json:"coinType"`
-	IsSpent   bool          `json:"isSpent"`
-	BlockHash []byte        `json:"blockHash"`
+	TxHash       []byte        `json:"txHash"`
+	OutputIndex  uint32        `json:"txIndex"`
+	Value        int64         `json:"value"`
+	ScriptPubKey []byte        `json:"scriptPubKey"`
+	Spent        bool          `json:"isSpent"`
+	Address      string        `json:"address"`
+	CoinType     coin.CoinType `json:"coinType"`
+	BlockHash    []byte        `json:"blockHash"`
 }
 
 // TransactionPool manages pending transactions
 type TransactionPool struct {
 	transactions map[string]*types.Transaction
-	utxoSet      map[string]*types.UTXO
+	utxos        map[string]*types.UTXO
+	mu           sync.RWMutex
 	maxSize      int
 }
 
@@ -68,74 +72,207 @@ type TransactionPool struct {
 func NewTransactionPool(maxSize int) *TransactionPool {
 	return &TransactionPool{
 		transactions: make(map[string]*types.Transaction),
-		utxoSet:      make(map[string]*types.UTXO),
+		utxos:        make(map[string]*types.UTXO),
 		maxSize:      maxSize,
 	}
 }
 
-// CreateTransaction creates a new transaction
-func CreateTransaction(inputs []*types.TxInput, outputs []*types.TxOutput, fee uint64, coinType coin.CoinType) *types.Transaction {
-	return &types.Transaction{
-		Version:  1,
-		Inputs:   inputs,
-		Outputs:  outputs,
+// NewTransaction creates a new transaction
+func NewTransaction(version uint32, coinType coin.CoinType) *Transaction {
+	return &Transaction{
+		Version:  version,
+		Inputs:   make([]Input, 0),
+		Outputs:  make([]Output, 0),
 		LockTime: uint32(time.Now().Unix()),
-		Fee:      fee,
 		CoinType: coinType,
 	}
 }
 
+// NewTxPool creates a new transaction pool
+func NewTxPool(maxSize int, utxoSet wallet.UTXOSetInterface) *TransactionPool {
+	return &TransactionPool{
+		transactions: make(map[string]*types.Transaction),
+		utxos:        make(map[string]*types.UTXO),
+		maxSize:      maxSize,
+	}
+}
+
+// AddInput adds an input to the transaction
+func (tx *Transaction) AddInput(previousTxHash []byte, outputIndex uint32, scriptSig []byte) {
+	tx.Inputs = append(tx.Inputs, Input{
+		PreviousTxHash: previousTxHash,
+		OutputIndex:    outputIndex,
+		ScriptSig:      scriptSig,
+		Sequence:       0xffffffff,
+	})
+}
+
+// AddOutput adds an output to the transaction
+func (tx *Transaction) AddOutput(value int64, scriptPubKey []byte) {
+	tx.Outputs = append(tx.Outputs, Output{
+		Value:        value,
+		ScriptPubKey: scriptPubKey,
+	})
+}
+
 // CalculateHash calculates the transaction hash
-func (tx *Transaction) CalculateHash() []byte {
-	var buf bytes.Buffer
+func (tx *Transaction) CalculateHash() {
+	data, _ := json.Marshal(tx)
+	hash := sha256.Sum256(data)
+	tx.Hash = hash[:]
+}
 
-	// Write version
-	binary.Write(&buf, binary.LittleEndian, tx.Version)
+// Sign signs the transaction with the given private key
+func (tx *Transaction) Sign(privateKey *ecdsa.PrivateKey) error {
+	tx.CalculateHash()
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.Hash)
+	if err != nil {
+		return err
+	}
+	signature := append(r.Bytes(), s.Bytes()...)
+	tx.Signature = signature
+	return nil
+}
 
-	// Write inputs
+// Validate validates the transaction
+func (tx *Transaction) Validate() (bool, error) {
+	if len(tx.Inputs) == 0 || len(tx.Outputs) == 0 {
+		return false, fmt.Errorf("transaction must have at least one input and one output")
+	}
+
+	// Validate inputs
 	for _, input := range tx.Inputs {
-		buf.Write(input.PreviousTxHash)
-		binary.Write(&buf, binary.LittleEndian, input.PreviousTxIndex)
-		buf.Write(input.ScriptSig)
-		binary.Write(&buf, binary.LittleEndian, input.Sequence)
+		if len(input.PreviousTxHash) == 0 {
+			return false, fmt.Errorf("invalid previous transaction hash")
+		}
 	}
 
-	// Write outputs
+	// Validate outputs
+	var totalOutput int64
 	for _, output := range tx.Outputs {
-		binary.Write(&buf, binary.LittleEndian, output.Value)
-		buf.Write(output.ScriptPubKey)
+		if output.Value <= 0 {
+			return false, fmt.Errorf("invalid output value")
+		}
+		totalOutput += output.Value
 	}
 
-	// Write lock time and fee
-	binary.Write(&buf, binary.LittleEndian, tx.LockTime)
-	binary.Write(&buf, binary.LittleEndian, tx.Fee)
+	// Validate fee
+	if tx.Fee < 0 {
+		return false, fmt.Errorf("invalid fee")
+	}
 
-	// Write coin type
-	buf.Write([]byte(tx.CoinType))
+	return true, nil
+}
 
-	// Calculate hash
-	hash := sha256.Sum256(buf.Bytes())
-	return hash[:]
+// AddTransaction adds a transaction to the pool
+func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	if len(tp.transactions) >= tp.maxSize {
+		return fmt.Errorf("transaction pool is full")
+	}
+
+	// Validate transaction
+	if err := tx.Validate(); err != nil {
+		return err
+	}
+
+	// Add to pool
+	tp.transactions[string(tx.GetHash())] = tx
+
+	// Update UTXOs
+	for _, input := range tx.GetInputs() {
+		utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.OutputIndex)
+		if utxo, exists := tp.utxos[utxoKey]; exists {
+			utxo.Spent = true
+		}
+	}
+
+	for i, output := range tx.GetOutputs() {
+		utxo := types.NewUTXO(
+			tx.GetHash(),
+			uint32(i),
+			output.Value,
+			output.ScriptPubKey,
+			"", // Address will be set by the wallet
+			tx.GetCoinType(),
+		)
+		utxoKey := fmt.Sprintf("%x:%d", tx.GetHash(), i)
+		tp.utxos[utxoKey] = utxo
+	}
+
+	return nil
+}
+
+// GetUTXOsByAddress returns all UTXOs for a given address
+func (tp *TransactionPool) GetUTXOsByAddress(address string) []*types.UTXO {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+
+	var utxos []*types.UTXO
+	for _, utxo := range tp.utxos {
+		if !utxo.Spent && utxo.Address == address {
+			utxos = append(utxos, utxo)
+		}
+	}
+	return utxos
+}
+
+// RemoveTransaction removes a transaction from the pool
+func (tp *TransactionPool) RemoveTransaction(txHash []byte) {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	delete(tp.transactions, string(txHash))
+}
+
+// GetTransaction returns a transaction from the pool
+func (tp *TransactionPool) GetTransaction(txHash []byte) *types.Transaction {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+
+	return tp.transactions[string(txHash)]
+}
+
+// GetTransactions returns all transactions in the pool
+func (tp *TransactionPool) GetTransactions() []*types.Transaction {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+
+	transactions := make([]*types.Transaction, 0, len(tp.transactions))
+	for _, tx := range tp.transactions {
+		transactions = append(transactions, tx)
+	}
+	return transactions
+}
+
+// Size returns the number of transactions in the pool
+func (tp *TransactionPool) Size() int {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+
+	return len(tp.transactions)
 }
 
 // Validate validates a transaction
 func (tp *TransactionPool) Validate(tx *types.Transaction) error {
 	// Check basic structure
-	if len(tx.Inputs) == 0 || len(tx.Outputs) == 0 {
+	if len(tx.GetInputs()) == 0 || len(tx.GetOutputs()) == 0 {
 		return fmt.Errorf("%w: empty inputs or outputs", ErrInvalidTransaction)
 	}
 
 	// Check for double spends
 	spentOutputs := make(map[string]bool)
-	var totalInput uint64
-	var totalOutput uint64
+	var totalInput int64
+	var totalOutput int64
 
 	// Validate inputs
-	for _, input := range tx.Inputs {
-		utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
+	for _, input := range tx.GetInputs() {
+		utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.OutputIndex)
 
 		// Check if UTXO exists
-		utxo, exists := tp.utxoSet[utxoKey]
+		utxo, exists := tp.utxos[utxoKey]
 		if !exists {
 			return fmt.Errorf("%w: UTXO not found", ErrInvalidTransaction)
 		}
@@ -146,7 +283,7 @@ func (tp *TransactionPool) Validate(tx *types.Transaction) error {
 		}
 
 		// Check coin type
-		if utxo.CoinType != tx.CoinType {
+		if utxo.CoinType != tx.GetCoinType() {
 			return fmt.Errorf("%w: coin type mismatch", ErrInvalidTransaction)
 		}
 
@@ -156,86 +293,44 @@ func (tp *TransactionPool) Validate(tx *types.Transaction) error {
 	}
 
 	// Validate outputs
-	for _, output := range tx.Outputs {
-		if output.Value == 0 {
-			return fmt.Errorf("%w: zero value output", ErrInvalidTransaction)
+	for _, output := range tx.GetOutputs() {
+		if output.Value <= 0 {
+			return fmt.Errorf("%w: invalid output value", ErrInvalidTransaction)
 		}
 		totalOutput += output.Value
 	}
 
 	// Check if inputs cover outputs plus fee
-	if totalInput < totalOutput+tx.Fee {
+	if totalInput < totalOutput+tx.GetFee() {
 		return fmt.Errorf("%w: insufficient funds", ErrInvalidTransaction)
 	}
 
 	return nil
 }
 
-// AddToPool adds a transaction to the pool
-func (tp *TransactionPool) AddToPool(tx *types.Transaction) error {
-	// Check pool size
-	if len(tp.transactions) >= tp.maxSize {
-		return fmt.Errorf("transaction pool full")
-	}
-
-	// Validate transaction
-	if err := tp.Validate(tx); err != nil {
-		return err
-	}
-
-	// Calculate hash
-	tx.CalculateHash()
-	if tx.Hash == nil {
-		return fmt.Errorf("failed to calculate transaction hash")
-	}
-
-	// Add to pool
-	tp.transactions[string(tx.Hash)] = tx
-
-	// Update UTXO set
-	for _, input := range tx.Inputs {
-		utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.PreviousTxIndex)
-		if utxo, exists := tp.utxoSet[utxoKey]; exists {
-			utxo.IsSpent = true
-		}
-	}
-
-	return nil
-}
-
-// RemoveFromPool removes a transaction from the pool
-func (tp *TransactionPool) RemoveFromPool(txHash []byte) {
-	delete(tp.transactions, string(txHash))
-}
-
-// GetTransaction gets a transaction from the pool
-func (tp *TransactionPool) GetTransaction(txHash []byte) *types.Transaction {
-	return tp.transactions[string(txHash)]
-}
-
 // GetUTXO gets a UTXO from the pool
 func (tp *TransactionPool) GetUTXO(txHash []byte, index uint32) *types.UTXO {
 	utxoKey := fmt.Sprintf("%x:%d", txHash, index)
-	return tp.utxoSet[utxoKey]
+	return tp.utxos[utxoKey]
 }
 
 // AddUTXO adds a UTXO to the pool
 func (tp *TransactionPool) AddUTXO(utxo *types.UTXO) {
-	utxoKey := fmt.Sprintf("%x:%d", utxo.TxHash, utxo.TxIndex)
-	tp.utxoSet[utxoKey] = utxo
+	utxoKey := fmt.Sprintf("%x:%d", utxo.TxHash, utxo.OutputIndex)
+	tp.utxos[utxoKey] = utxo
 }
 
 // RemoveUTXO removes a UTXO from the pool
 func (tp *TransactionPool) RemoveUTXO(txHash []byte, index uint32) {
 	utxoKey := fmt.Sprintf("%x:%d", txHash, index)
-	delete(tp.utxoSet, utxoKey)
+	delete(tp.utxos, utxoKey)
 }
 
 // GetBalance gets the balance for an address
-func (tp *TransactionPool) GetBalance(address string, coinType coin.CoinType) uint64 {
-	var balance uint64
-	for _, utxo := range tp.utxoSet {
-		if utxo.Address == address && utxo.CoinType == coinType && !utxo.IsSpent {
+func (tp *TransactionPool) GetBalance(address string, coinType coin.Type) int64 {
+	var balance int64
+	for _, utxo := range tp.utxos {
+		if utxo.Address == address && utxo.CoinType == coinType && !utxo.Spent {
 			balance += utxo.Value
 		}
 	}
@@ -244,16 +339,16 @@ func (tp *TransactionPool) GetBalance(address string, coinType coin.CoinType) ui
 
 // Hash returns the transaction hash
 func (tx *Transaction) Hash() common.Hash {
-	return common.BytesToHash(tx.CalculateHash())
+	return common.BytesToHash(tx.Hash)
 }
 
 // FeeRate calculates the fee rate in satoshis per byte
-func (tx *Transaction) FeeRate() uint64 {
+func (tx *Transaction) FeeRate() int64 {
 	size := tx.Size()
 	if size == 0 {
 		return 0
 	}
-	return tx.Fee / uint64(size)
+	return tx.Fee / int64(size)
 }
 
 // Size returns the transaction size in bytes
@@ -267,7 +362,7 @@ func (tx *Transaction) Size() int {
 	size += 4 // Input count
 	for _, input := range tx.Inputs {
 		size += 32 // PreviousTxHash
-		size += 4  // PreviousTxIndex
+		size += 4  // OutputIndex
 		size += 4  // ScriptSig length
 		size += len(input.ScriptSig)
 		size += 4 // Sequence
@@ -299,7 +394,7 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		Hash string `json:"hash"`
 	}{
 		Alias: (*Alias)(tx),
-		Hash:  fmt.Sprintf("%x", tx.CalculateHash()),
+		Hash:  fmt.Sprintf("%x", tx.Hash),
 	})
 }
 

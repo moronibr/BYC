@@ -3,14 +3,13 @@ package block
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/youngchain/internal/core/common"
+	"github.com/youngchain/internal/core/coin"
+	"github.com/youngchain/internal/core/types"
 )
 
 // BlockType represents the type of block
@@ -23,132 +22,100 @@ const (
 
 // Block represents a block in the blockchain
 type Block struct {
-	// Block header
-	Header *common.Header
-
-	// Block transactions
-	Transactions []*common.Transaction
-
-	// Block size in bytes
-	BlockSize int
-
-	// Block weight in weight units
-	Weight int
-
-	// Block validation status
-	IsValid bool
-
-	// Block validation error
-	ValidationError error
+	Header       *types.BlockHeader
+	Transactions []*types.Transaction
+	Size         int
+	Timestamp    uint64
+	Difficulty   uint32
+	CoinType     coin.Type
+	Hash         []byte
+	PreviousHash []byte
 }
 
 // String returns a string representation of the block
 func (b *Block) String() string {
-	return fmt.Sprintf("Block{Version: %d, PrevHash: %s, MerkleRoot: %s, Timestamp: %s, Difficulty: %d, Nonce: %d, Hash: %s, Height: %d, Size: %d, Weight: %d, TxCount: %d}",
+	return fmt.Sprintf("Block{Version: %d, PrevHash: %s, MerkleRoot: %s, Timestamp: %d, Difficulty: %d, Nonce: %d, Hash: %s, Height: %d, Size: %d, TxCount: %d}",
 		b.Header.Version,
 		hex.EncodeToString(b.Header.PrevBlockHash),
 		hex.EncodeToString(b.Header.MerkleRoot),
-		b.Header.Timestamp.Format(time.RFC3339),
+		b.Header.Timestamp,
 		b.Header.Difficulty,
 		b.Header.Nonce,
 		hex.EncodeToString(b.Header.Hash),
 		b.Header.Height,
-		b.BlockSize,
-		b.Weight,
+		b.Size,
 		len(b.Transactions),
 	)
 }
 
 // NewBlock creates a new block
-func NewBlock(prevHash []byte, height uint64) *Block {
+func NewBlock(previousHash []byte, timestamp uint64) *Block {
 	return &Block{
-		Header: &common.Header{
-			Version:       1,
-			PrevBlockHash: prevHash,
-			Timestamp:     time.Now(),
-			Difficulty:    0x1d00ffff,
-			Height:        height,
+		Header: &types.BlockHeader{
+			PrevBlockHash: previousHash,
+			Timestamp:     timestamp,
 		},
-		Transactions: make([]*common.Transaction, 0),
+		Transactions: make([]*types.Transaction, 0),
+		Timestamp:    timestamp,
+		PreviousHash: previousHash,
 	}
 }
 
-// AddTransaction adds a transaction to the block
-func (b *Block) AddTransaction(tx *common.Transaction) error {
-	if !b.CanAddTransaction(tx) {
-		return errors.New("block is full")
+// CalculateHash calculates the block hash
+func (b *Block) CalculateHash() error {
+	// Create a copy of the block without the hash
+	blockCopy := *b
+	blockCopy.Hash = nil
+
+	// Marshal the block to JSON
+	data, err := json.Marshal(blockCopy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal block: %v", err)
 	}
 
-	b.Transactions = append(b.Transactions, tx)
-	b.BlockSize = b.GetBlockSize()
-	b.Weight = b.GetBlockWeight()
+	// Calculate SHA-256 hash
+	hash := sha256.Sum256(data)
+	b.Hash = hash[:]
+	b.Header.Hash = hash[:]
 
 	return nil
 }
 
-// CalculateHash calculates the block hash
-func (b *Block) CalculateHash() []byte {
-	hash := sha256.New()
-
-	// Hash version
-	versionBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(versionBytes, b.Header.Version)
-	hash.Write(versionBytes)
-
-	// Hash previous block hash
-	hash.Write(b.Header.PrevBlockHash)
-
-	// Hash merkle root
-	hash.Write(b.Header.MerkleRoot)
-
-	// Hash timestamp
-	timeBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(timeBytes, uint64(b.Header.Timestamp.Unix()))
-	hash.Write(timeBytes)
-
-	// Hash difficulty
-	diffBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(diffBytes, uint64(b.Header.Difficulty))
-	hash.Write(diffBytes)
-
-	// Hash nonce
-	nonceBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(nonceBytes, b.Header.Nonce)
-	hash.Write(nonceBytes)
-
-	return hash.Sum(nil)
-}
-
 // Validate validates the block
 func (b *Block) Validate() error {
-	// Validate version
-	if b.Header.Version == 0 {
-		return errors.New("invalid version")
+	// Check if block is nil
+	if b == nil {
+		return fmt.Errorf("block is nil")
 	}
 
-	// Validate previous block hash
-	if len(b.Header.PrevBlockHash) != 32 {
-		return errors.New("invalid previous block hash")
+	// Check if header is nil
+	if b.Header == nil {
+		return fmt.Errorf("block header is nil")
 	}
 
-	// Validate merkle root
-	if len(b.Header.MerkleRoot) != 32 {
-		return errors.New("invalid merkle root")
+	// Check if hash is valid
+	if err := b.CalculateHash(); err != nil {
+		return fmt.Errorf("failed to calculate hash: %v", err)
 	}
 
-	// Validate timestamp
-	if b.Header.Timestamp.IsZero() {
-		return errors.New("invalid timestamp")
+	// Check if previous hash matches
+	if b.PreviousHash != nil && !bytes.Equal(b.PreviousHash, b.Header.PrevBlockHash) {
+		return fmt.Errorf("previous hash mismatch")
 	}
 
-	// Validate difficulty
-	if b.Header.Difficulty == 0 {
-		return errors.New("invalid difficulty")
+	// Check if timestamp is valid
+	if b.Timestamp > uint64(time.Now().Unix()) {
+		return fmt.Errorf("invalid timestamp")
 	}
 
-	// Validate hash
-	if len(b.Header.Hash) != 32 {
-		return errors.New("invalid hash")
+	// Check if difficulty is valid
+	if b.Difficulty == 0 {
+		return fmt.Errorf("invalid difficulty")
+	}
+
+	// Check if coin type is valid
+	if b.CoinType == "" {
+		return fmt.Errorf("invalid coin type")
 	}
 
 	// Validate transactions
@@ -158,44 +125,57 @@ func (b *Block) Validate() error {
 		}
 	}
 
-	// Validate block weight
-	if err := b.ValidateBlockWeight(); err != nil {
-		return err
+	return nil
+}
+
+// AddTransaction adds a transaction to the block
+func (b *Block) AddTransaction(tx *types.Transaction) error {
+	// Validate transaction
+	if err := tx.Validate(); err != nil {
+		return fmt.Errorf("invalid transaction: %v", err)
 	}
 
-	// Validate merkle root matches transactions
-	calculatedMerkleRoot := b.CalculateMerkleRoot()
-	if !bytes.Equal(b.Header.MerkleRoot, calculatedMerkleRoot) {
-		return errors.New("invalid merkle root")
+	// Add transaction
+	b.Transactions = append(b.Transactions, tx)
+
+	// Update block size
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transaction: %v", err)
 	}
+	b.Size += len(data)
 
 	return nil
 }
 
-// Clone creates a deep copy of the block
-func (b *Block) Clone() *Block {
-	clone := &Block{
-		Header: &common.Header{
-			Version:       b.Header.Version,
-			PrevBlockHash: append([]byte{}, b.Header.PrevBlockHash...),
-			MerkleRoot:    append([]byte{}, b.Header.MerkleRoot...),
-			Timestamp:     b.Header.Timestamp,
-			Difficulty:    b.Header.Difficulty,
-			Nonce:         b.Header.Nonce,
-			Height:        b.Header.Height,
-		},
-		Transactions:    make([]*common.Transaction, len(b.Transactions)),
-		BlockSize:       b.BlockSize,
-		Weight:          b.Weight,
-		IsValid:         b.IsValid,
-		ValidationError: b.ValidationError,
-	}
+// GetHash returns the block hash
+func (b *Block) GetHash() []byte {
+	return b.Hash
+}
 
-	for i, tx := range b.Transactions {
-		clone.Transactions[i] = tx.Copy()
-	}
+// GetPreviousHash returns the previous block hash
+func (b *Block) GetPreviousHash() []byte {
+	return b.PreviousHash
+}
 
-	return clone
+// GetTimestamp returns the block timestamp
+func (b *Block) GetTimestamp() uint64 {
+	return b.Timestamp
+}
+
+// GetDifficulty returns the block difficulty
+func (b *Block) GetDifficulty() uint32 {
+	return b.Difficulty
+}
+
+// GetCoinType returns the block coin type
+func (b *Block) GetCoinType() coin.Type {
+	return b.CoinType
+}
+
+// GetTransactions returns the block transactions
+func (b *Block) GetTransactions() []*types.Transaction {
+	return b.Transactions
 }
 
 // CalculateMerkleRoot calculates the merkle root of the block's transactions
@@ -207,7 +187,7 @@ func (b *Block) CalculateMerkleRoot() []byte {
 	// Create a slice of transaction hashes
 	hashes := make([][]byte, len(b.Transactions))
 	for i, tx := range b.Transactions {
-		hashes[i] = tx.Hash()
+		hashes[i] = tx.GetHash()
 	}
 
 	// Calculate merkle root
@@ -244,11 +224,10 @@ func calculateHash(data []byte) []byte {
 	return hash[:]
 }
 
-// Copy creates a deep copy of the block
-func (b *Block) Copy() *Block {
-	// Create a new block
-	blockCopy := &Block{
-		Header: &common.Header{
+// Clone creates a deep copy of the block
+func (b *Block) Clone() *Block {
+	clone := &Block{
+		Header: &types.BlockHeader{
 			Version:       b.Header.Version,
 			PrevBlockHash: append([]byte{}, b.Header.PrevBlockHash...),
 			MerkleRoot:    append([]byte{}, b.Header.MerkleRoot...),
@@ -257,24 +236,25 @@ func (b *Block) Copy() *Block {
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
 		},
-		Transactions:    make([]*common.Transaction, len(b.Transactions)),
-		BlockSize:       b.BlockSize,
-		Weight:          b.Weight,
-		IsValid:         b.IsValid,
-		ValidationError: b.ValidationError,
+		Transactions: make([]*types.Transaction, len(b.Transactions)),
+		Size:         b.Size,
+		Timestamp:    b.Timestamp,
+		Difficulty:   b.Difficulty,
+		CoinType:     b.CoinType,
+		Hash:         append([]byte{}, b.Hash...),
+		PreviousHash: append([]byte{}, b.PreviousHash...),
 	}
 
-	// Copy byte slices
-	copy(blockCopy.Header.PrevBlockHash, b.Header.PrevBlockHash)
-	copy(blockCopy.Header.MerkleRoot, b.Header.MerkleRoot)
-	copy(blockCopy.Header.Hash, b.Header.Hash)
-
-	// Copy transactions
 	for i, tx := range b.Transactions {
-		blockCopy.Transactions[i] = tx.Copy()
+		clone.Transactions[i] = tx.Copy()
 	}
 
-	return blockCopy
+	return clone
+}
+
+// Copy creates a deep copy of the block
+func (b *Block) Copy() *Block {
+	return b.Clone()
 }
 
 // MarshalJSON implements the json.Marshaler interface
@@ -317,42 +297,20 @@ func (b *Block) UpdateMerkleRoot() {
 }
 
 // GetInitialDifficulty returns the initial difficulty for a block type
-func GetInitialDifficulty(blockType BlockType) uint32 {
+func GetInitialDifficulty(blockType types.BlockType) uint32 {
 	return calculateInitialDifficulty(blockType)
 }
 
 // calculateInitialDifficulty calculates the initial difficulty for a block type
-func calculateInitialDifficulty(blockType BlockType) uint32 {
+func calculateInitialDifficulty(blockType types.BlockType) uint32 {
 	switch blockType {
-	case GoldenBlock:
+	case types.GoldenBlock:
 		return 0x1d00ffff // Bitcoin's initial difficulty
-	case SilverBlock:
+	case types.SilverBlock:
 		return 0x1d00ffff / 2 // Half of Bitcoin's initial difficulty
 	default:
 		return 0x1d00ffff
 	}
-}
-
-// Size returns the size of the block in bytes
-func (b *Block) Size() int {
-	size := 0
-
-	// Header size
-	size += 8 // Height
-	size += 8 // Timestamp
-	size += len(b.Header.PrevBlockHash)
-	size += 8 // Nonce
-	size += 8 // Difficulty
-
-	// Transactions size
-	for _, tx := range b.Transactions {
-		size += tx.Size()
-	}
-
-	// Hash size
-	size += len(b.Header.Hash)
-
-	return size
 }
 
 // GetBlockSize returns the size of the block in bytes
@@ -407,13 +365,13 @@ func (b *Block) GetBlockWeight() int {
 func (b *Block) ValidateBlockWeight() error {
 	maxWeight := 4 * 1024 * 1024 // 4MB
 	if b.GetBlockWeight() > maxWeight {
-		return errors.New("block weight exceeds maximum")
+		return fmt.Errorf("block weight exceeds maximum")
 	}
 	return nil
 }
 
 // CanAddTransaction checks if a transaction can be added to the block
-func (b *Block) CanAddTransaction(tx *common.Transaction) bool {
+func (b *Block) CanAddTransaction(tx *types.Transaction) bool {
 	// Check if adding the transaction would exceed the maximum block weight
 	newWeight := b.GetBlockWeight() + tx.Size()*4
 	maxWeight := 4 * 1024 * 1024 // 4MB
@@ -421,21 +379,21 @@ func (b *Block) CanAddTransaction(tx *common.Transaction) bool {
 }
 
 // ValidateTransactions validates all transactions in the block
-func (b *Block) ValidateTransactions(utxoSet *common.UTXOSet) error {
+func (b *Block) ValidateTransactions(utxoSet types.UTXOSetInterface) error {
 	// Check if block has transactions
 	if len(b.Transactions) == 0 {
-		return errors.New("block has no transactions")
+		return fmt.Errorf("block has no transactions")
 	}
 
 	// Check if first transaction is coinbase
 	if !b.Transactions[0].IsCoinbase() {
-		return errors.New("first transaction is not coinbase")
+		return fmt.Errorf("first transaction is not coinbase")
 	}
 
 	// Check if block has more than one coinbase transaction
 	for i := 1; i < len(b.Transactions); i++ {
 		if b.Transactions[i].IsCoinbase() {
-			return errors.New("block has more than one coinbase transaction")
+			return fmt.Errorf("block has more than one coinbase transaction")
 		}
 	}
 
