@@ -138,3 +138,9 @@
 {"level":"info","time":"2025-05-13T22:59:07.085-0300","caller":"logger/logger.go:92","msg":"Mining Statistics","status":"active","hash_rate":0,"hash_rate_unit":"H/s","blocks_mined":0,"total_hashes":0,"uptime":790,"mining_address":"miner_address"}
 {"level":"info","time":"2025-05-13T22:59:17.084-0300","caller":"logger/logger.go:92","msg":"Mining Statistics","status":"active","hash_rate":0,"hash_rate_unit":"H/s","blocks_mined":0,"total_hashes":0,"uptime":800,"mining_address":"miner_address"}
 {"level":"info","time":"2025-05-13T22:59:26.309-0300","caller":"logger/logger.go:92","msg":"Shutting down miner..."}
+{"level":"info","time":"2025-05-15T15:20:46.555-0300","caller":"logger/logger.go:92","msg":"Running as node..."}
+{"level":"info","time":"2025-05-15T15:21:02.069-0300","caller":"logger/logger.go:92","msg":"Shutting down node..."}
+{"level":"info","time":"2025-05-15T15:21:04.492-0300","caller":"logger/logger.go:92","msg":"Running as miner..."}
+{"level":"info","time":"2025-05-15T15:21:14.496-0300","caller":"logger/logger.go:92","msg":"Mining Statistics","status":"active","hash_rate":0,"hash_rate_unit":"H/s","blocks_mined":0,"total_hashes":0,"uptime":10,"mining_address":"miner_address"}
+{"level":"info","time":"2025-05-15T15:21:24.493-0300","caller":"logger/logger.go:92","msg":"Mining Statistics","status":"active","hash_rate":0,"hash_rate_unit":"H/s","blocks_mined":0,"total_hashes":0,"uptime":20,"mining_address":"miner_address"}
+{"level":"info","time":"2025-05-15T15:21:29.323-0300","caller":"logger/logger.go:92","msg":"Shutting down miner..."}

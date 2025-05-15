@@ -480,3 +480,21 @@ func (t *Transaction) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// Weight returns the weight of the transaction
+func (tx *Transaction) Weight() int {
+	// Base size
+	baseSize := tx.Size()
+
+	// Total size
+	totalSize := baseSize
+
+	// Witness size (if any)
+	witnessSize := 0
+	for _, input := range tx.Inputs {
+		witnessSize += len(input.ScriptSig)
+	}
+
+	// Weight = base size * 3 + total size
+	return baseSize*3 + totalSize + witnessSize
+}

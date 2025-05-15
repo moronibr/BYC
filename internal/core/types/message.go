@@ -5,31 +5,22 @@ import (
 )
 
 // MessageType represents the type of a network message
-type MessageType string
+type MessageType uint8
 
 const (
-	// Version message type
-	VersionMsg MessageType = "version"
-	// VerAck message type
-	VerAckMsg MessageType = "verack"
-	// GetAddr message type
-	GetAddrMsg MessageType = "getaddr"
-	// Addr message type
-	AddrMsg MessageType = "addr"
-	// Block message type
-	BlockMsg MessageType = "block"
-	// Tx message type
-	TxMsg MessageType = "tx"
-	// Ping message type
-	PingMsg MessageType = "ping"
-	// Pong message type
-	PongMsg MessageType = "pong"
+	MsgVersion   MessageType = 1
+	MsgVerAck    MessageType = 2
+	MsgPing      MessageType = 3
+	MsgPong      MessageType = 4
+	MsgGetBlocks MessageType = 5
+	MsgBlock     MessageType = 6
+	MsgTx        MessageType = 7
 )
 
 // Message represents a network message
 type Message struct {
-	Type    MessageType `json:"type"`
-	Payload interface{} `json:"payload"`
+	Type    MessageType
+	Payload interface{}
 }
 
 // Encode encodes a message to bytes
@@ -40,6 +31,15 @@ func (m *Message) Encode() ([]byte, error) {
 // Decode decodes a message from bytes
 func (m *Message) Decode(data []byte) error {
 	return json.Unmarshal(data, m)
+}
+
+// VersionPayload represents the payload of a version message
+type VersionPayload struct {
+	Version   uint32
+	Services  uint64
+	Timestamp int64
+	AddrRecv  string
+	AddrFrom  string
 }
 
 // VersionMessage represents a version message
