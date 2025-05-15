@@ -17,9 +17,6 @@ type Block struct {
 	Header       *types.BlockHeader
 	Transactions []*types.Transaction
 	Size         int
-	Timestamp    uint64
-	Difficulty   uint32
-	CoinType     coin.Type
 	Hash         []byte
 	PreviousHash []byte
 }
@@ -46,9 +43,9 @@ func NewBlock(previousHash []byte, timestamp uint64) *Block {
 		Header: &types.BlockHeader{
 			PrevBlockHash: previousHash,
 			Timestamp:     timestamp,
+			Version:       1,
 		},
 		Transactions: make([]*types.Transaction, 0),
-		Timestamp:    timestamp,
 		PreviousHash: previousHash,
 	}
 }
@@ -57,7 +54,7 @@ func NewBlock(previousHash []byte, timestamp uint64) *Block {
 func (b *Block) CalculateHash() error {
 	// Create a copy of the block without the hash
 	blockCopy := *b
-	blockCopy.Hash = nil
+	blockCopy.Header.Hash = nil
 
 	// Marshal the block to JSON
 	data, err := json.Marshal(blockCopy)
@@ -67,8 +64,8 @@ func (b *Block) CalculateHash() error {
 
 	// Calculate SHA-256 hash
 	hash := sha256.Sum256(data)
-	b.Hash = hash[:]
 	b.Header.Hash = hash[:]
+	b.Hash = hash[:]
 
 	return nil
 }
@@ -91,22 +88,22 @@ func (b *Block) Validate() error {
 	}
 
 	// Check if previous hash matches
-	if b.PreviousHash != nil && !bytes.Equal(b.PreviousHash, b.Header.PrevBlockHash) {
+	if b.Header.PrevBlockHash != nil && !bytes.Equal(b.Header.PrevBlockHash, b.PreviousHash) {
 		return fmt.Errorf("previous hash mismatch")
 	}
 
 	// Check if timestamp is valid
-	if b.Timestamp > uint64(time.Now().Unix()) {
+	if b.Header.Timestamp > uint64(time.Now().Unix()) {
 		return fmt.Errorf("invalid timestamp")
 	}
 
 	// Check if difficulty is valid
-	if b.Difficulty == 0 {
+	if b.Header.Difficulty == 0 {
 		return fmt.Errorf("invalid difficulty")
 	}
 
 	// Check if coin type is valid
-	if b.CoinType == "" {
+	if b.Header.CoinType == "" {
 		return fmt.Errorf("invalid coin type")
 	}
 
@@ -142,27 +139,27 @@ func (b *Block) AddTransaction(tx *types.Transaction) error {
 
 // GetHash returns the block hash
 func (b *Block) GetHash() []byte {
-	return b.Hash
+	return b.Header.Hash
 }
 
 // GetPreviousHash returns the previous block hash
 func (b *Block) GetPreviousHash() []byte {
-	return b.PreviousHash
+	return b.Header.PrevBlockHash
 }
 
 // GetTimestamp returns the block timestamp
 func (b *Block) GetTimestamp() uint64 {
-	return b.Timestamp
+	return b.Header.Timestamp
 }
 
 // GetDifficulty returns the block difficulty
 func (b *Block) GetDifficulty() uint32 {
-	return b.Difficulty
+	return b.Header.Difficulty
 }
 
 // GetCoinType returns the block coin type
 func (b *Block) GetCoinType() coin.Type {
-	return b.CoinType
+	return b.Header.CoinType
 }
 
 // GetTransactions returns the block transactions
@@ -227,12 +224,12 @@ func (b *Block) Clone() *Block {
 			Difficulty:    b.Header.Difficulty,
 			Nonce:         b.Header.Nonce,
 			Height:        b.Header.Height,
+			Type:          b.Header.Type,
+			CoinType:      b.Header.CoinType,
+			Hash:          append([]byte{}, b.Header.Hash...),
 		},
 		Transactions: make([]*types.Transaction, len(b.Transactions)),
 		Size:         b.Size,
-		Timestamp:    b.Timestamp,
-		Difficulty:   b.Difficulty,
-		CoinType:     b.CoinType,
 		Hash:         append([]byte{}, b.Hash...),
 		PreviousHash: append([]byte{}, b.PreviousHash...),
 	}

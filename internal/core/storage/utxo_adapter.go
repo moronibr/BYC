@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/youngchain/internal/core/block"
@@ -34,7 +35,8 @@ func (a *UTXOAdapter) AddUTXO(utxo *types.UTXO) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.store.utxos[string(utxo.TxHash)+string(utxo.OutputIndex)] = utxo
+	utxoKey := fmt.Sprintf("%x:%d", utxo.TxHash, utxo.OutputIndex)
+	a.store.utxos[utxoKey] = utxo
 }
 
 // RemoveUTXO removes a UTXO from the store
@@ -42,7 +44,8 @@ func (a *UTXOAdapter) RemoveUTXO(txHash []byte, index uint32) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	delete(a.store.utxos, string(txHash)+string(index))
+	utxoKey := fmt.Sprintf("%x:%d", txHash, index)
+	delete(a.store.utxos, utxoKey)
 }
 
 // GetUTXOsByAddress gets all UTXOs for an address
@@ -79,12 +82,43 @@ func (a *UTXOAdapter) ValidateUTXO(txHash []byte, index uint32) bool {
 
 // GetAllUTXOs returns all UTXOs in the set
 func (a *UTXOAdapter) GetAllUTXOs() []*types.UTXO {
-	// ... existing code ...
-	return nil
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	utxos := make([]*types.UTXO, 0, len(a.store.utxos))
+	for _, utxo := range a.store.utxos {
+		utxos = append(utxos, utxo)
+	}
+	return utxos
 }
 
 // UpdateWithBlock updates the UTXO set with a new block
 func (a *UTXOAdapter) UpdateWithBlock(block *block.Block) error {
-	// ... existing code ...
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Process transactions in the block
+	for _, tx := range block.GetTransactions() {
+		// Remove spent UTXOs
+		for _, input := range tx.GetInputs() {
+			utxoKey := fmt.Sprintf("%x:%d", input.PreviousTxHash, input.OutputIndex)
+			delete(a.store.utxos, utxoKey)
+		}
+
+		// Add new UTXOs
+		for i, output := range tx.GetOutputs() {
+			utxo := types.NewUTXO(
+				tx.GetHash(),
+				uint32(i),
+				output.Value,
+				output.ScriptPubKey,
+				output.Address,
+				tx.GetCoinType(),
+			)
+			utxoKey := fmt.Sprintf("%x:%d", tx.GetHash(), i)
+			a.store.utxos[utxoKey] = utxo
+		}
+	}
+
 	return nil
 }

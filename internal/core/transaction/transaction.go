@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
-	"github.com/youngchain/internal/core/common"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -23,42 +22,16 @@ var (
 
 // Transaction represents a cryptocurrency transaction
 type Transaction struct {
-	Version   uint32    `json:"version"`
-	Inputs    []Input   `json:"inputs"`
-	Outputs   []Output  `json:"outputs"`
-	LockTime  uint32    `json:"lockTime"`
-	Fee       int64     `json:"fee"`
-	CoinType  coin.Type `json:"coinType"`
-	HashBytes []byte    `json:"hash"`
-	Signature []byte    `json:"signature"`
-	Data      []byte    `json:"data"`
-	Witness   [][]byte  `json:"witness"`
-}
-
-// Input represents a transaction input
-type Input struct {
-	PreviousTxHash []byte `json:"previousTxHash"`
-	OutputIndex    uint32 `json:"outputIndex"`
-	ScriptSig      []byte `json:"scriptSig"`
-	Sequence       uint32 `json:"sequence"`
-}
-
-// Output represents a transaction output
-type Output struct {
-	Value        int64  `json:"value"`
-	ScriptPubKey []byte `json:"scriptPubKey"`
-}
-
-// UTXO represents an unspent transaction output
-type UTXO struct {
-	TxHash       []byte    `json:"txHash"`
-	OutputIndex  uint32    `json:"txIndex"`
-	Value        int64     `json:"value"`
-	ScriptPubKey []byte    `json:"scriptPubKey"`
-	Spent        bool      `json:"isSpent"`
-	Address      string    `json:"address"`
-	CoinType     coin.Type `json:"coinType"`
-	BlockHash    []byte    `json:"blockHash"`
+	Version   uint32            `json:"version"`
+	Inputs    []*types.TxInput  `json:"inputs"`
+	Outputs   []*types.TxOutput `json:"outputs"`
+	LockTime  uint32            `json:"lockTime"`
+	Fee       int64             `json:"fee"`
+	CoinType  coin.Type         `json:"coinType"`
+	Hash      []byte            `json:"hash"`
+	Signature []byte            `json:"signature"`
+	Data      []byte            `json:"data"`
+	Witness   [][]byte          `json:"witness"`
 }
 
 // TransactionPool manages pending transactions
@@ -82,8 +55,8 @@ func NewTransactionPool(maxSize int) *TransactionPool {
 func NewTransaction(version uint32, coinType coin.Type) *Transaction {
 	return &Transaction{
 		Version:  version,
-		Inputs:   make([]Input, 0),
-		Outputs:  make([]Output, 0),
+		Inputs:   make([]*types.TxInput, 0),
+		Outputs:  make([]*types.TxOutput, 0),
 		LockTime: uint32(time.Now().Unix()),
 		CoinType: coinType,
 		Data:     make([]byte, 0),
@@ -93,7 +66,7 @@ func NewTransaction(version uint32, coinType coin.Type) *Transaction {
 
 // AddInput adds an input to the transaction
 func (tx *Transaction) AddInput(previousTxHash []byte, outputIndex uint32, scriptSig []byte) {
-	tx.Inputs = append(tx.Inputs, Input{
+	tx.Inputs = append(tx.Inputs, &types.TxInput{
 		PreviousTxHash: previousTxHash,
 		OutputIndex:    outputIndex,
 		ScriptSig:      scriptSig,
@@ -103,23 +76,29 @@ func (tx *Transaction) AddInput(previousTxHash []byte, outputIndex uint32, scrip
 
 // AddOutput adds an output to the transaction
 func (tx *Transaction) AddOutput(value int64, scriptPubKey []byte) {
-	tx.Outputs = append(tx.Outputs, Output{
+	tx.Outputs = append(tx.Outputs, &types.TxOutput{
 		Value:        value,
 		ScriptPubKey: scriptPubKey,
 	})
 }
 
 // CalculateHash calculates the transaction hash
-func (tx *Transaction) CalculateHash() {
-	data, _ := json.Marshal(tx)
+func (tx *Transaction) CalculateHash() error {
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transaction: %v", err)
+	}
 	hash := sha256.Sum256(data)
-	tx.HashBytes = hash[:]
+	tx.Hash = hash[:]
+	return nil
 }
 
 // Sign signs the transaction with the given private key
 func (tx *Transaction) Sign(privateKey *ecdsa.PrivateKey) error {
-	tx.CalculateHash()
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.HashBytes)
+	if err := tx.CalculateHash(); err != nil {
+		return err
+	}
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, tx.Hash)
 	if err != nil {
 		return err
 	}
@@ -129,15 +108,15 @@ func (tx *Transaction) Sign(privateKey *ecdsa.PrivateKey) error {
 }
 
 // Validate validates the transaction
-func (tx *Transaction) Validate() (bool, error) {
+func (tx *Transaction) Validate() error {
 	if len(tx.Inputs) == 0 || len(tx.Outputs) == 0 {
-		return false, fmt.Errorf("transaction must have at least one input and one output")
+		return fmt.Errorf("transaction must have at least one input and one output")
 	}
 
 	// Validate inputs
 	for _, input := range tx.Inputs {
 		if len(input.PreviousTxHash) == 0 {
-			return false, fmt.Errorf("invalid previous transaction hash")
+			return fmt.Errorf("invalid previous transaction hash")
 		}
 	}
 
@@ -145,17 +124,17 @@ func (tx *Transaction) Validate() (bool, error) {
 	var totalOutput int64
 	for _, output := range tx.Outputs {
 		if output.Value <= 0 {
-			return false, fmt.Errorf("invalid output value")
+			return fmt.Errorf("invalid output value")
 		}
 		totalOutput += output.Value
 	}
 
 	// Validate fee
 	if tx.Fee < 0 {
-		return false, fmt.Errorf("invalid fee")
+		return fmt.Errorf("invalid fee")
 	}
 
-	return true, nil
+	return nil
 }
 
 // AddTransaction adds a transaction to the pool
@@ -222,11 +201,11 @@ func (tp *TransactionPool) RemoveTransaction(txHash []byte) {
 }
 
 // GetTransaction returns a transaction from the pool
-func (tp *TransactionPool) GetTransaction(txHash []byte) *types.Transaction {
+func (tp *TransactionPool) GetTransaction(hash []byte) *types.Transaction {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
-	return tp.transactions[string(txHash)]
+	return tp.transactions[string(hash)]
 }
 
 // GetTransactions returns all transactions in the pool
@@ -331,18 +310,35 @@ func (tp *TransactionPool) GetBalance(address string, coinType coin.Type) int64 
 	return balance
 }
 
-// Hash returns the transaction hash as a common.Hash
-func (tx *Transaction) Hash() common.Hash {
-	return common.BytesToHash(tx.HashBytes)
+// GetHash returns the transaction hash
+func (tx *Transaction) GetHash() []byte {
+	return tx.Hash
 }
 
-// FeeRate calculates the fee rate in satoshis per byte
-func (tx *Transaction) FeeRate() int64 {
-	size := tx.Size()
-	if size == 0 {
-		return 0
-	}
-	return tx.Fee / int64(size)
+// GetInputs returns the transaction inputs
+func (tx *Transaction) GetInputs() []*types.TxInput {
+	return tx.Inputs
+}
+
+// GetOutputs returns the transaction outputs
+func (tx *Transaction) GetOutputs() []*types.TxOutput {
+	return tx.Outputs
+}
+
+// GetFee returns the transaction fee
+func (tx *Transaction) GetFee() int64 {
+	return tx.Fee
+}
+
+// GetCoinType returns the transaction coin type
+func (tx *Transaction) GetCoinType() coin.Type {
+	return tx.CoinType
+}
+
+// Verify verifies the transaction signature
+func (tx *Transaction) Verify() bool {
+	// TODO: Implement signature verification
+	return true
 }
 
 // Size returns the transaction size in bytes
@@ -377,6 +373,17 @@ func (tx *Transaction) Size() int {
 	// CoinType
 	size += len(tx.CoinType)
 
+	// Data
+	size += 4 // Data length
+	size += len(tx.Data)
+
+	// Witness
+	size += 4 // Witness count
+	for _, witness := range tx.Witness {
+		size += 4 // Witness length
+		size += len(witness)
+	}
+
 	return size
 }
 
@@ -388,7 +395,7 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		Hash string `json:"hash"`
 	}{
 		Alias: (*Alias)(tx),
-		Hash:  fmt.Sprintf("%x", tx.HashBytes),
+		Hash:  fmt.Sprintf("%x", tx.Hash),
 	})
 }
 
@@ -405,51 +412,4 @@ func (tx *Transaction) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	return nil
-}
-
-// GetHash returns the transaction hash
-func (tx *Transaction) GetHash() []byte {
-	return tx.HashBytes
-}
-
-// GetInputs returns the transaction inputs
-func (tx *Transaction) GetInputs() []*types.TxInput {
-	inputs := make([]*types.TxInput, len(tx.Inputs))
-	for i, input := range tx.Inputs {
-		inputs[i] = &types.TxInput{
-			PreviousTxHash: input.PreviousTxHash,
-			OutputIndex:    input.OutputIndex,
-			ScriptSig:      input.ScriptSig,
-			Sequence:       input.Sequence,
-		}
-	}
-	return inputs
-}
-
-// GetOutputs returns the transaction outputs
-func (tx *Transaction) GetOutputs() []*types.TxOutput {
-	outputs := make([]*types.TxOutput, len(tx.Outputs))
-	for i, output := range tx.Outputs {
-		outputs[i] = &types.TxOutput{
-			Value:        output.Value,
-			ScriptPubKey: output.ScriptPubKey,
-		}
-	}
-	return outputs
-}
-
-// GetFee returns the transaction fee
-func (tx *Transaction) GetFee() int64 {
-	return tx.Fee
-}
-
-// GetCoinType returns the transaction coin type
-func (tx *Transaction) GetCoinType() coin.Type {
-	return tx.CoinType
-}
-
-// Verify verifies the transaction signature
-func (tx *Transaction) Verify() bool {
-	// TODO: Implement signature verification
-	return true
 }
