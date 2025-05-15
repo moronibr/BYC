@@ -1,6 +1,6 @@
 # Brigham Young Chain (BYC)
 
-Brigham Young Chain is a blockchain implementation with a unique three-tier mining system featuring Leah, Shiblum, and Shiblon coins.
+Brigham Young Chain is a blockchain implementation with a unique three-tier mining system featuring Leah, Shiblum, and Shiblon coins, this blockchain is based on the Nephites monetary system found in The Book of Mormon, Alma 11.
 
 ## Quick Start
 
@@ -180,6 +180,8 @@ go run cmd/youngchain/main.go -type=light -port=8335
 Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
 
 ## Acknowledgments
+- The Book of Mormon was translated by the power of God by The Prophet Joseph Smith Junior
+- This block chain has no link to The Church of Jesus Christ of Latter Day Saints
 - Inspired by the Nephite monetary system
 - Built on blockchain principles
 - Community-driven development # BYC
