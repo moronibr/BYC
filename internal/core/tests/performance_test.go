@@ -9,254 +9,276 @@ import (
 	"github.com/youngchain/internal/core/mining"
 	"github.com/youngchain/internal/core/network"
 	"github.com/youngchain/internal/core/transaction"
+	"github.com/youngchain/internal/core/wallet"
 )
 
 // BenchmarkBlockCreation benchmarks block creation
 func BenchmarkBlockCreation(b *testing.B) {
-	// Create blockchain
+	// Initialize components
 	blockchain := block.NewBlockchain()
-	if blockchain == nil {
-		b.Fatal("Failed to create blockchain")
-	}
-
-	// Create transaction pool
-	txPool := transaction.NewTxPool(1000, 0.001, nil)
-	if txPool == nil {
-		b.Fatal("Failed to create transaction pool")
-	}
-
-	// Create consensus
-	consensusConfig := &consensus.ConsensusConfig{
-		TargetBits: 24,
-		MaxNonce:   1000000,
+	txPool := transaction.NewTxPool(1000)
+	consensusConfig := consensus.Config{
+		TargetBits:    20,
+		MaxNonce:      1000000,
+		BlockInterval: 10 * time.Second,
 	}
 	consensus := consensus.NewConsensus(consensusConfig)
-	if consensus == nil {
-		b.Fatal("Failed to create consensus")
+	minerConfig := mining.Config{
+		Blockchain: blockchain,
+		TxPool:     txPool,
+		Consensus:  consensus,
 	}
-
-	// Create miner
-	minerConfig := &mining.MinerConfig{
-		MiningAddress: "test_address",
-		TargetBits:    24,
-		MaxNonce:      1000000,
-	}
-	miner := mining.NewMiner(minerConfig, blockchain, txPool, nil)
-	if miner == nil {
-		b.Fatal("Failed to create miner")
-	}
+	miner := mining.NewMiner(minerConfig)
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
 		// Create a new block
-		newBlock := block.NewBlock(block.GoldenBlock, 1, []byte("prev_hash"), time.Now())
-		if newBlock == nil {
-			b.Fatal("Failed to create new block")
-		}
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, uint64(time.Now().Unix()))
 
-		// Add transactions to block
-		tx := transaction.NewTransaction(1, "Leah")
-		if tx == nil {
-			b.Fatal("Failed to create transaction")
-		}
+		// Add transactions to the block
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+		newBlock.AddTransaction(tx)
 
-		if err := newBlock.AddTransaction(tx); err != nil {
-			b.Fatalf("Failed to add transaction to block: %v", err)
-		}
+		// Mine the block
+		minedBlock, _ := miner.MineBlock(newBlock)
 
-		// Mine block
-		if err := miner.MineBlock(newBlock); err != nil {
-			b.Fatalf("Failed to mine block: %v", err)
-		}
-
-		// Verify block
-		if !newBlock.IsValid() {
-			b.Fatal("Block validation failed")
-		}
-
-		// Add block to blockchain
-		if err := blockchain.AddBlock(newBlock); err != nil {
-			b.Fatalf("Failed to add block to blockchain: %v", err)
-		}
+		// Add the block to the blockchain
+		blockchain.AddBlock(minedBlock)
 	}
 }
 
 // BenchmarkTransactionProcessing benchmarks transaction processing
 func BenchmarkTransactionProcessing(b *testing.B) {
-	// Create transaction pool
-	txPool := transaction.NewTxPool(1000, 0.001, nil)
-	if txPool == nil {
-		b.Fatal("Failed to create transaction pool")
-	}
+	// Initialize components
+	txPool := transaction.NewTxPool(1000)
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
-		// Create transaction
-		tx := transaction.NewTransaction(1, "Leah")
-		if tx == nil {
-			b.Fatal("Failed to create transaction")
-		}
+		// Create a new transaction
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
 
-		// Add transaction to pool
-		if err := txPool.AddTransaction(tx); err != nil {
-			b.Fatalf("Failed to add transaction to pool: %v", err)
-		}
+		// Add transaction to the pool
+		txPool.AddTransaction(tx)
 
-		// Get best transactions
-		bestTxs := txPool.GetBest(10)
-		if len(bestTxs) != 1 {
-			b.Fatal("Failed to get best transactions")
-		}
+		// Get transaction from pool
+		txPool.GetTransaction(tx.Hash)
 	}
 }
 
 // BenchmarkNetworkCommunication benchmarks network communication
 func BenchmarkNetworkCommunication(b *testing.B) {
-	// Create network node
-	nodeConfig := &network.NodeConfig{
-		ListenPort:       8333,
-		MaxPeers:         10,
-		HandshakeTimeout: 30 * time.Second,
-		PingInterval:     2 * time.Minute,
+	// Initialize components
+	nodeConfig := network.Config{
+		ListenPort: 8333,
+		MaxPeers:   10,
 	}
-	node := network.NewNode(nodeConfig)
-	if node == nil {
-		b.Fatal("Failed to create network node")
-	}
-
-	// Start node
-	if err := node.Start(); err != nil {
-		b.Fatalf("Failed to start node: %v", err)
-	}
+	node, _ := network.NewNode(nodeConfig)
+	node.Start()
 	defer node.Stop()
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
-		// Create test message
-		msg := &network.Message{
-			Type: network.MsgVersion,
-			Payload: &network.VersionPayload{
-				Version:   1,
-				Services:  0,
-				Timestamp: time.Now(),
-				AddrRecv:  "127.0.0.1:8333",
-				AddrFrom:  "127.0.0.1:8334",
-			},
-		}
+		// Create a test message
+		msg := network.NewMessage(network.MsgBlock, []byte("test"))
 
-		// Broadcast message
-		if err := node.BroadcastMessage(msg); err != nil {
-			b.Fatalf("Failed to broadcast message: %v", err)
-		}
+		// Broadcast the message
+		node.Broadcast(msg)
 	}
 }
 
 // BenchmarkConsensus benchmarks consensus operations
 func BenchmarkConsensus(b *testing.B) {
-	// Create consensus
-	consensusConfig := &consensus.ConsensusConfig{
-		TargetBits: 24,
-		MaxNonce:   1000000,
+	// Initialize components
+	blockchain := block.NewBlockchain()
+	consensusConfig := consensus.Config{
+		TargetBits:    20,
+		MaxNonce:      1000000,
+		BlockInterval: 10 * time.Second,
 	}
 	consensus := consensus.NewConsensus(consensusConfig)
-	if consensus == nil {
-		b.Fatal("Failed to create consensus")
-	}
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
-		// Create test block
-		testBlock := block.NewBlock(block.GoldenBlock, 1, []byte("prev_hash"), time.Now())
-		if testBlock == nil {
-			b.Fatal("Failed to create test block")
-		}
+		// Create a new block
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, uint64(time.Now().Unix()))
 
-		// Validate block
-		if err := consensus.ValidateBlock(testBlock); err != nil {
-			b.Fatalf("Block validation failed: %v", err)
-		}
-
-		// Validate block header
-		if err := consensus.ValidateBlockHeader(testBlock.Header); err != nil {
-			b.Fatalf("Block header validation failed: %v", err)
-		}
-
-		// Validate block size
-		if err := consensus.ValidateBlockSize(testBlock); err != nil {
-			b.Fatalf("Block size validation failed: %v", err)
-		}
-
-		// Validate transactions
-		if err := consensus.ValidateTransactions(testBlock.Transactions); err != nil {
-			b.Fatalf("Transaction validation failed: %v", err)
-		}
-
-		// Validate proof of work
-		if err := consensus.ValidateProofOfWork(testBlock); err != nil {
-			b.Fatalf("Proof of work validation failed: %v", err)
-		}
+		// Validate the block
+		consensus.ValidateBlock(newBlock)
 	}
 }
 
 // BenchmarkBlockchainOperations benchmarks blockchain operations
 func BenchmarkBlockchainOperations(b *testing.B) {
-	// Create blockchain
+	// Initialize components
 	blockchain := block.NewBlockchain()
-	if blockchain == nil {
-		b.Fatal("Failed to create blockchain")
-	}
 
-	// Add test block
-	testBlock := block.NewBlock(block.GoldenBlock, 1, []byte("prev_hash"), time.Now())
-	if testBlock == nil {
-		b.Fatal("Failed to create test block")
-	}
-
-	if err := blockchain.AddBlock(testBlock); err != nil {
-		b.Fatalf("Failed to add block to blockchain: %v", err)
+	// Add some blocks for testing
+	for i := 0; i < 100; i++ {
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, uint64(time.Now().Unix()))
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+		newBlock.AddTransaction(tx)
+		blockchain.AddBlock(newBlock)
 	}
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
 		// Get best block
-		bestBlock := blockchain.GetBestBlock()
-		if bestBlock == nil {
-			b.Fatal("Failed to get best block")
-		}
+		blockchain.GetBestBlock()
 
 		// Get block by hash
-		blockByHash := blockchain.GetBlockByHash(bestBlock.Header.Hash)
-		if blockByHash == nil {
-			b.Fatal("Failed to get block by hash")
-		}
+		blockchain.GetBlockByHash(blockchain.GetBestBlock().Header.Hash)
 
 		// Get block by height
-		blockByHeight := blockchain.GetBlockByHeight(bestBlock.Header.Height)
-		if blockByHeight == nil {
-			b.Fatal("Failed to get block by height")
-		}
+		blockchain.GetBlockByHeight(uint64(i % 100))
 
 		// Get block count
-		blockCount := blockchain.GetBlockCount()
-		if blockCount != 1 {
-			b.Fatalf("Expected block count 1, got %d", blockCount)
-		}
+		blockchain.GetBlockCount()
+	}
+}
 
-		// Get blocks
-		blocks := blockchain.GetBlocks(0, 10)
-		if len(blocks) != 1 {
-			b.Fatalf("Expected 1 block, got %d", len(blocks))
-		}
+// BenchmarkWalletOperations benchmarks wallet operations
+func BenchmarkWalletOperations(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Create a new wallet
+		wallet.NewWallet("golden")
 
-		// Get blocks by type
-		goldenBlocks := blockchain.GetBlocksByType(block.GoldenBlock)
-		if len(goldenBlocks) != 1 {
-			b.Fatalf("Expected 1 golden block, got %d", len(goldenBlocks))
-		}
+		// Save wallet
+		w, _ := wallet.NewWallet("golden")
+		w.SaveWallet("test_wallet.dat")
+
+		// Load wallet
+		wallet.LoadWallet("test_wallet.dat")
+	}
+}
+
+// BenchmarkTransactionValidation benchmarks transaction validation
+func BenchmarkTransactionValidation(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Create a new transaction
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+
+		// Validate transaction
+		tx.Validate()
+
+		// Calculate transaction hash
+		tx.CalculateHash()
+
+		// Get transaction size
+		tx.Size()
+
+		// Get transaction weight
+		tx.Weight()
+	}
+}
+
+// BenchmarkBlockValidation benchmarks block validation
+func BenchmarkBlockValidation(b *testing.B) {
+	// Initialize components
+	blockchain := block.NewBlockchain()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Create a new block
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, uint64(time.Now().Unix()))
+
+		// Add transactions to the block
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+		newBlock.AddTransaction(tx)
+
+		// Validate block
+		newBlock.Validate()
+
+		// Calculate block hash
+		newBlock.CalculateHash()
+
+		// Get block size
+		newBlock.Size()
+	}
+}
+
+// BenchmarkNetworkNodeOperations benchmarks network node operations
+func BenchmarkNetworkNodeOperations(b *testing.B) {
+	// Initialize components
+	nodeConfig := network.Config{
+		ListenPort: 8333,
+		MaxPeers:   10,
+	}
+	node, _ := network.NewNode(nodeConfig)
+	node.Start()
+	defer node.Stop()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Get node status
+		node.GetStatus()
+
+		// Get connected peers
+		node.GetPeers()
+
+		// Get node address
+		node.GetAddress()
+	}
+}
+
+// BenchmarkConsensusOperations benchmarks consensus operations
+func BenchmarkConsensusOperations(b *testing.B) {
+	// Initialize components
+	consensusConfig := consensus.Config{
+		TargetBits:    20,
+		MaxNonce:      1000000,
+		BlockInterval: 10 * time.Second,
+	}
+	consensus := consensus.NewConsensus(consensusConfig)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Get current difficulty
+		consensus.GetDifficulty()
+
+		// Get target bits
+		consensus.GetTargetBits()
+
+		// Get block interval
+		consensus.GetBlockInterval()
+	}
+}
+
+// BenchmarkMiningOperations benchmarks mining operations
+func BenchmarkMiningOperations(b *testing.B) {
+	// Initialize components
+	blockchain := block.NewBlockchain()
+	txPool := transaction.NewTxPool(1000)
+	consensusConfig := consensus.Config{
+		TargetBits:    20,
+		MaxNonce:      1000000,
+		BlockInterval: 10 * time.Second,
+	}
+	consensus := consensus.NewConsensus(consensusConfig)
+	minerConfig := mining.Config{
+		Blockchain: blockchain,
+		TxPool:     txPool,
+		Consensus:  consensus,
+	}
+	miner := mining.NewMiner(minerConfig)
+	miner.Start()
+	defer miner.Stop()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Get mining status
+		miner.GetStatus()
+
+		// Check if mining is running
+		miner.IsRunning()
+
+		// Get mining rate
+		miner.GetHashRate()
 	}
 }

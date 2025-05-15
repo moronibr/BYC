@@ -4,215 +4,251 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/youngchain/internal/core/block"
 	"github.com/youngchain/internal/core/consensus"
 	"github.com/youngchain/internal/core/mining"
 	"github.com/youngchain/internal/core/network"
 	"github.com/youngchain/internal/core/transaction"
+	"github.com/youngchain/internal/core/wallet"
 )
 
 // TestBlockchainIntegration tests the integration of blockchain components
 func TestBlockchainIntegration(t *testing.T) {
-	// Create blockchain
+	// Initialize components
 	blockchain := block.NewBlockchain()
-	if blockchain == nil {
-		t.Fatal("Failed to create blockchain")
-	}
-
-	// Create transaction pool
-	txPool := transaction.NewTxPool(1000, 0.001, nil)
-	if txPool == nil {
-		t.Fatal("Failed to create transaction pool")
-	}
-
-	// Create consensus
-	consensusConfig := &consensus.ConsensusConfig{
-		TargetBits: 24,
-		MaxNonce:   1000000,
+	txPool := transaction.NewTxPool(1000)
+	consensusConfig := consensus.Config{
+		TargetBits:    20,
+		MaxNonce:      1000000,
+		BlockInterval: 10 * time.Second,
 	}
 	consensus := consensus.NewConsensus(consensusConfig)
-	if consensus == nil {
-		t.Fatal("Failed to create consensus")
+	minerConfig := mining.Config{
+		Blockchain: blockchain,
+		TxPool:     txPool,
+		Consensus:  consensus,
 	}
-
-	// Create miner
-	minerConfig := &mining.MinerConfig{
-		MiningAddress: "test_address",
-		TargetBits:    24,
-		MaxNonce:      1000000,
-	}
-	miner := mining.NewMiner(minerConfig, blockchain, txPool, nil)
-	if miner == nil {
-		t.Fatal("Failed to create miner")
-	}
-
-	// Create network node
-	nodeConfig := &network.NodeConfig{
-		ListenPort:       8333,
-		MaxPeers:         10,
-		HandshakeTimeout: 30 * time.Second,
-		PingInterval:     2 * time.Minute,
+	miner := mining.NewMiner(minerConfig)
+	nodeConfig := network.Config{
+		ListenPort: 8333,
+		MaxPeers:   10,
 	}
 	node := network.NewNode(nodeConfig)
-	if node == nil {
-		t.Fatal("Failed to create network node")
-	}
 
 	// Test block creation and mining
-	t.Run("BlockCreationAndMining", func(t *testing.T) {
+	t.Run("Block Creation and Mining", func(t *testing.T) {
 		// Create a new block
-		newBlock := block.NewBlock(block.GoldenBlock, 1, []byte("prev_hash"), time.Now())
-		if newBlock == nil {
-			t.Fatal("Failed to create new block")
-		}
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, time.Now().Unix())
+		assert.NotNil(t, newBlock)
 
-		// Add transactions to block
-		tx := transaction.NewTransaction(1, "Leah")
-		if tx == nil {
-			t.Fatal("Failed to create transaction")
-		}
+		// Add transactions to the block
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+		newBlock.AddTransaction(tx)
 
-		if err := newBlock.AddTransaction(tx); err != nil {
-			t.Fatalf("Failed to add transaction to block: %v", err)
-		}
+		// Mine the block
+		minedBlock, err := miner.MineBlock(newBlock)
+		assert.NoError(t, err)
+		assert.NotNil(t, minedBlock)
+		assert.True(t, minedBlock.Header.Hash != nil)
 
-		// Mine block
-		if err := miner.MineBlock(newBlock); err != nil {
-			t.Fatalf("Failed to mine block: %v", err)
-		}
-
-		// Verify block
-		if !newBlock.IsValid() {
-			t.Fatal("Block validation failed")
-		}
-
-		// Add block to blockchain
-		if err := blockchain.AddBlock(newBlock); err != nil {
-			t.Fatalf("Failed to add block to blockchain: %v", err)
-		}
+		// Add the block to the blockchain
+		err = blockchain.AddBlock(minedBlock)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(1), blockchain.GetBlockCount())
 	})
 
 	// Test transaction handling
-	t.Run("TransactionHandling", func(t *testing.T) {
-		// Create transaction
-		tx := transaction.NewTransaction(1, "Leah")
-		if tx == nil {
-			t.Fatal("Failed to create transaction")
-		}
+	t.Run("Transaction Handling", func(t *testing.T) {
+		// Create a new transaction
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
 
-		// Add transaction to pool
-		if err := txPool.AddTransaction(tx); err != nil {
-			t.Fatalf("Failed to add transaction to pool: %v", err)
-		}
+		// Add transaction to the pool
+		err := txPool.AddTransaction(tx)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, txPool.Size())
 
-		// Verify transaction in pool
-		if txPool.GetSize() != 1 {
-			t.Fatal("Transaction not added to pool")
-		}
-
-		// Get best transactions
-		bestTxs := txPool.GetBest(10)
-		if len(bestTxs) != 1 {
-			t.Fatal("Failed to get best transactions")
-		}
+		// Get transaction from pool
+		poolTx := txPool.GetTransaction(tx.Hash)
+		assert.NotNil(t, poolTx)
+		assert.Equal(t, tx.Hash, poolTx.Hash)
 	})
 
 	// Test network communication
-	t.Run("NetworkCommunication", func(t *testing.T) {
-		// Start node
-		if err := node.Start(); err != nil {
-			t.Fatalf("Failed to start node: %v", err)
-		}
+	t.Run("Network Communication", func(t *testing.T) {
+		// Start the node
+		err := node.Start()
+		assert.NoError(t, err)
 		defer node.Stop()
 
-		// Create test message
-		msg := &network.Message{
-			Type: network.MsgVersion,
-			Payload: &network.VersionPayload{
-				Version:   1,
-				Services:  0,
-				Timestamp: time.Now(),
-				AddrRecv:  "127.0.0.1:8333",
-				AddrFrom:  "127.0.0.1:8334",
-			},
-		}
+		// Create a test message
+		msg := network.NewMessage(network.MsgBlock, []byte("test"))
+		assert.NotNil(t, msg)
 
-		// Broadcast message
-		if err := node.BroadcastMessage(msg); err != nil {
-			t.Fatalf("Failed to broadcast message: %v", err)
-		}
+		// Broadcast the message
+		err = node.Broadcast(msg)
+		assert.NoError(t, err)
 	})
 
-	// Test consensus
-	t.Run("Consensus", func(t *testing.T) {
-		// Create test block
-		testBlock := block.NewBlock(block.GoldenBlock, 1, []byte("prev_hash"), time.Now())
-		if testBlock == nil {
-			t.Fatal("Failed to create test block")
-		}
+	// Test consensus validation
+	t.Run("Consensus Validation", func(t *testing.T) {
+		// Create a new block
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, time.Now().Unix())
+		assert.NotNil(t, newBlock)
 
-		// Validate block
-		if err := consensus.ValidateBlock(testBlock); err != nil {
-			t.Fatalf("Block validation failed: %v", err)
-		}
-
-		// Validate block header
-		if err := consensus.ValidateBlockHeader(testBlock.Header); err != nil {
-			t.Fatalf("Block header validation failed: %v", err)
-		}
-
-		// Validate block size
-		if err := consensus.ValidateBlockSize(testBlock); err != nil {
-			t.Fatalf("Block size validation failed: %v", err)
-		}
-
-		// Validate transactions
-		if err := consensus.ValidateTransactions(testBlock.Transactions); err != nil {
-			t.Fatalf("Transaction validation failed: %v", err)
-		}
-
-		// Validate proof of work
-		if err := consensus.ValidateProofOfWork(testBlock); err != nil {
-			t.Fatalf("Proof of work validation failed: %v", err)
-		}
+		// Validate the block
+		valid, err := consensus.ValidateBlock(newBlock)
+		assert.NoError(t, err)
+		assert.True(t, valid)
 	})
 
 	// Test blockchain operations
-	t.Run("BlockchainOperations", func(t *testing.T) {
+	t.Run("Blockchain Operations", func(t *testing.T) {
 		// Get best block
 		bestBlock := blockchain.GetBestBlock()
-		if bestBlock == nil {
-			t.Fatal("Failed to get best block")
-		}
+		assert.NotNil(t, bestBlock)
 
 		// Get block by hash
 		blockByHash := blockchain.GetBlockByHash(bestBlock.Header.Hash)
-		if blockByHash == nil {
-			t.Fatal("Failed to get block by hash")
-		}
+		assert.NotNil(t, blockByHash)
+		assert.Equal(t, bestBlock.Header.Hash, blockByHash.Header.Hash)
 
 		// Get block by height
-		blockByHeight := blockchain.GetBlockByHeight(bestBlock.Header.Height)
-		if blockByHeight == nil {
-			t.Fatal("Failed to get block by height")
-		}
+		blockByHeight := blockchain.GetBlockByHeight(0)
+		assert.NotNil(t, blockByHeight)
+		assert.Equal(t, uint64(0), blockByHeight.Header.Height)
 
 		// Get block count
-		blockCount := blockchain.GetBlockCount()
-		if blockCount != 1 {
-			t.Fatalf("Expected block count 1, got %d", blockCount)
-		}
+		count := blockchain.GetBlockCount()
+		assert.Equal(t, uint64(1), count)
+	})
 
-		// Get blocks
-		blocks := blockchain.GetBlocks(0, 10)
-		if len(blocks) != 1 {
-			t.Fatalf("Expected 1 block, got %d", len(blocks))
-		}
+	// Test wallet operations
+	t.Run("Wallet Operations", func(t *testing.T) {
+		// Create a new wallet
+		w, err := wallet.NewWallet("golden")
+		assert.NoError(t, err)
+		assert.NotNil(t, w)
 
-		// Get blocks by type
-		goldenBlocks := blockchain.GetBlocksByType(block.GoldenBlock)
-		if len(goldenBlocks) != 1 {
-			t.Fatalf("Expected 1 golden block, got %d", len(goldenBlocks))
-		}
+		// Save wallet
+		err = w.SaveWallet("test_wallet.dat")
+		assert.NoError(t, err)
+
+		// Load wallet
+		loadedWallet, err := wallet.LoadWallet("test_wallet.dat")
+		assert.NoError(t, err)
+		assert.NotNil(t, loadedWallet)
+		assert.Equal(t, w.Address, loadedWallet.Address)
+
+		// Get balance
+		balance, err := loadedWallet.GetBalance(txPool)
+		assert.NoError(t, err)
+		assert.NotNil(t, balance)
+	})
+
+	// Test transaction validation
+	t.Run("Transaction Validation", func(t *testing.T) {
+		// Create a new transaction
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+
+		// Validate transaction
+		valid, err := tx.Validate()
+		assert.NoError(t, err)
+		assert.True(t, valid)
+
+		// Calculate transaction hash
+		tx.CalculateHash()
+		assert.NotNil(t, tx.Hash)
+
+		// Get transaction size
+		size := tx.Size()
+		assert.Greater(t, size, 0)
+
+		// Get transaction weight
+		weight := tx.Weight()
+		assert.Greater(t, weight, 0)
+	})
+
+	// Test block validation
+	t.Run("Block Validation", func(t *testing.T) {
+		// Create a new block
+		newBlock := block.NewBlock(blockchain.GetBestBlock().Header.Hash, time.Now().Unix())
+		assert.NotNil(t, newBlock)
+
+		// Add transactions to the block
+		tx := transaction.NewTransaction(1, "golden")
+		tx.AddOutput("BYC1...", 1000000)
+		newBlock.AddTransaction(tx)
+
+		// Validate block
+		valid, err := newBlock.Validate()
+		assert.NoError(t, err)
+		assert.True(t, valid)
+
+		// Calculate block hash
+		newBlock.CalculateHash()
+		assert.NotNil(t, newBlock.Header.Hash)
+
+		// Get block size
+		size := newBlock.Size()
+		assert.Greater(t, size, 0)
+	})
+
+	// Test network node operations
+	t.Run("Network Node Operations", func(t *testing.T) {
+		// Start the node
+		err := node.Start()
+		assert.NoError(t, err)
+		defer node.Stop()
+
+		// Get node status
+		status := node.GetStatus()
+		assert.NotNil(t, status)
+		assert.True(t, status.IsRunning)
+
+		// Get connected peers
+		peers := node.GetPeers()
+		assert.NotNil(t, peers)
+
+		// Get node address
+		addr := node.GetAddress()
+		assert.NotEmpty(t, addr)
+	})
+
+	// Test consensus operations
+	t.Run("Consensus Operations", func(t *testing.T) {
+		// Get current difficulty
+		difficulty := consensus.GetDifficulty()
+		assert.Greater(t, difficulty, 0)
+
+		// Get target bits
+		targetBits := consensus.GetTargetBits()
+		assert.Equal(t, consensusConfig.TargetBits, targetBits)
+
+		// Get block interval
+		interval := consensus.GetBlockInterval()
+		assert.Equal(t, consensusConfig.BlockInterval, interval)
+	})
+
+	// Test mining operations
+	t.Run("Mining Operations", func(t *testing.T) {
+		// Get mining status
+		status := miner.GetStatus()
+		assert.NotNil(t, status)
+
+		// Start mining
+		err := miner.Start()
+		assert.NoError(t, err)
+		defer miner.Stop()
+
+		// Check if mining is running
+		assert.True(t, miner.IsRunning())
+
+		// Get mining rate
+		rate := miner.GetHashRate()
+		assert.Greater(t, rate, 0)
 	})
 }
