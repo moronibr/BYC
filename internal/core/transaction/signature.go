@@ -258,21 +258,20 @@ func taprootSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (
 	tweakedPrivKey.Key = secpPrivKey.Key
 	tweakedPrivKey.Key.Add(tweakScalar)
 
-	// Convert back to btcec for Schnorr signing
+	// Convert to btcec private key
 	btcecPrivKey, err := btcec.PrivKeyFromBytes(tweakedPrivKey.Serialize())
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert to btcec key: %v", err)
 	}
 
-	// Sign the hash using Schnorr with the tweaked key
-	// Create a new signature using the btcec private key
-	sig, err := schnorr.Sign(btcecPrivKey, hash[:])
+	// Sign the hash using Schnorr
+	schnorrSignature, err := schnorr.Sign(btcecPrivKey, hash[:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create Taproot signature: %v", err)
 	}
 
 	// Get the R and S components from the serialized signature
-	sigBytes := sig.Serialize()
+	sigBytes := schnorrSignature.Serialize()
 	if len(sigBytes) != 64 {
 		return nil, nil, fmt.Errorf("invalid signature length")
 	}
@@ -314,7 +313,7 @@ func taprootVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bo
 	secp256k1.AddNonConst(&pubJac, &tweakJac, &outJac)
 	tweakedPubKey := secp256k1.NewPublicKey(&outJac.X, &outJac.Y)
 
-	// Convert to btcec for Schnorr verification
+	// Convert to btcec public key
 	btcecPubKey, err := btcec.ParsePubKey(tweakedPubKey.SerializeCompressed())
 	if err != nil {
 		return false
