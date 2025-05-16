@@ -1,255 +1,402 @@
 package types
 
 import (
-	"bytes"
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"math/big"
 	"time"
 )
 
-// Transaction represents a transaction in the blockchain
-type Transaction struct {
-	ID        []byte
-	Vin       []TXInput
-	Vout      []TXOutput
-	Timestamp int64
+const (
+	// DefaultTransactionVersion is the default version for transactions
+	DefaultTransactionVersion = 1
+	// DefaultTransactionLockTime is the default lock time for transactions
+	DefaultTransactionLockTime = 0
+)
+
+// BitcoinTransaction represents a Bitcoin transaction
+type BitcoinTransaction struct {
+	// Version is the transaction version
+	Version uint32
+	// Inputs are the transaction inputs
+	Inputs []*TransactionInput
+	// Outputs are the transaction outputs
+	Outputs []*TransactionOutput
+	// LockTime is the transaction lock time
+	LockTime uint32
 }
 
-// TXInput represents a transaction input
-type TXInput struct {
-	Txid      []byte
-	Vout      int
-	Signature []byte
-	PubKey    []byte
+// TransactionInput represents a transaction input
+type TransactionInput struct {
+	// PreviousTxID is the ID of the previous transaction
+	PreviousTxID []byte
+	// PreviousTxIndex is the index of the previous transaction output
+	PreviousTxIndex int
+	// ScriptSig is the input script
+	ScriptSig []byte
+	// Sequence is the input sequence
+	Sequence uint32
 }
 
-// TXOutput represents a transaction output
-type TXOutput struct {
-	Value      int64
-	PubKeyHash []byte
+// TransactionOutput represents a transaction output
+type TransactionOutput struct {
+	// Value is the output value in satoshis
+	Value int64
+	// ScriptPubKey is the output script
+	ScriptPubKey []byte
 }
 
-// NewTransaction creates a new transaction
-func NewTransaction(vin []TXInput, vout []TXOutput) *Transaction {
-	tx := &Transaction{
-		Vin:       vin,
-		Vout:      vout,
-		Timestamp: time.Now().Unix(),
+// NewBitcoinTransaction creates a new Bitcoin transaction
+func NewBitcoinTransaction() *BitcoinTransaction {
+	return &BitcoinTransaction{
+		Version:  DefaultTransactionVersion,
+		Inputs:   make([]*TransactionInput, 0),
+		Outputs:  make([]*TransactionOutput, 0),
+		LockTime: DefaultTransactionLockTime,
 	}
-	tx.ID = tx.Hash()
-	return tx
 }
 
-// Hash returns the hash of the transaction
-func (tx *Transaction) Hash() []byte {
-	var hash [32]byte
-
-	txCopy := *tx
-	txCopy.ID = []byte{}
-
-	hash = sha256.Sum256(txCopy.Serialize())
-
-	return hash[:]
+// AddInput adds an input to the transaction
+func (tx *BitcoinTransaction) AddInput(previousTxID []byte, previousTxIndex int, scriptSig []byte) {
+	tx.Inputs = append(tx.Inputs, &TransactionInput{
+		PreviousTxID:    previousTxID,
+		PreviousTxIndex: previousTxIndex,
+		ScriptSig:       scriptSig,
+		Sequence:        0xffffffff,
+	})
 }
 
-// Serialize serializes the transaction into a byte array
-func (tx *Transaction) Serialize() []byte {
-	var result bytes.Buffer
-
-	// Write timestamp
-	binary.Write(&result, binary.LittleEndian, tx.Timestamp)
-
-	// Write inputs
-	binary.Write(&result, binary.LittleEndian, int64(len(tx.Vin)))
-	for _, vin := range tx.Vin {
-		// Write txid
-		binary.Write(&result, binary.LittleEndian, int64(len(vin.Txid)))
-		result.Write(vin.Txid)
-
-		// Write vout
-		binary.Write(&result, binary.LittleEndian, int64(vin.Vout))
-
-		// Write signature
-		binary.Write(&result, binary.LittleEndian, int64(len(vin.Signature)))
-		result.Write(vin.Signature)
-
-		// Write pubkey
-		binary.Write(&result, binary.LittleEndian, int64(len(vin.PubKey)))
-		result.Write(vin.PubKey)
-	}
-
-	// Write outputs
-	binary.Write(&result, binary.LittleEndian, int64(len(tx.Vout)))
-	for _, vout := range tx.Vout {
-		// Write value
-		binary.Write(&result, binary.LittleEndian, vout.Value)
-
-		// Write pubkey hash
-		binary.Write(&result, binary.LittleEndian, int64(len(vout.PubKeyHash)))
-		result.Write(vout.PubKeyHash)
-	}
-
-	return result.Bytes()
+// AddOutput adds an output to the transaction
+func (tx *BitcoinTransaction) AddOutput(value int64, scriptPubKey []byte) {
+	tx.Outputs = append(tx.Outputs, &TransactionOutput{
+		Value:        value,
+		ScriptPubKey: scriptPubKey,
+	})
 }
 
-// DeserializeTransaction deserializes a transaction from a byte array
-func DeserializeTransaction(data []byte) (*Transaction, error) {
-	tx := &Transaction{}
-	reader := bytes.NewReader(data)
+// Sign signs the transaction
+func (tx *BitcoinTransaction) Sign(privateKey *ecdsa.PrivateKey, utxoSet *UTXOSet) error {
+	// Create a copy of the transaction for signing
+	txCopy := tx.Copy()
 
-	// Read timestamp
-	binary.Read(reader, binary.LittleEndian, &tx.Timestamp)
+	// Sign each input
+	for i, input := range txCopy.Inputs {
+		// Get the previous transaction output
+		utxo, err := utxoSet.GetUTXO(input.PreviousTxID, uint32(input.PreviousTxIndex))
+		if err != nil {
+			return fmt.Errorf("failed to get UTXO: %v", err)
+		}
 
-	// Read inputs
-	var vinCount int64
-	binary.Read(reader, binary.LittleEndian, &vinCount)
-	tx.Vin = make([]TXInput, vinCount)
-	for i := int64(0); i < vinCount; i++ {
-		// Read txid
-		var txidLen int64
-		binary.Read(reader, binary.LittleEndian, &txidLen)
-		tx.Vin[i].Txid = make([]byte, txidLen)
-		reader.Read(tx.Vin[i].Txid)
+		// Create the signature hash
+		hash, err := txCopy.SignatureHash(i, utxo.ScriptPubKey)
+		if err != nil {
+			return fmt.Errorf("failed to create signature hash: %v", err)
+		}
 
-		// Read vout
-		var vout int64
-		binary.Read(reader, binary.LittleEndian, &vout)
-		tx.Vin[i].Vout = int(vout)
+		// Sign the hash
+		r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash)
+		if err != nil {
+			return fmt.Errorf("failed to sign transaction: %v", err)
+		}
 
-		// Read signature
-		var sigLen int64
-		binary.Read(reader, binary.LittleEndian, &sigLen)
-		tx.Vin[i].Signature = make([]byte, sigLen)
-		reader.Read(tx.Vin[i].Signature)
+		// Create the signature
+		signature := append(r.Bytes(), s.Bytes()...)
+		signature = append(signature, byte(0x01)) // SIGHASH_ALL
 
-		// Read pubkey
-		var pubKeyLen int64
-		binary.Read(reader, binary.LittleEndian, &pubKeyLen)
-		tx.Vin[i].PubKey = make([]byte, pubKeyLen)
-		reader.Read(tx.Vin[i].PubKey)
+		// Create the script signature
+		scriptSig := append(signature, utxo.ScriptPubKey...)
+		tx.Inputs[i].ScriptSig = scriptSig
 	}
 
-	// Read outputs
-	var voutCount int64
-	binary.Read(reader, binary.LittleEndian, &voutCount)
-	tx.Vout = make([]TXOutput, voutCount)
-	for i := int64(0); i < voutCount; i++ {
-		// Read value
-		binary.Read(reader, binary.LittleEndian, &tx.Vout[i].Value)
+	return nil
+}
 
-		// Read pubkey hash
-		var pubKeyHashLen int64
-		binary.Read(reader, binary.LittleEndian, &pubKeyHashLen)
-		tx.Vout[i].PubKeyHash = make([]byte, pubKeyHashLen)
-		reader.Read(tx.Vout[i].PubKeyHash)
+// Verify verifies the transaction
+func (tx *BitcoinTransaction) Verify(utxoSet *UTXOSet) error {
+	// Create a copy of the transaction for verification
+	txCopy := tx.Copy()
+
+	// Verify each input
+	for i, input := range txCopy.Inputs {
+		// Get the previous transaction output
+		utxo, err := utxoSet.GetUTXO(input.PreviousTxID, uint32(input.PreviousTxIndex))
+		if err != nil {
+			return fmt.Errorf("failed to get UTXO: %v", err)
+		}
+
+		// Create the signature hash
+		hash, err := txCopy.SignatureHash(i, utxo.ScriptPubKey)
+		if err != nil {
+			return fmt.Errorf("failed to create signature hash: %v", err)
+		}
+
+		// Extract the signature and public key
+		signature := input.ScriptSig[:len(input.ScriptSig)-1]
+		publicKeyBytes := input.ScriptSig[len(input.ScriptSig)-1:]
+
+		// Parse the public key
+		publicKey, err := parsePublicKey(publicKeyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse public key: %v", err)
+		}
+
+		// Verify the signature
+		r := new(big.Int).SetBytes(signature[:32])
+		s := new(big.Int).SetBytes(signature[32:64])
+		if !ecdsa.Verify(publicKey, hash, r, s) {
+			return fmt.Errorf("invalid signature")
+		}
 	}
 
-	return tx, nil
+	return nil
+}
+
+// parsePublicKey parses a public key from bytes
+func parsePublicKey(publicKeyBytes []byte) (*ecdsa.PublicKey, error) {
+	// TODO: Implement public key parsing
+	return nil, nil
+}
+
+// Copy creates a copy of the transaction
+func (tx *BitcoinTransaction) Copy() *BitcoinTransaction {
+	txCopy := &BitcoinTransaction{
+		Version:  tx.Version,
+		LockTime: tx.LockTime,
+		Inputs:   make([]*TransactionInput, len(tx.Inputs)),
+		Outputs:  make([]*TransactionOutput, len(tx.Outputs)),
+	}
+
+	// Copy inputs
+	for i, input := range tx.Inputs {
+		txCopy.Inputs[i] = &TransactionInput{
+			PreviousTxID:    make([]byte, len(input.PreviousTxID)),
+			PreviousTxIndex: input.PreviousTxIndex,
+			ScriptSig:       make([]byte, len(input.ScriptSig)),
+			Sequence:        input.Sequence,
+		}
+		copy(txCopy.Inputs[i].PreviousTxID, input.PreviousTxID)
+		copy(txCopy.Inputs[i].ScriptSig, input.ScriptSig)
+	}
+
+	// Copy outputs
+	for i, output := range tx.Outputs {
+		txCopy.Outputs[i] = &TransactionOutput{
+			Value:        output.Value,
+			ScriptPubKey: make([]byte, len(output.ScriptPubKey)),
+		}
+		copy(txCopy.Outputs[i].ScriptPubKey, output.ScriptPubKey)
+	}
+
+	return txCopy
+}
+
+// SignatureHash creates the signature hash for an input
+func (tx *BitcoinTransaction) SignatureHash(inputIndex int, scriptPubKey []byte) ([]byte, error) {
+	// Create a copy of the transaction
+	txCopy := tx.Copy()
+
+	// Clear all script signatures
+	for i := range txCopy.Inputs {
+		txCopy.Inputs[i].ScriptSig = nil
+	}
+
+	// Set the script signature for the input being signed
+	txCopy.Inputs[inputIndex].ScriptSig = scriptPubKey
+
+	// Serialize the transaction
+	serialized, err := txCopy.Serialize()
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize transaction: %v", err)
+	}
+
+	// Add the hash type
+	serialized = append(serialized, 0x01, 0x00, 0x00, 0x00) // SIGHASH_ALL
+
+	// Hash the serialized transaction
+	hash := sha256.Sum256(serialized)
+	hash = sha256.Sum256(hash[:])
+
+	return hash[:], nil
+}
+
+// Serialize serializes the transaction
+func (tx *BitcoinTransaction) Serialize() ([]byte, error) {
+	// TODO: Implement transaction serialization
+	return nil, nil
+}
+
+// Deserialize deserializes the transaction
+func (tx *BitcoinTransaction) Deserialize(data []byte) error {
+	// TODO: Implement transaction deserialization
+	return nil
+}
+
+// GetID returns the transaction ID
+func (tx *BitcoinTransaction) GetID() string {
+	// Serialize the transaction
+	serialized, err := tx.Serialize()
+	if err != nil {
+		return ""
+	}
+
+	// Hash the serialized transaction
+	hash := sha256.Sum256(serialized)
+	hash = sha256.Sum256(hash[:])
+
+	// Return the hash as a hex string
+	return hex.EncodeToString(hash[:])
+}
+
+// GetSize returns the size of the transaction in bytes
+func (tx *BitcoinTransaction) GetSize() int {
+	// Serialize the transaction
+	serialized, err := tx.Serialize()
+	if err != nil {
+		return 0
+	}
+
+	return len(serialized)
+}
+
+// GetWeight returns the weight of the transaction
+func (tx *BitcoinTransaction) GetWeight() int {
+	// Serialize the transaction
+	serialized, err := tx.Serialize()
+	if err != nil {
+		return 0
+	}
+
+	return len(serialized) * 4
+}
+
+// GetFee returns the fee of the transaction
+func (tx *BitcoinTransaction) GetFee(utxoSet *UTXOSet) (int64, error) {
+	// Calculate input sum
+	var inputSum int64
+	for _, input := range tx.Inputs {
+		utxo, err := utxoSet.GetUTXO(input.PreviousTxID, uint32(input.PreviousTxIndex))
+		if err != nil {
+			return 0, fmt.Errorf("failed to get UTXO: %v", err)
+		}
+		inputSum += utxo.Value
+	}
+
+	// Calculate output sum
+	var outputSum int64
+	for _, output := range tx.Outputs {
+		outputSum += output.Value
+	}
+
+	// Calculate fee
+	return inputSum - outputSum, nil
+}
+
+// IsCoinbase returns whether the transaction is a coinbase transaction
+func (tx *BitcoinTransaction) IsCoinbase() bool {
+	return len(tx.Inputs) == 1 && len(tx.Inputs[0].PreviousTxID) == 0 && tx.Inputs[0].PreviousTxIndex == -1
+}
+
+// IsValid returns whether the transaction is valid
+func (tx *BitcoinTransaction) IsValid(utxoSet *UTXOSet) error {
+	// Check if the transaction is a coinbase transaction
+	if tx.IsCoinbase() {
+		return nil
+	}
+
+	// Check if the transaction has inputs
+	if len(tx.Inputs) == 0 {
+		return fmt.Errorf("transaction has no inputs")
+	}
+
+	// Check if the transaction has outputs
+	if len(tx.Outputs) == 0 {
+		return fmt.Errorf("transaction has no outputs")
+	}
+
+	// Check if the transaction is valid
+	if err := tx.Verify(utxoSet); err != nil {
+		return fmt.Errorf("transaction verification failed: %v", err)
+	}
+
+	// Check if the transaction fee is valid
+	fee, err := tx.GetFee(utxoSet)
+	if err != nil {
+		return fmt.Errorf("failed to get transaction fee: %v", err)
+	}
+
+	if fee < 0 {
+		return fmt.Errorf("transaction fee is negative")
+	}
+
+	return nil
 }
 
 // String returns a string representation of the transaction
-func (tx *Transaction) String() string {
+func (tx *BitcoinTransaction) String() string {
 	var lines []string
 
-	lines = append(lines, fmt.Sprintf("Transaction %x:", tx.ID))
-	for i, input := range tx.Vin {
+	lines = append(lines, fmt.Sprintf("Transaction %s:", tx.GetID()))
+	for i, input := range tx.Inputs {
 		lines = append(lines, fmt.Sprintf("  Input %d:", i))
-		lines = append(lines, fmt.Sprintf("    TXID:      %x", input.Txid))
-		lines = append(lines, fmt.Sprintf("    Out:       %d", input.Vout))
-		lines = append(lines, fmt.Sprintf("    Signature: %x", input.Signature))
-		lines = append(lines, fmt.Sprintf("    PubKey:    %x", input.PubKey))
+		lines = append(lines, fmt.Sprintf("    TXID:      %x", input.PreviousTxID))
+		lines = append(lines, fmt.Sprintf("    Out:       %d", input.PreviousTxIndex))
+		lines = append(lines, fmt.Sprintf("    Script:    %x", input.ScriptSig))
 	}
 
-	for i, output := range tx.Vout {
+	for i, output := range tx.Outputs {
 		lines = append(lines, fmt.Sprintf("  Output %d:", i))
 		lines = append(lines, fmt.Sprintf("    Value:  %d", output.Value))
-		lines = append(lines, fmt.Sprintf("    Script: %x", output.PubKeyHash))
+		lines = append(lines, fmt.Sprintf("    Script: %x", output.ScriptPubKey))
 	}
 
 	return fmt.Sprintf("%s\n", lines)
 }
 
 // Validate validates the transaction
-func (tx *Transaction) Validate(utxoSet UTXOSetInterface) error {
-	// Basic validation
-	if err := tx.validateBasic(); err != nil {
-		return err
-	}
-
-	// Skip further validation for coinbase transactions
-	if tx.IsCoinbase() {
-		return nil
-	}
-
-	// Validate input/output balance
-	if err := tx.validateBalance(utxoSet); err != nil {
-		return err
-	}
-
-	// Validate signatures
-	if err := tx.validateSignatures(); err != nil {
-		return err
-	}
-
-	// Validate fees
-	if err := tx.validateFees(utxoSet); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// validateBasic performs basic transaction validation
-func (tx *Transaction) validateBasic() error {
-	// Check if transaction is nil
-	if tx == nil {
-		return fmt.Errorf("transaction is nil")
-	}
-
+func (tx *BitcoinTransaction) Validate() error {
 	// Check if transaction has inputs
-	if len(tx.Vin) == 0 {
+	if len(tx.Inputs) == 0 {
 		return fmt.Errorf("transaction has no inputs")
 	}
 
 	// Check if transaction has outputs
-	if len(tx.Vout) == 0 {
+	if len(tx.Outputs) == 0 {
 		return fmt.Errorf("transaction has no outputs")
 	}
 
 	// Check if transaction ID is valid
-	if tx.ID == nil {
+	if tx.GetID() == "" {
 		return fmt.Errorf("transaction has no ID")
 	}
 
-	// Check if transaction timestamp is valid
-	if tx.Timestamp > time.Now().Unix() {
-		return fmt.Errorf("invalid timestamp")
+	// Check if transaction lock time is valid
+	if tx.LockTime > uint32(time.Now().Unix()) {
+		return fmt.Errorf("invalid lock time")
 	}
 
 	// Validate inputs
-	for i, input := range tx.Vin {
-		if input.Txid == nil {
+	for i, input := range tx.Inputs {
+		if input.PreviousTxID == nil {
 			return fmt.Errorf("input %d has no transaction ID", i)
 		}
-		if input.Vout < 0 {
+		if input.PreviousTxIndex < 0 {
 			return fmt.Errorf("input %d has invalid output index", i)
 		}
-		if input.Signature == nil {
-			return fmt.Errorf("input %d has no signature", i)
-		}
-		if input.PubKey == nil {
-			return fmt.Errorf("input %d has no public key", i)
+		if input.ScriptSig == nil {
+			return fmt.Errorf("input %d has no script signature", i)
 		}
 	}
 
 	// Validate outputs
-	for i, output := range tx.Vout {
+	for i, output := range tx.Outputs {
 		if output.Value <= 0 {
 			return fmt.Errorf("output %d has invalid value", i)
 		}
-		if output.PubKeyHash == nil {
-			return fmt.Errorf("output %d has no public key hash", i)
+		if output.ScriptPubKey == nil {
+			return fmt.Errorf("output %d has no script public key", i)
 		}
 	}
 
@@ -257,12 +404,12 @@ func (tx *Transaction) validateBasic() error {
 }
 
 // validateBalance validates the input/output balance using UTXO set
-func (tx *Transaction) validateBalance(utxoSet UTXOSetInterface) error {
+func (tx *BitcoinTransaction) validateBalance(utxoSet UTXOSetInterface) error {
 	var inputSum, outputSum int64
 
 	// Calculate input sum from UTXOs
-	for _, input := range tx.Vin {
-		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
+	for _, input := range tx.Inputs {
+		utxo, err := utxoSet.GetUTXO(input.PreviousTxID, uint32(input.PreviousTxIndex))
 		if err != nil {
 			return fmt.Errorf("failed to get UTXO: %v", err)
 		}
@@ -270,37 +417,25 @@ func (tx *Transaction) validateBalance(utxoSet UTXOSetInterface) error {
 	}
 
 	// Calculate output sum
-	for _, output := range tx.Vout {
+	for _, output := range tx.Outputs {
 		outputSum += output.Value
 	}
 
-	// Check if outputs exceed inputs
-	if outputSum > inputSum {
-		return fmt.Errorf("output sum (%d) exceeds input sum (%d)", outputSum, inputSum)
+	// Check if input sum is greater than or equal to output sum
+	if inputSum < outputSum {
+		return fmt.Errorf("input sum (%d) is less than output sum (%d)", inputSum, outputSum)
 	}
 
-	return nil
-}
-
-// validateSignatures validates all input signatures
-func (tx *Transaction) validateSignatures() error {
-	for i, input := range tx.Vin {
-		// In a real implementation, we would verify the signature against the public key
-		// and the transaction data. For now, we'll just check if the signature is valid
-		if len(input.Signature) == 0 {
-			return fmt.Errorf("input %d has invalid signature", i)
-		}
-	}
 	return nil
 }
 
 // validateFees validates transaction fees using UTXO set
-func (tx *Transaction) validateFees(utxoSet UTXOSetInterface) error {
+func (tx *BitcoinTransaction) validateFees(utxoSet UTXOSetInterface) error {
 	var inputSum, outputSum int64
 
 	// Calculate input sum from UTXOs
-	for _, input := range tx.Vin {
-		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
+	for _, input := range tx.Inputs {
+		utxo, err := utxoSet.GetUTXO(input.PreviousTxID, uint32(input.PreviousTxIndex))
 		if err != nil {
 			return fmt.Errorf("failed to get UTXO: %v", err)
 		}
@@ -308,7 +443,7 @@ func (tx *Transaction) validateFees(utxoSet UTXOSetInterface) error {
 	}
 
 	// Calculate output sum
-	for _, output := range tx.Vout {
+	for _, output := range tx.Outputs {
 		outputSum += output.Value
 	}
 
@@ -322,63 +457,4 @@ func (tx *Transaction) validateFees(utxoSet UTXOSetInterface) error {
 	}
 
 	return nil
-}
-
-// GetFee returns the transaction fee using UTXO set
-func (tx *Transaction) GetFee(utxoSet UTXOSetInterface) (int64, error) {
-	var inputSum, outputSum int64
-
-	// Calculate input sum from UTXOs
-	for _, input := range tx.Vin {
-		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
-		if err != nil {
-			return 0, fmt.Errorf("failed to get UTXO: %v", err)
-		}
-		inputSum += utxo.Value
-	}
-
-	// Calculate output sum
-	for _, output := range tx.Vout {
-		outputSum += output.Value
-	}
-
-	return inputSum - outputSum, nil
-}
-
-// Size returns the size of the transaction in bytes
-func (tx *Transaction) Size() int {
-	size := 0
-
-	// ID size
-	size += len(tx.ID)
-
-	// Timestamp size
-	size += 8
-
-	// Input count size
-	size += 4
-
-	// Input sizes
-	for _, input := range tx.Vin {
-		size += len(input.Txid)
-		size += 4 // Vout size
-		size += len(input.Signature)
-		size += len(input.PubKey)
-	}
-
-	// Output count size
-	size += 4
-
-	// Output sizes
-	for _, output := range tx.Vout {
-		size += 8 // Value size
-		size += len(output.PubKeyHash)
-	}
-
-	return size
-}
-
-// IsCoinbase checks if the transaction is a coinbase transaction
-func (tx *Transaction) IsCoinbase() bool {
-	return len(tx.Vin) == 1 && len(tx.Vin[0].Txid) == 0 && tx.Vin[0].Vout == -1
 }
