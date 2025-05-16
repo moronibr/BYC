@@ -156,13 +156,13 @@ func schnorrSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (
 	hash := sha256.Sum256(message)
 
 	// Sign the hash using Schnorr
-	sig, err := schnorr.Sign(btcecPrivKey, hash[:])
+	schnorrSig, err := schnorr.Sign(btcecPrivKey, hash[:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create Schnorr signature: %v", err)
 	}
 
 	// Get the R and S components from the serialized signature
-	sigBytes := sig.Serialize()
+	sigBytes := schnorrSig.Serialize()
 	if len(sigBytes) != 64 {
 		return nil, nil, fmt.Errorf("invalid signature length")
 	}
@@ -258,27 +258,40 @@ func taprootSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (
 	tweakedPrivKey.Key = secpPrivKey.Key
 	tweakedPrivKey.Key.Add(tweakScalar)
 
-	// Convert to btcec private key
-	btcecPrivKey, err := btcec.PrivKeyFromBytes(tweakedPrivKey.Serialize())
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert to btcec key: %v", err)
-	}
+	// Generate a nonce using RFC6979
+	nonce := secp256k1.NonceRFC6979(tweakedPrivKey.Serialize(), hash[:], nil, nil, 0)
 
-	// Sign the hash using Schnorr
-	schnorrSignature, err := schnorr.Sign(btcecPrivKey, hash[:])
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create Taproot signature: %v", err)
-	}
+	// Create a Jacobian point for the nonce
+	var noncePoint secp256k1.JacobianPoint
+	secp256k1.ScalarBaseMultNonConst(nonce, &noncePoint)
 
-	// Get the R and S components from the serialized signature
-	sigBytes := schnorrSignature.Serialize()
-	if len(sigBytes) != 64 {
-		return nil, nil, fmt.Errorf("invalid signature length")
-	}
-	r := new(big.Int).SetBytes(sigBytes[:32])
-	s := new(big.Int).SetBytes(sigBytes[32:])
+	// Convert the nonce point to affine coordinates
+	var nonceX secp256k1.FieldVal
+	noncePoint.ToAffine()
+	nonceX = noncePoint.X
 
-	return r, s, nil
+	// Create the signature components
+	var r, s secp256k1.ModNScalar
+	r.SetByteSlice(nonceX.Bytes()[:])
+
+	// Calculate s = (r * privKey + hash) / nonce
+	var temp secp256k1.ModNScalar
+	temp.SetByteSlice(hash[:])
+	s.Mul2(&r, &tweakedPrivKey.Key).Add(&temp)
+
+	// Calculate nonce inverse
+	var nonceInv secp256k1.ModNScalar
+	nonceInv.InverseNonConst()
+	s.Mul(&nonceInv)
+
+	// Convert to big.Int for return
+	var rBytes, sBytes [32]byte
+	r.PutBytes(&rBytes)
+	s.PutBytes(&sBytes)
+	rBig := new(big.Int).SetBytes(rBytes[:])
+	sBig := new(big.Int).SetBytes(sBytes[:])
+
+	return rBig, sBig, nil
 }
 
 // taprootVerify verifies a Taproot signature
