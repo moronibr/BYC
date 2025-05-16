@@ -171,7 +171,7 @@ func (tx *Transaction) String() string {
 }
 
 // Validate validates the transaction
-func (tx *Transaction) Validate() error {
+func (tx *Transaction) Validate(utxoSet UTXOSetInterface) error {
 	// Basic validation
 	if err := tx.validateBasic(); err != nil {
 		return err
@@ -183,7 +183,7 @@ func (tx *Transaction) Validate() error {
 	}
 
 	// Validate input/output balance
-	if err := tx.validateBalance(); err != nil {
+	if err := tx.validateBalance(utxoSet); err != nil {
 		return err
 	}
 
@@ -193,7 +193,7 @@ func (tx *Transaction) Validate() error {
 	}
 
 	// Validate fees
-	if err := tx.validateFees(); err != nil {
+	if err := tx.validateFees(utxoSet); err != nil {
 		return err
 	}
 
@@ -256,15 +256,17 @@ func (tx *Transaction) validateBasic() error {
 	return nil
 }
 
-// validateBalance validates the input/output balance
-func (tx *Transaction) validateBalance() error {
+// validateBalance validates the input/output balance using UTXO set
+func (tx *Transaction) validateBalance(utxoSet UTXOSetInterface) error {
 	var inputSum, outputSum int64
 
-	// Calculate input sum
+	// Calculate input sum from UTXOs
 	for _, input := range tx.Vin {
-		// In a real implementation, we would look up the previous output value
-		// For now, we'll assume each input is worth 1 coin
-		inputSum += 1
+		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
+		if err != nil {
+			return fmt.Errorf("failed to get UTXO: %v", err)
+		}
+		inputSum += utxo.Value
 	}
 
 	// Calculate output sum
@@ -292,15 +294,17 @@ func (tx *Transaction) validateSignatures() error {
 	return nil
 }
 
-// validateFees validates transaction fees
-func (tx *Transaction) validateFees() error {
+// validateFees validates transaction fees using UTXO set
+func (tx *Transaction) validateFees(utxoSet UTXOSetInterface) error {
 	var inputSum, outputSum int64
 
-	// Calculate input sum
+	// Calculate input sum from UTXOs
 	for _, input := range tx.Vin {
-		// In a real implementation, we would look up the previous output value
-		// For now, we'll assume each input is worth 1 coin
-		inputSum += 1
+		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
+		if err != nil {
+			return fmt.Errorf("failed to get UTXO: %v", err)
+		}
+		inputSum += utxo.Value
 	}
 
 	// Calculate output sum
@@ -320,15 +324,17 @@ func (tx *Transaction) validateFees() error {
 	return nil
 }
 
-// GetFee returns the transaction fee
-func (tx *Transaction) GetFee() int64 {
+// GetFee returns the transaction fee using UTXO set
+func (tx *Transaction) GetFee(utxoSet UTXOSetInterface) (int64, error) {
 	var inputSum, outputSum int64
 
-	// Calculate input sum
+	// Calculate input sum from UTXOs
 	for _, input := range tx.Vin {
-		// In a real implementation, we would look up the previous output value
-		// For now, we'll assume each input is worth 1 coin
-		inputSum += 1
+		utxo, err := utxoSet.GetUTXO(input.Txid, input.Vout)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get UTXO: %v", err)
+		}
+		inputSum += utxo.Value
 	}
 
 	// Calculate output sum
@@ -336,7 +342,7 @@ func (tx *Transaction) GetFee() int64 {
 		outputSum += output.Value
 	}
 
-	return inputSum - outputSum
+	return inputSum - outputSum, nil
 }
 
 // Size returns the size of the transaction in bytes
