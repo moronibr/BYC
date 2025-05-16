@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 
 	"github.com/youngchain/internal/core/types"
@@ -52,6 +53,158 @@ func VerifySignature(tx *types.Transaction, signature *Signature, publicKey *ecd
 
 	// Verify the signature
 	return ecdsa.Verify(publicKey, tx.Hash, signature.R, signature.S)
+}
+
+// MultisigSignature represents a multisignature
+type MultisigSignature struct {
+	Signatures []*Signature
+	PublicKeys []*ecdsa.PublicKey
+	Threshold  int
+}
+
+// SignMultisigTransaction signs a transaction with multiple private keys
+func SignMultisigTransaction(tx *types.Transaction, privateKeys []*ecdsa.PrivateKey, publicKeys []*ecdsa.PublicKey, threshold int) (*MultisigSignature, error) {
+	if len(privateKeys) < threshold {
+		return nil, fmt.Errorf("insufficient private keys for threshold %d", threshold)
+	}
+
+	signatures := make([]*Signature, 0, len(privateKeys))
+	for _, privateKey := range privateKeys {
+		signature, err := SignTransaction(tx, privateKey)
+		if err != nil {
+			return nil, err
+		}
+		signatures = append(signatures, signature)
+	}
+
+	return &MultisigSignature{
+		Signatures: signatures,
+		PublicKeys: publicKeys,
+		Threshold:  threshold,
+	}, nil
+}
+
+// VerifyMultisigSignature verifies a multisignature
+func VerifyMultisigSignature(tx *types.Transaction, multisig *MultisigSignature) bool {
+	if len(multisig.Signatures) < multisig.Threshold {
+		return false
+	}
+
+	validSignatures := 0
+	for i, signature := range multisig.Signatures {
+		if i >= len(multisig.PublicKeys) {
+			break
+		}
+		if VerifySignature(tx, signature, multisig.PublicKeys[i]) {
+			validSignatures++
+		}
+	}
+
+	return validSignatures >= multisig.Threshold
+}
+
+// SchnorrSignature represents a Schnorr signature
+type SchnorrSignature struct {
+	R *big.Int
+	S *big.Int
+}
+
+// SignSchnorrTransaction signs a transaction using Schnorr signatures
+func SignSchnorrTransaction(tx *types.Transaction, privateKey *ecdsa.PrivateKey) (*SchnorrSignature, error) {
+	// Calculate transaction hash
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return nil, fmt.Errorf("failed to calculate transaction hash")
+	}
+
+	// Sign the hash using Schnorr
+	r, s, err := schnorrSign(rand.Reader, privateKey, tx.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign transaction with Schnorr: %v", err)
+	}
+
+	return &SchnorrSignature{
+		R: r,
+		S: s,
+	}, nil
+}
+
+// VerifySchnorrSignature verifies a Schnorr signature
+func VerifySchnorrSignature(tx *types.Transaction, signature *SchnorrSignature, publicKey *ecdsa.PublicKey) bool {
+	// Calculate transaction hash
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return false
+	}
+
+	// Verify the signature using Schnorr
+	return schnorrVerify(publicKey, tx.Hash, signature.R, signature.S)
+}
+
+// schnorrSign signs a message using Schnorr signatures
+func schnorrSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (*big.Int, *big.Int, error) {
+	// Implement Schnorr signing logic here
+	// This is a placeholder and should be replaced with actual Schnorr signing
+	return nil, nil, fmt.Errorf("Schnorr signing not implemented")
+}
+
+// schnorrVerify verifies a Schnorr signature
+func schnorrVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bool {
+	// Implement Schnorr verification logic here
+	// This is a placeholder and should be replaced with actual Schnorr verification
+	return false
+}
+
+// TaprootSignature represents a Taproot signature
+type TaprootSignature struct {
+	R *big.Int
+	S *big.Int
+}
+
+// SignTaprootTransaction signs a transaction using Taproot
+func SignTaprootTransaction(tx *types.Transaction, privateKey *ecdsa.PrivateKey) (*TaprootSignature, error) {
+	// Calculate transaction hash
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return nil, fmt.Errorf("failed to calculate transaction hash")
+	}
+
+	// Sign the hash using Taproot
+	r, s, err := taprootSign(rand.Reader, privateKey, tx.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign transaction with Taproot: %v", err)
+	}
+
+	return &TaprootSignature{
+		R: r,
+		S: s,
+	}, nil
+}
+
+// VerifyTaprootSignature verifies a Taproot signature
+func VerifyTaprootSignature(tx *types.Transaction, signature *TaprootSignature, publicKey *ecdsa.PublicKey) bool {
+	// Calculate transaction hash
+	tx.CalculateHash()
+	if tx.Hash == nil {
+		return false
+	}
+
+	// Verify the signature using Taproot
+	return taprootVerify(publicKey, tx.Hash, signature.R, signature.S)
+}
+
+// taprootSign signs a message using Taproot
+func taprootSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (*big.Int, *big.Int, error) {
+	// Implement Taproot signing logic here
+	// This is a placeholder and should be replaced with actual Taproot signing
+	return nil, nil, fmt.Errorf("Taproot signing not implemented")
+}
+
+// taprootVerify verifies a Taproot signature
+func taprootVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bool {
+	// Implement Taproot verification logic here
+	// This is a placeholder and should be replaced with actual Taproot verification
+	return false
 }
 
 // GenerateKeyPair generates a new ECDSA key pair
