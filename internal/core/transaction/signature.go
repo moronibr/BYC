@@ -10,6 +10,9 @@ import (
 	"io"
 	"math/big"
 
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/youngchain/internal/core/types"
 )
 
@@ -143,16 +146,52 @@ func VerifySchnorrSignature(tx *types.Transaction, signature *SchnorrSignature, 
 
 // schnorrSign signs a message using Schnorr signatures
 func schnorrSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (*big.Int, *big.Int, error) {
-	// Implement Schnorr signing logic here
-	// This is a placeholder and should be replaced with actual Schnorr signing
-	return nil, nil, fmt.Errorf("Schnorr signing not implemented")
+	// Convert ECDSA private key to btcec private key
+	btcecPrivKey := ConvertECDSAToBTCEc(privateKey)
+	if btcecPrivKey == nil {
+		return nil, nil, fmt.Errorf("failed to convert private key")
+	}
+
+	// Create a hash of the message
+	hash := sha256.Sum256(message)
+
+	// Sign the hash using Schnorr
+	sig, err := schnorr.Sign(btcecPrivKey, hash[:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create Schnorr signature: %v", err)
+	}
+
+	// Get the R and S components from the serialized signature
+	sigBytes := sig.Serialize()
+	if len(sigBytes) != 64 {
+		return nil, nil, fmt.Errorf("invalid signature length")
+	}
+	r := new(big.Int).SetBytes(sigBytes[:32])
+	s := new(big.Int).SetBytes(sigBytes[32:])
+
+	return r, s, nil
 }
 
 // schnorrVerify verifies a Schnorr signature
 func schnorrVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bool {
-	// Implement Schnorr verification logic here
-	// This is a placeholder and should be replaced with actual Schnorr verification
-	return false
+	// Convert ECDSA public key to btcec public key
+	btcecPubKey := ConvertECDSAPubToBTCEc(publicKey)
+	if btcecPubKey == nil {
+		return false
+	}
+
+	// Create a hash of the message
+	hash := sha256.Sum256(message)
+
+	// Create a Schnorr signature from R and S
+	sigBytes := append(r.Bytes(), s.Bytes()...)
+	sig, err := schnorr.ParseSignature(sigBytes)
+	if err != nil {
+		return false
+	}
+
+	// Verify the signature
+	return sig.Verify(hash[:], btcecPubKey)
 }
 
 // TaprootSignature represents a Taproot signature
@@ -193,18 +232,102 @@ func VerifyTaprootSignature(tx *types.Transaction, signature *TaprootSignature, 
 	return taprootVerify(publicKey, tx.Hash, signature.R, signature.S)
 }
 
-// taprootSign signs a message using Taproot
+// taprootSign signs a message using Taproot (Schnorr) signatures
 func taprootSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (*big.Int, *big.Int, error) {
-	// Implement Taproot signing logic here
-	// This is a placeholder and should be replaced with actual Taproot signing
-	return nil, nil, fmt.Errorf("Taproot signing not implemented")
+	// Convert ECDSA private key to secp256k1 private key
+	privKeyBytes := privateKey.D.Bytes()
+	secpPrivKey := secp256k1.PrivKeyFromBytes(privKeyBytes)
+	if secpPrivKey == nil {
+		return nil, nil, fmt.Errorf("failed to convert private key")
+	}
+
+	// Create a hash of the message
+	hash := sha256.Sum256(message)
+
+	// For Taproot, we need to tweak the internal key
+	internalKey := secpPrivKey.PubKey()
+	// Create a tap tweak (this would normally be derived from the script tree)
+	tweak := sha256.Sum256(internalKey.SerializeCompressed())
+
+	// Create a new private key with the tweak added
+	tweakScalar := new(secp256k1.ModNScalar)
+	if !tweakScalar.SetByteSlice(tweak[:]) {
+		return nil, nil, fmt.Errorf("invalid tweak")
+	}
+	tweakedPrivKey := new(secp256k1.PrivateKey)
+	tweakedPrivKey.Key = secpPrivKey.Key
+	tweakedPrivKey.Key.Add(tweakScalar)
+
+	// Convert back to btcec for Schnorr signing
+	btcecPrivKey, err := btcec.PrivKeyFromBytes(tweakedPrivKey.Serialize())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert to btcec key: %v", err)
+	}
+
+	// Sign the hash using Schnorr with the tweaked key
+	sig, err := schnorr.Sign(btcecPrivKey, hash[:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create Taproot signature: %v", err)
+	}
+
+	// Get the R and S components from the serialized signature
+	sigBytes := sig.Serialize()
+	if len(sigBytes) != 64 {
+		return nil, nil, fmt.Errorf("invalid signature length")
+	}
+	r := new(big.Int).SetBytes(sigBytes[:32])
+	s := new(big.Int).SetBytes(sigBytes[32:])
+
+	return r, s, nil
 }
 
 // taprootVerify verifies a Taproot signature
 func taprootVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bool {
-	// Implement Taproot verification logic here
-	// This is a placeholder and should be replaced with actual Taproot verification
-	return false
+	// Convert ECDSA public key to secp256k1 public key
+	xVal := new(secp256k1.FieldVal)
+	yVal := new(secp256k1.FieldVal)
+	if !xVal.SetByteSlice(publicKey.X.Bytes()) || !yVal.SetByteSlice(publicKey.Y.Bytes()) {
+		return false
+	}
+	secpPubKey := secp256k1.NewPublicKey(xVal, yVal)
+	if secpPubKey == nil {
+		return false
+	}
+
+	// Create a hash of the message
+	hash := sha256.Sum256(message)
+
+	// Create the tap tweak (same as in signing)
+	tweak := sha256.Sum256(secpPubKey.SerializeCompressed())
+
+	// Create a new public key with the tweak added
+	tweakScalar := new(secp256k1.ModNScalar)
+	if !tweakScalar.SetByteSlice(tweak[:]) {
+		return false
+	}
+
+	// Add the tweak to the public key (in Jacobian coordinates)
+	var pubJac, tweakJac, outJac secp256k1.JacobianPoint
+	secpPubKey.AsJacobian(&pubJac)
+	secp256k1.ScalarBaseMultNonConst(tweakScalar, &tweakJac)
+	secp256k1.AddNonConst(&pubJac, &tweakJac, &outJac)
+	tweakedPubKey := secp256k1.NewPublicKey(&outJac.X, &outJac.Y)
+
+	// Convert to btcec for Schnorr verification
+	btcecPubKey, err := btcec.ParsePubKey(tweakedPubKey.SerializeCompressed())
+	if err != nil {
+		return false
+	}
+
+	// Create a Schnorr signature from R and S
+	sigBytes := append(r.Bytes(), s.Bytes()...)
+	sig, err := schnorr.ParseSignature(sigBytes)
+	if err != nil {
+		return false
+	}
+
+	// Verify the signature using the tweaked public key
+	return sig.Verify(hash[:], btcecPubKey)
 }
 
 // GenerateKeyPair generates a new ECDSA key pair
@@ -242,6 +365,10 @@ func ValidateScript(script *Script, tx *types.Transaction, inputIndex int) bool 
 		return validateP2PKH(script, tx)
 	case "P2SH":
 		return validateP2SH()
+	case "SCHNORR":
+		return validateSchnorr(script, tx)
+	case "TAPROOT":
+		return validateTaproot(script, tx)
 	default:
 		return false
 	}
@@ -280,6 +407,50 @@ func validateP2SH() bool {
 	return true
 }
 
+// validateSchnorr validates a Schnorr script
+func validateSchnorr(script *Script, tx *types.Transaction) bool {
+	if len(script.Data) < 2 {
+		return false
+	}
+
+	sigBytes := script.Data[:len(script.Data)-1]
+	pubKeyBytes := script.Data[len(script.Data)-1:]
+
+	pubKey, err := parsePublicKey(pubKeyBytes)
+	if err != nil {
+		return false
+	}
+
+	sig, err := parseSchnorrSignature(sigBytes)
+	if err != nil {
+		return false
+	}
+
+	return VerifySchnorrSignature(tx, sig, pubKey)
+}
+
+// validateTaproot validates a Taproot script
+func validateTaproot(script *Script, tx *types.Transaction) bool {
+	if len(script.Data) < 2 {
+		return false
+	}
+
+	sigBytes := script.Data[:len(script.Data)-1]
+	pubKeyBytes := script.Data[len(script.Data)-1:]
+
+	pubKey, err := parsePublicKey(pubKeyBytes)
+	if err != nil {
+		return false
+	}
+
+	sig, err := parseTaprootSignature(sigBytes)
+	if err != nil {
+		return false
+	}
+
+	return VerifyTaprootSignature(tx, sig, pubKey)
+}
+
 // parsePublicKey parses a public key from bytes
 func parsePublicKey(data []byte) (*ecdsa.PublicKey, error) {
 	curve := elliptic.P256()
@@ -303,4 +474,62 @@ func parseSignature(data []byte) (*Signature, error) {
 		R: new(big.Int).SetBytes(data[:32]),
 		S: new(big.Int).SetBytes(data[32:]),
 	}, nil
+}
+
+// parseSchnorrSignature parses a Schnorr signature from bytes
+func parseSchnorrSignature(data []byte) (*SchnorrSignature, error) {
+	if len(data) != 64 {
+		return nil, fmt.Errorf("invalid Schnorr signature length")
+	}
+	return &SchnorrSignature{
+		R: new(big.Int).SetBytes(data[:32]),
+		S: new(big.Int).SetBytes(data[32:]),
+	}, nil
+}
+
+// parseTaprootSignature parses a Taproot signature from bytes
+func parseTaprootSignature(data []byte) (*TaprootSignature, error) {
+	if len(data) != 64 {
+		return nil, fmt.Errorf("invalid Taproot signature length")
+	}
+	return &TaprootSignature{
+		R: new(big.Int).SetBytes(data[:32]),
+		S: new(big.Int).SetBytes(data[32:]),
+	}, nil
+}
+
+// ConvertECDSAToBTCEc converts an ecdsa.PrivateKey to a btcec.PrivateKey
+func ConvertECDSAToBTCEc(privKey *ecdsa.PrivateKey) *btcec.PrivateKey {
+	privKeyBytes := privKey.D.Bytes()
+	btcecPrivKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
+	return btcecPrivKey
+}
+
+// ConvertECDSAPubToBTCEc converts an ecdsa.PublicKey to a btcec.PublicKey
+func ConvertECDSAPubToBTCEc(pubKey *ecdsa.PublicKey) *btcec.PublicKey {
+	pubKeyBytes := elliptic.Marshal(pubKey.Curve, pubKey.X, pubKey.Y)
+	btcecPubKey, _ := btcec.ParsePubKey(pubKeyBytes)
+	return btcecPubKey
+}
+
+// ConvertBTCEcToECDSA converts a btcec.PrivateKey to an ecdsa.PrivateKey
+func ConvertBTCEcToECDSA(privKey *btcec.PrivateKey) *ecdsa.PrivateKey {
+	pubKey := privKey.PubKey()
+	return &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{
+			Curve: elliptic.P256(),
+			X:     pubKey.X(),
+			Y:     pubKey.Y(),
+		},
+		D: new(big.Int).SetBytes(privKey.Serialize()),
+	}
+}
+
+// ConvertBTCEcPubToECDSA converts a btcec.PublicKey to an ecdsa.PublicKey
+func ConvertBTCEcPubToECDSA(pubKey *btcec.PublicKey) *ecdsa.PublicKey {
+	return &ecdsa.PublicKey{
+		Curve: elliptic.P256(),
+		X:     pubKey.X(),
+		Y:     pubKey.Y(),
+	}
 }
