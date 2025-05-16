@@ -118,11 +118,45 @@ func (b *Block) Validate() error {
 		return fmt.Errorf("invalid timestamp")
 	}
 
-	// Validate transactions
+	// Check if block has transactions
+	if len(b.Transactions) == 0 {
+		return fmt.Errorf("block has no transactions")
+	}
+
+	// Check if first transaction is coinbase
+	if !b.Transactions[0].IsCoinbase() {
+		return fmt.Errorf("first transaction is not coinbase")
+	}
+
+	// Check if block has more than one coinbase transaction
+	for i := 1; i < len(b.Transactions); i++ {
+		if b.Transactions[i].IsCoinbase() {
+			return fmt.Errorf("block has more than one coinbase transaction")
+		}
+	}
+
+	// Validate each transaction
 	for _, tx := range b.Transactions {
 		if err := tx.Validate(); err != nil {
 			return fmt.Errorf("invalid transaction: %v", err)
 		}
+	}
+
+	// Validate proof of work
+	pow := NewProofOfWork(b)
+	if !pow.Validate() {
+		return fmt.Errorf("invalid proof of work")
+	}
+
+	// Validate block weight
+	if err := b.ValidateBlockWeight(); err != nil {
+		return fmt.Errorf("invalid block weight: %v", err)
+	}
+
+	// Validate merkle root
+	calculatedMerkleRoot := b.CalculateMerkleRoot()
+	if !bytes.Equal(calculatedMerkleRoot, b.Hash) {
+		return fmt.Errorf("invalid merkle root")
 	}
 
 	return nil

@@ -169,3 +169,97 @@ func (tx *Transaction) String() string {
 
 	return fmt.Sprintf("%s\n", lines)
 }
+
+// Validate validates the transaction
+func (tx *Transaction) Validate() error {
+	// Check if transaction is nil
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+
+	// Check if transaction has inputs
+	if len(tx.Vin) == 0 {
+		return fmt.Errorf("transaction has no inputs")
+	}
+
+	// Check if transaction has outputs
+	if len(tx.Vout) == 0 {
+		return fmt.Errorf("transaction has no outputs")
+	}
+
+	// Check if transaction ID is valid
+	if tx.ID == nil {
+		return fmt.Errorf("transaction has no ID")
+	}
+
+	// Check if transaction timestamp is valid
+	if tx.Timestamp > time.Now().Unix() {
+		return fmt.Errorf("invalid timestamp")
+	}
+
+	// Validate inputs
+	for i, input := range tx.Vin {
+		if input.Txid == nil {
+			return fmt.Errorf("input %d has no transaction ID", i)
+		}
+		if input.Vout < 0 {
+			return fmt.Errorf("input %d has invalid output index", i)
+		}
+		if input.Signature == nil {
+			return fmt.Errorf("input %d has no signature", i)
+		}
+		if input.PubKey == nil {
+			return fmt.Errorf("input %d has no public key", i)
+		}
+	}
+
+	// Validate outputs
+	for i, output := range tx.Vout {
+		if output.Value <= 0 {
+			return fmt.Errorf("output %d has invalid value", i)
+		}
+		if output.PubKeyHash == nil {
+			return fmt.Errorf("output %d has no public key hash", i)
+		}
+	}
+
+	return nil
+}
+
+// Size returns the size of the transaction in bytes
+func (tx *Transaction) Size() int {
+	size := 0
+
+	// ID size
+	size += len(tx.ID)
+
+	// Timestamp size
+	size += 8
+
+	// Input count size
+	size += 4
+
+	// Input sizes
+	for _, input := range tx.Vin {
+		size += len(input.Txid)
+		size += 4 // Vout size
+		size += len(input.Signature)
+		size += len(input.PubKey)
+	}
+
+	// Output count size
+	size += 4
+
+	// Output sizes
+	for _, output := range tx.Vout {
+		size += 8 // Value size
+		size += len(output.PubKeyHash)
+	}
+
+	return size
+}
+
+// IsCoinbase checks if the transaction is a coinbase transaction
+func (tx *Transaction) IsCoinbase() bool {
+	return len(tx.Vin) == 1 && len(tx.Vin[0].Txid) == 0 && tx.Vin[0].Vout == -1
+}
