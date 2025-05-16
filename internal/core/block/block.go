@@ -3,58 +3,85 @@ package block
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/youngchain/internal/core/coin"
 	"github.com/youngchain/internal/core/types"
 )
 
+const (
+	// TargetBits is the number of leading zero bits required for a valid block
+	TargetBits = 24
+
+	// MaxNonce is the maximum value a nonce can have
+	MaxNonce = math.MaxInt64
+)
+
 // Block represents a block in the blockchain
 type Block struct {
-	Header       *types.BlockHeader
-	Transactions []*types.Transaction
-	Size         int
-	Hash         []byte
-	PreviousHash []byte
+	Timestamp     int64
+	Transactions  []*types.Transaction
+	PrevBlockHash []byte
+	Hash          []byte
+	Nonce         int
+	Height        int64
 }
 
 // String returns a string representation of the block
 func (b *Block) String() string {
-	return fmt.Sprintf("Block{Version: %d, PrevHash: %s, MerkleRoot: %s, Timestamp: %d, Difficulty: %d, Nonce: %d, Hash: %s, Height: %d, Size: %d, TxCount: %d}",
-		b.Header.Version,
-		hex.EncodeToString(b.Header.PrevBlockHash),
-		hex.EncodeToString(b.Header.MerkleRoot),
-		b.Header.Timestamp,
-		b.Header.Difficulty,
-		b.Header.Nonce,
-		hex.EncodeToString(b.Header.Hash),
-		b.Header.Height,
-		b.Size,
+	return fmt.Sprintf(
+		"Block:\n"+
+			"  Timestamp: %d\n"+
+			"  Transactions: %d\n"+
+			"  Previous Hash: %x\n"+
+			"  Hash: %x\n"+
+			"  Nonce: %d\n"+
+			"  Height: %d\n",
+		b.Timestamp,
 		len(b.Transactions),
+		b.PrevBlockHash,
+		b.Hash,
+		b.Nonce,
+		b.Height,
 	)
 }
 
 // NewBlock creates a new block
-func NewBlock(previousHash []byte, timestamp uint64) *Block {
-	return &Block{
-		Header: &types.BlockHeader{
-			PrevBlockHash: previousHash,
-			Timestamp:     timestamp,
-			Version:       1,
-		},
-		Transactions: make([]*types.Transaction, 0),
-		PreviousHash: previousHash,
+func NewBlock(transactions []*types.Transaction, prevBlockHash []byte, height int64) *Block {
+	block := &Block{
+		Timestamp:     time.Now().Unix(),
+		Transactions:  transactions,
+		PrevBlockHash: prevBlockHash,
+		Hash:          []byte{},
+		Nonce:         0,
+		Height:        height,
 	}
+
+	// Run the proof of work algorithm
+	pow := NewProofOfWork(block)
+	nonce, hash := pow.Run()
+
+	block.Hash = hash
+	block.Nonce = nonce
+
+	return block
+}
+
+// NewGenesisBlock creates the first block in the blockchain
+func NewGenesisBlock(coinbase *types.Transaction) *Block {
+	return NewBlock([]*types.Transaction{coinbase}, []byte{}, 0)
 }
 
 // CalculateHash calculates the block hash
 func (b *Block) CalculateHash() error {
 	// Create a copy of the block without the hash
 	blockCopy := *b
-	blockCopy.Header.Hash = nil
+	blockCopy.Hash = nil
 
 	// Marshal the block to JSON
 	data, err := json.Marshal(blockCopy)
@@ -64,7 +91,6 @@ func (b *Block) CalculateHash() error {
 
 	// Calculate SHA-256 hash
 	hash := sha256.Sum256(data)
-	b.Header.Hash = hash[:]
 	b.Hash = hash[:]
 
 	return nil
@@ -77,34 +103,19 @@ func (b *Block) Validate() error {
 		return fmt.Errorf("block is nil")
 	}
 
-	// Check if header is nil
-	if b.Header == nil {
-		return fmt.Errorf("block header is nil")
-	}
-
 	// Check if hash is valid
 	if err := b.CalculateHash(); err != nil {
 		return fmt.Errorf("failed to calculate hash: %v", err)
 	}
 
 	// Check if previous hash matches
-	if b.Header.PrevBlockHash != nil && !bytes.Equal(b.Header.PrevBlockHash, b.PreviousHash) {
+	if b.PrevBlockHash != nil && !bytes.Equal(b.PrevBlockHash, b.PrevBlockHash) {
 		return fmt.Errorf("previous hash mismatch")
 	}
 
 	// Check if timestamp is valid
-	if b.Header.Timestamp > uint64(time.Now().Unix()) {
+	if b.Timestamp > int64(time.Now().Unix()) {
 		return fmt.Errorf("invalid timestamp")
-	}
-
-	// Check if difficulty is valid
-	if b.Header.Difficulty == 0 {
-		return fmt.Errorf("invalid difficulty")
-	}
-
-	// Check if coin type is valid
-	if b.Header.CoinType == "" {
-		return fmt.Errorf("invalid coin type")
 	}
 
 	// Validate transactions
@@ -127,39 +138,32 @@ func (b *Block) AddTransaction(tx *types.Transaction) error {
 	// Add transaction
 	b.Transactions = append(b.Transactions, tx)
 
-	// Update block size
-	data, err := json.Marshal(tx)
-	if err != nil {
-		return fmt.Errorf("failed to marshal transaction: %v", err)
-	}
-	b.Size += len(data)
-
 	return nil
 }
 
 // GetHash returns the block hash
 func (b *Block) GetHash() []byte {
-	return b.Header.Hash
+	return b.Hash
 }
 
 // GetPreviousHash returns the previous block hash
 func (b *Block) GetPreviousHash() []byte {
-	return b.Header.PrevBlockHash
+	return b.PrevBlockHash
 }
 
 // GetTimestamp returns the block timestamp
 func (b *Block) GetTimestamp() uint64 {
-	return b.Header.Timestamp
+	return uint64(b.Timestamp)
 }
 
 // GetDifficulty returns the block difficulty
 func (b *Block) GetDifficulty() uint32 {
-	return b.Header.Difficulty
+	return 0 // Assuming difficulty is not stored in the block structure
 }
 
 // GetCoinType returns the block coin type
 func (b *Block) GetCoinType() coin.Type {
-	return b.Header.CoinType
+	return coin.Type("") // Assuming coin type is not stored in the block structure
 }
 
 // GetTransactions returns the block transactions
@@ -216,22 +220,12 @@ func calculateHash(data []byte) []byte {
 // Clone creates a deep copy of the block
 func (b *Block) Clone() *Block {
 	clone := &Block{
-		Header: &types.BlockHeader{
-			Version:       b.Header.Version,
-			PrevBlockHash: append([]byte{}, b.Header.PrevBlockHash...),
-			MerkleRoot:    append([]byte{}, b.Header.MerkleRoot...),
-			Timestamp:     b.Header.Timestamp,
-			Difficulty:    b.Header.Difficulty,
-			Nonce:         b.Header.Nonce,
-			Height:        b.Header.Height,
-			Type:          b.Header.Type,
-			CoinType:      b.Header.CoinType,
-			Hash:          append([]byte{}, b.Header.Hash...),
-		},
-		Transactions: make([]*types.Transaction, len(b.Transactions)),
-		Size:         b.Size,
-		Hash:         append([]byte{}, b.Hash...),
-		PreviousHash: append([]byte{}, b.PreviousHash...),
+		Timestamp:     b.Timestamp,
+		Transactions:  make([]*types.Transaction, len(b.Transactions)),
+		PrevBlockHash: append([]byte{}, b.PrevBlockHash...),
+		Hash:          append([]byte{}, b.Hash...),
+		Nonce:         b.Nonce,
+		Height:        b.Height,
 	}
 
 	for i, tx := range b.Transactions {
@@ -254,7 +248,7 @@ func (b *Block) MarshalJSON() ([]byte, error) {
 		HashHex string `json:"hash_hex"`
 	}{
 		Alias:   (*Alias)(b),
-		HashHex: hex.EncodeToString(b.Header.Hash),
+		HashHex: hex.EncodeToString(b.Hash),
 	})
 }
 
@@ -275,14 +269,14 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return err
 		}
-		b.Header.Hash = hash
+		b.Hash = hash
 	}
 	return nil
 }
 
 // UpdateMerkleRoot updates the merkle root of the block
 func (b *Block) UpdateMerkleRoot() {
-	b.Header.MerkleRoot = b.CalculateMerkleRoot()
+	b.Hash = b.CalculateMerkleRoot()
 }
 
 // GetInitialDifficulty returns the initial difficulty for a block type
@@ -306,23 +300,8 @@ func calculateInitialDifficulty(blockType types.BlockType) uint32 {
 func (b *Block) GetBlockSize() int {
 	size := 0
 
-	// Version size
-	size += 4
-
-	// Previous block hash size
-	size += len(b.Header.PrevBlockHash)
-
-	// Merkle root size
-	size += len(b.Header.MerkleRoot)
-
 	// Timestamp size
 	size += 8
-
-	// Difficulty size
-	size += 8
-
-	// Nonce size
-	size += 4
 
 	// Transaction count size
 	size += 4
@@ -394,4 +373,86 @@ func (b *Block) ValidateTransactions(utxoSet types.UTXOSetInterface) error {
 	}
 
 	return nil
+}
+
+// HashTransactions returns a hash of the transactions in the block
+func (b *Block) HashTransactions() []byte {
+	var txHashes [][]byte
+	var txHash [32]byte
+
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.Hash())
+	}
+	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
+
+	return txHash[:]
+}
+
+// Serialize serializes the block into a byte array
+func (b *Block) Serialize() []byte {
+	var result bytes.Buffer
+
+	// Write timestamp
+	binary.Write(&result, binary.LittleEndian, b.Timestamp)
+
+	// Write transactions
+	binary.Write(&result, binary.LittleEndian, int64(len(b.Transactions)))
+	for _, tx := range b.Transactions {
+		txBytes := tx.Serialize()
+		binary.Write(&result, binary.LittleEndian, int64(len(txBytes)))
+		result.Write(txBytes)
+	}
+
+	// Write previous block hash
+	binary.Write(&result, binary.LittleEndian, int64(len(b.PrevBlockHash)))
+	result.Write(b.PrevBlockHash)
+
+	// Write nonce
+	binary.Write(&result, binary.LittleEndian, int64(b.Nonce))
+
+	// Write height
+	binary.Write(&result, binary.LittleEndian, b.Height)
+
+	return result.Bytes()
+}
+
+// DeserializeBlock deserializes a block from a byte array
+func DeserializeBlock(data []byte) (*Block, error) {
+	block := &Block{}
+	reader := bytes.NewReader(data)
+
+	// Read timestamp
+	binary.Read(reader, binary.LittleEndian, &block.Timestamp)
+
+	// Read transactions
+	var txCount int64
+	binary.Read(reader, binary.LittleEndian, &txCount)
+	block.Transactions = make([]*types.Transaction, txCount)
+	for i := int64(0); i < txCount; i++ {
+		var txLen int64
+		binary.Read(reader, binary.LittleEndian, &txLen)
+		txBytes := make([]byte, txLen)
+		reader.Read(txBytes)
+		tx, err := types.DeserializeTransaction(txBytes)
+		if err != nil {
+			return nil, err
+		}
+		block.Transactions[i] = tx
+	}
+
+	// Read previous block hash
+	var prevHashLen int64
+	binary.Read(reader, binary.LittleEndian, &prevHashLen)
+	block.PrevBlockHash = make([]byte, prevHashLen)
+	reader.Read(block.PrevBlockHash)
+
+	// Read nonce
+	var nonce int64
+	binary.Read(reader, binary.LittleEndian, &nonce)
+	block.Nonce = int(nonce)
+
+	// Read height
+	binary.Read(reader, binary.LittleEndian, &block.Height)
+
+	return block, nil
 }
