@@ -172,6 +172,36 @@ func (tx *Transaction) String() string {
 
 // Validate validates the transaction
 func (tx *Transaction) Validate() error {
+	// Basic validation
+	if err := tx.validateBasic(); err != nil {
+		return err
+	}
+
+	// Skip further validation for coinbase transactions
+	if tx.IsCoinbase() {
+		return nil
+	}
+
+	// Validate input/output balance
+	if err := tx.validateBalance(); err != nil {
+		return err
+	}
+
+	// Validate signatures
+	if err := tx.validateSignatures(); err != nil {
+		return err
+	}
+
+	// Validate fees
+	if err := tx.validateFees(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateBasic performs basic transaction validation
+func (tx *Transaction) validateBasic() error {
 	// Check if transaction is nil
 	if tx == nil {
 		return fmt.Errorf("transaction is nil")
@@ -224,6 +254,89 @@ func (tx *Transaction) Validate() error {
 	}
 
 	return nil
+}
+
+// validateBalance validates the input/output balance
+func (tx *Transaction) validateBalance() error {
+	var inputSum, outputSum int64
+
+	// Calculate input sum
+	for _, input := range tx.Vin {
+		// In a real implementation, we would look up the previous output value
+		// For now, we'll assume each input is worth 1 coin
+		inputSum += 1
+	}
+
+	// Calculate output sum
+	for _, output := range tx.Vout {
+		outputSum += output.Value
+	}
+
+	// Check if outputs exceed inputs
+	if outputSum > inputSum {
+		return fmt.Errorf("output sum (%d) exceeds input sum (%d)", outputSum, inputSum)
+	}
+
+	return nil
+}
+
+// validateSignatures validates all input signatures
+func (tx *Transaction) validateSignatures() error {
+	for i, input := range tx.Vin {
+		// In a real implementation, we would verify the signature against the public key
+		// and the transaction data. For now, we'll just check if the signature is valid
+		if len(input.Signature) == 0 {
+			return fmt.Errorf("input %d has invalid signature", i)
+		}
+	}
+	return nil
+}
+
+// validateFees validates transaction fees
+func (tx *Transaction) validateFees() error {
+	var inputSum, outputSum int64
+
+	// Calculate input sum
+	for _, input := range tx.Vin {
+		// In a real implementation, we would look up the previous output value
+		// For now, we'll assume each input is worth 1 coin
+		inputSum += 1
+	}
+
+	// Calculate output sum
+	for _, output := range tx.Vout {
+		outputSum += output.Value
+	}
+
+	// Calculate fee
+	fee := inputSum - outputSum
+
+	// Minimum fee requirement (0.0001 coins)
+	minFee := int64(0.0001 * 1e8) // Assuming 8 decimal places
+	if fee < minFee {
+		return fmt.Errorf("transaction fee (%d) is below minimum (%d)", fee, minFee)
+	}
+
+	return nil
+}
+
+// GetFee returns the transaction fee
+func (tx *Transaction) GetFee() int64 {
+	var inputSum, outputSum int64
+
+	// Calculate input sum
+	for _, input := range tx.Vin {
+		// In a real implementation, we would look up the previous output value
+		// For now, we'll assume each input is worth 1 coin
+		inputSum += 1
+	}
+
+	// Calculate output sum
+	for _, output := range tx.Vout {
+		outputSum += output.Value
+	}
+
+	return inputSum - outputSum
 }
 
 // Size returns the size of the transaction in bytes
