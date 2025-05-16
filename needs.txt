@@ -1,8 +1,0 @@
-Block difficulty and proof-of-work mechanism
-Transaction handling
-Network synchronization
-Configuration options
-Logging and monitoring
-Metrics collection
-Unit tests
-Documentation
