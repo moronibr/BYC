@@ -326,21 +326,33 @@ func taprootVerify(publicKey *ecdsa.PublicKey, message []byte, r, s *big.Int) bo
 	secp256k1.AddNonConst(&pubJac, &tweakJac, &outJac)
 	tweakedPubKey := secp256k1.NewPublicKey(&outJac.X, &outJac.Y)
 
-	// Convert to btcec public key
-	btcecPubKey, err := btcec.ParsePubKey(tweakedPubKey.SerializeCompressed())
-	if err != nil {
+	// Convert r and s to ModNScalar
+	var rScalar, sScalar secp256k1.ModNScalar
+	if !rScalar.SetByteSlice(r.Bytes()) || !sScalar.SetByteSlice(s.Bytes()) {
 		return false
 	}
 
-	// Create a Schnorr signature from R and S
-	sigBytes := append(r.Bytes(), s.Bytes()...)
-	sig, err := schnorr.ParseSignature(sigBytes)
-	if err != nil {
-		return false
-	}
+	// Create a hash scalar
+	var hashScalar secp256k1.ModNScalar
+	hashScalar.SetByteSlice(hash[:])
 
-	// Verify the signature using the tweaked public key
-	return sig.Verify(hash[:], btcecPubKey)
+	// Verify the signature
+	// sG = R + hash*P
+	var sG, hashP, result secp256k1.JacobianPoint
+	secp256k1.ScalarBaseMultNonConst(&sScalar, &sG)
+	tweakedPubKey.AsJacobian(&hashP)
+	secp256k1.ScalarMultNonConst(&hashScalar, &hashP, &hashP)
+	secp256k1.AddNonConst(&sG, &hashP, &result)
+
+	// Check if the result matches R
+	var resultX secp256k1.FieldVal
+	result.ToAffine()
+	resultX = result.X
+
+	// Compare the X coordinates
+	var rX secp256k1.FieldVal
+	rX.SetByteSlice(r.Bytes())
+	return resultX.Equals(&rX)
 }
 
 // GenerateKeyPair generates a new ECDSA key pair
