@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/allegro/bigcache/v3 v3.1.0
-	github.com/btcsuite/btcd/btcec/v2 v2.3.2
+	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/gorilla/websocket v1.5.3
 	github.com/libp2p/go-libp2p v0.41.1
 	github.com/libp2p/go-libp2p-kad-dht v0.33.0

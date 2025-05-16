@@ -265,13 +265,14 @@ func taprootSign(rand io.Reader, privateKey *ecdsa.PrivateKey, message []byte) (
 	}
 
 	// Sign the hash using Schnorr with the tweaked key
-	sig, err := schnorr.Sign(btcecPrivKey, hash[:])
+	var schnorrSignature *schnorr.Signature
+	schnorrSignature, err = schnorr.Sign(btcecPrivKey, hash[:])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create Taproot signature: %v", err)
 	}
 
 	// Get the R and S components from the serialized signature
-	sigBytes := sig.Serialize()
+	sigBytes := schnorrSignature.Serialize()
 	if len(sigBytes) != 64 {
 		return nil, nil, fmt.Errorf("invalid signature length")
 	}
