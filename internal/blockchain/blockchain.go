@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -86,8 +87,8 @@ func calculateHash(block Block) []byte {
 	record := bytes.Join([][]byte{
 		block.PrevHash,
 		[]byte(string(block.BlockType)),
-		[]byte(string(block.Difficulty)),
-		[]byte(string(block.Nonce)),
+		[]byte(strconv.Itoa(block.Difficulty)),
+		[]byte(strconv.FormatInt(block.Nonce, 10)),
 	}, []byte{})
 
 	h := sha256.New()
