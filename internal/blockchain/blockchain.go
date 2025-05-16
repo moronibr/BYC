@@ -11,9 +11,10 @@ import (
 
 // Blockchain represents the dual blockchain system
 type Blockchain struct {
-	GoldenChain []Block
-	SilverChain []Block
-	Difficulty  int
+	GoldenBlocks []Block
+	SilverBlocks []Block
+	UTXOSet      *UTXOSet
+	Difficulty   int
 }
 
 // NewBlockchain creates a new blockchain with genesis blocks
@@ -22,9 +23,10 @@ func NewBlockchain() *Blockchain {
 	genesisSilver := createGenesisBlock(SilverBlock)
 
 	return &Blockchain{
-		GoldenChain: []Block{genesisGolden},
-		SilverChain: []Block{genesisSilver},
-		Difficulty:  4, // Initial difficulty
+		GoldenBlocks: []Block{genesisGolden},
+		SilverBlocks: []Block{genesisSilver},
+		UTXOSet:      NewUTXOSet(),
+		Difficulty:   4, // Initial difficulty
 	}
 }
 
@@ -41,21 +43,43 @@ func createGenesisBlock(blockType BlockType) Block {
 	}
 }
 
-// AddBlock adds a new block to the appropriate chain
+// AddBlock adds a block to the blockchain
 func (bc *Blockchain) AddBlock(block Block) error {
-	if block.BlockType == GoldenBlock {
-		if !bc.isValidBlock(block, bc.GoldenChain[len(bc.GoldenChain)-1]) {
-			return errors.New("invalid golden block")
-		}
-		bc.GoldenChain = append(bc.GoldenChain, block)
-	} else if block.BlockType == SilverBlock {
-		if !bc.isValidBlock(block, bc.SilverChain[len(bc.SilverChain)-1]) {
-			return errors.New("invalid silver block")
-		}
-		bc.SilverChain = append(bc.SilverChain, block)
-	} else {
-		return errors.New("invalid block type")
+	// Validate block
+	if err := bc.validateBlock(block); err != nil {
+		return err
 	}
+
+	// Update UTXO set
+	for _, tx := range block.Transactions {
+		// Remove spent UTXOs
+		for _, input := range tx.Inputs {
+			bc.UTXOSet.Remove(string(input.TxID), input.OutputIndex)
+		}
+		// Add new UTXOs
+		for i, output := range tx.Outputs {
+			utxo := UTXO{
+				TxID:        string(tx.ID),
+				OutputIndex: i,
+				Amount:      output.Value,
+				Address:     output.Address,
+			}
+			bc.UTXOSet.Add(utxo)
+		}
+	}
+
+	// Add block to the appropriate chain
+	if block.BlockType == GoldenBlock {
+		bc.GoldenBlocks = append(bc.GoldenBlocks, block)
+	} else {
+		bc.SilverBlocks = append(bc.SilverBlocks, block)
+	}
+	return nil
+}
+
+// validateBlock validates a block before adding it to the blockchain
+func (bc *Blockchain) validateBlock(block Block) error {
+	// TODO: Implement block validation logic
 	return nil
 }
 
@@ -104,9 +128,9 @@ func (bc *Blockchain) MineBlock(transactions []Transaction, blockType BlockType,
 
 	var prevBlock Block
 	if blockType == GoldenBlock {
-		prevBlock = bc.GoldenChain[len(bc.GoldenChain)-1]
+		prevBlock = bc.GoldenBlocks[len(bc.GoldenBlocks)-1]
 	} else {
-		prevBlock = bc.SilverChain[len(bc.SilverChain)-1]
+		prevBlock = bc.SilverBlocks[len(bc.SilverBlocks)-1]
 	}
 
 	block := Block{
@@ -135,7 +159,7 @@ func (bc *Blockchain) GetBalance(address string, coinType CoinType) float64 {
 	var balance float64
 
 	// Check both chains for the balance
-	for _, block := range bc.GoldenChain {
+	for _, block := range bc.GoldenBlocks {
 		for _, tx := range block.Transactions {
 			for _, output := range tx.Outputs {
 				if hex.EncodeToString(output.PubKeyHash) == address && output.CoinType == coinType {
@@ -145,7 +169,7 @@ func (bc *Blockchain) GetBalance(address string, coinType CoinType) float64 {
 		}
 	}
 
-	for _, block := range bc.SilverChain {
+	for _, block := range bc.SilverBlocks {
 		for _, tx := range block.Transactions {
 			for _, output := range tx.Outputs {
 				if hex.EncodeToString(output.PubKeyHash) == address && output.CoinType == coinType {

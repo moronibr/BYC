@@ -60,10 +60,11 @@ type Transaction struct {
 
 // TxInput represents a transaction input
 type TxInput struct {
-	TxID      []byte
-	Vout      int
-	Signature []byte
-	PubKey    []byte
+	TxID        []byte
+	OutputIndex int
+	Amount      float64
+	Signature   []byte
+	PubKey      []byte
 }
 
 // TxOutput represents a transaction output
@@ -71,6 +72,7 @@ type TxOutput struct {
 	Value      float64
 	CoinType   CoinType
 	PubKeyHash []byte
+	Address    string
 }
 
 // Wallet represents a user's wallet

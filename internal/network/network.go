@@ -29,6 +29,9 @@ type Peer struct {
 	Conn    net.Conn
 }
 
+// handshakeMessage is sent immediately after connecting to share the listening address
+const handshakeMessageType = "handshake"
+
 // NewNode creates a new P2P node
 func NewNode(address string, bc *blockchain.Blockchain) *Node {
 	return &Node{
@@ -66,12 +69,28 @@ func (n *Node) acceptConnections(listener net.Listener) {
 func (n *Node) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	// 1. Receive handshake (peer's listening address)
+	decoder := json.NewDecoder(conn)
+	var handshake Message
+	if err := decoder.Decode(&handshake); err != nil || handshake.Type != handshakeMessageType {
+		return
+	}
+	var peerListenAddr string
+	if err := json.Unmarshal(handshake.Payload, &peerListenAddr); err != nil {
+		return
+	}
+
 	peer := &Peer{
-		Address: conn.RemoteAddr().String(),
+		Address: peerListenAddr,
 		Conn:    conn,
 	}
 
+	// 2. Deduplicate: if already connected, close new connection
 	n.mu.Lock()
+	if _, exists := n.Peers[peer.Address]; exists {
+		n.mu.Unlock()
+		return
+	}
 	n.Peers[peer.Address] = peer
 	n.mu.Unlock()
 
@@ -81,13 +100,12 @@ func (n *Node) handleConnection(conn net.Conn) {
 		n.mu.Unlock()
 	}()
 
-	decoder := json.NewDecoder(conn)
+	// 3. Handle messages
 	for {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			return
 		}
-
 		n.handleMessage(msg, peer)
 	}
 }
@@ -153,13 +171,31 @@ func (n *Node) Connect(address string) error {
 		return fmt.Errorf("failed to connect to peer: %v", err)
 	}
 
+	// 1. Send handshake (our listening address)
+	encoder := json.NewEncoder(conn)
+	payload, _ := json.Marshal(n.Address)
+	handshake := Message{
+		Type:    handshakeMessageType,
+		Payload: payload,
+	}
+	if err := encoder.Encode(handshake); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to send handshake: %v", err)
+	}
+
 	peer := &Peer{
 		Address: address,
 		Conn:    conn,
 	}
 
+	// 2. Deduplicate: if already connected, close new connection
 	n.mu.Lock()
-	n.Peers[address] = peer
+	if _, exists := n.Peers[peer.Address]; exists {
+		n.mu.Unlock()
+		conn.Close()
+		return nil
+	}
+	n.Peers[peer.Address] = peer
 	n.mu.Unlock()
 
 	go n.handleConnection(conn)

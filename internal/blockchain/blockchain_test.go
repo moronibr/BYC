@@ -9,19 +9,19 @@ func TestNewBlockchain(t *testing.T) {
 	bc := NewBlockchain()
 
 	// Test genesis blocks
-	if len(bc.GoldenChain) != 1 {
-		t.Errorf("Expected 1 block in GoldenChain, got %d", len(bc.GoldenChain))
+	if len(bc.GoldenBlocks) != 1 {
+		t.Errorf("Expected 1 block in GoldenBlocks, got %d", len(bc.GoldenBlocks))
 	}
-	if len(bc.SilverChain) != 1 {
-		t.Errorf("Expected 1 block in SilverChain, got %d", len(bc.SilverChain))
+	if len(bc.SilverBlocks) != 1 {
+		t.Errorf("Expected 1 block in SilverBlocks, got %d", len(bc.SilverBlocks))
 	}
 
 	// Test genesis block types
-	if bc.GoldenChain[0].BlockType != GoldenBlock {
-		t.Errorf("Expected GoldenBlock type, got %s", bc.GoldenChain[0].BlockType)
+	if bc.GoldenBlocks[0].BlockType != GoldenBlock {
+		t.Errorf("Expected GoldenBlock type, got %s", bc.GoldenBlocks[0].BlockType)
 	}
-	if bc.SilverChain[0].BlockType != SilverBlock {
-		t.Errorf("Expected SilverBlock type, got %s", bc.SilverChain[0].BlockType)
+	if bc.SilverBlocks[0].BlockType != SilverBlock {
+		t.Errorf("Expected SilverBlock type, got %s", bc.SilverBlocks[0].BlockType)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestAddBlock(t *testing.T) {
 	block := Block{
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
-		PrevHash:     bc.GoldenChain[0].Hash,
+		PrevHash:     bc.GoldenBlocks[0].Hash,
 		Nonce:        0,
 		BlockType:    GoldenBlock,
 		Difficulty:   bc.Difficulty,
