@@ -3,7 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"os"
 
 	"github.com/byc/internal/blockchain"
 	"github.com/byc/internal/logger"
@@ -43,7 +43,7 @@ type LevelDBStorage struct {
 // NewLevelDBStorage creates a new LevelDB storage
 func NewLevelDBStorage(path string) (*LevelDBStorage, error) {
 	// Create directory if it doesn't exist
-	if err := filepath.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func (s *LevelDBStorage) GetTransactions(address string) ([]*blockchain.Transact
 
 		// Check if address is involved in transaction
 		for _, input := range tx.Inputs {
-			if string(input.PubKey) == address {
+			if string(input.PublicKey) == address {
 				transactions = append(transactions, &tx)
 				break
 			}
@@ -230,7 +230,7 @@ func (s *LevelDBStorage) PutUTXO(utxo *blockchain.UTXO) error {
 		return fmt.Errorf("failed to store UTXO: %v", err)
 	}
 
-	logger.Debug("Stored UTXO", zap.String("txid", utxo.TxID), zap.Int("outputIndex", utxo.OutputIndex))
+	logger.Debug("Stored UTXO", zap.String("txid", string(utxo.TxID)), zap.Int("outputIndex", utxo.OutputIndex))
 	return nil
 }
 

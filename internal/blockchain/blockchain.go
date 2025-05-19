@@ -169,7 +169,7 @@ func (bc *Blockchain) GetBalance(address string, coinType CoinType) float64 {
 	for _, block := range bc.GoldenBlocks {
 		for _, tx := range block.Transactions {
 			for _, output := range tx.Outputs {
-				if hex.EncodeToString(output.PubKeyHash) == address && output.CoinType == coinType {
+				if hex.EncodeToString(output.PublicKeyHash) == address && output.CoinType == coinType {
 					balance += output.Value
 				}
 			}
@@ -179,7 +179,7 @@ func (bc *Blockchain) GetBalance(address string, coinType CoinType) float64 {
 	for _, block := range bc.SilverBlocks {
 		for _, tx := range block.Transactions {
 			for _, output := range tx.Outputs {
-				if hex.EncodeToString(output.PubKeyHash) == address && output.CoinType == coinType {
+				if hex.EncodeToString(output.PublicKeyHash) == address && output.CoinType == coinType {
 					balance += output.Value
 				}
 			}
@@ -338,4 +338,21 @@ func (bc *Blockchain) GetTransactions(address string) ([]*Transaction, error) {
 	}
 
 	return transactions, nil
+}
+
+// Height returns the current height of the blockchain
+func (bc *Blockchain) Height() int {
+	return len(bc.GoldenBlocks) + len(bc.SilverBlocks)
+}
+
+// Size returns the total size of the blockchain in bytes
+func (bc *Blockchain) Size() int64 {
+	var size int64
+	for _, block := range bc.GoldenBlocks {
+		size += int64(len(block.Transactions))
+	}
+	for _, block := range bc.SilverBlocks {
+		size += int64(len(block.Transactions))
+	}
+	return size
 }

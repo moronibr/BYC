@@ -20,13 +20,14 @@ type Server struct {
 	node       *network.Node
 	router     *mux.Router
 	upgrader   websocket.Upgrader
+	config     *Config
+	server     *http.Server
 }
 
 // NewServer creates a new API server
-func NewServer(bc *blockchain.Blockchain, node *network.Node) *Server {
+func NewServer(bc *blockchain.Blockchain, config *Config) *Server {
 	server := &Server{
 		blockchain: bc,
-		node:       node,
 		router:     mux.NewRouter(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -35,6 +36,7 @@ func NewServer(bc *blockchain.Blockchain, node *network.Node) *Server {
 				return true // Allow all origins
 			},
 		},
+		config: config,
 	}
 
 	// Register routes
@@ -71,12 +73,44 @@ func (s *Server) registerRoutes() {
 
 	// WebSocket route
 	s.router.HandleFunc("/ws", s.handleWebSocket)
+
+	// Node info route
+	s.router.HandleFunc("/node/info", s.handleGetNodeInfo).Methods("GET")
 }
 
 // Start starts the API server
-func (s *Server) Start(address string) error {
-	logger.Info("Starting API server", zap.String("address", address))
-	return http.ListenAndServe(address, s.router)
+func (s *Server) Start() error {
+	// Start the node
+	node, err := network.NewNode(&network.Config{
+		Address:        s.config.NodeAddress,
+		BlockType:      s.config.BlockType,
+		BootstrapPeers: s.config.BootstrapPeers,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start node: %v", err)
+	}
+	s.node = node
+
+	// Connect to bootstrap peers
+	for _, peer := range s.config.BootstrapPeers {
+		if err := s.node.ConnectToPeer(peer); err != nil {
+			logger.Error("Failed to connect to bootstrap peer", zap.String("peer", peer), zap.Error(err))
+		}
+	}
+
+	// Start the HTTP server
+	s.server = &http.Server{
+		Addr:    s.config.NodeAddress,
+		Handler: s.router,
+	}
+
+	go func() {
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("Failed to start server", zap.Error(err))
+		}
+	}()
+
+	return nil
 }
 
 // Response represents a generic API response
@@ -275,8 +309,8 @@ func (s *Server) getMiningStatus(w http.ResponseWriter, r *http.Request) {
 		IsMining bool   `json:"is_mining"`
 		CoinType string `json:"coin_type,omitempty"`
 	}{
-		IsMining: s.node.config.BlockType != "",
-		CoinType: string(s.node.config.BlockType),
+		IsMining: s.node.Config.BlockType != "",
+		CoinType: string(s.node.Config.BlockType),
 	}
 
 	s.sendResponse(w, http.StatusOK, status, nil)
@@ -299,7 +333,7 @@ func (s *Server) addPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.node.connectToPeer(req.Address)
+	go s.node.ConnectToPeer(req.Address)
 	s.sendResponse(w, http.StatusOK, nil, nil)
 }
 
@@ -326,4 +360,25 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// handleGetNodeInfo handles the GET /node/info endpoint
+func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
+	info := struct {
+		Address        string   `json:"address"`
+		BlockType      string   `json:"blockType"`
+		BootstrapPeers []string `json:"bootstrapPeers"`
+		Peers          []string `json:"peers"`
+	}{
+		Address:        s.node.Config.Address,
+		BlockType:      string(s.node.Config.BlockType),
+		BootstrapPeers: s.node.Config.BootstrapPeers,
+		Peers:          make([]string, 0),
+	}
+
+	for _, peer := range s.node.Peers {
+		info.Peers = append(info.Peers, peer.Address)
+	}
+
+	s.sendResponse(w, http.StatusOK, info, nil)
 }

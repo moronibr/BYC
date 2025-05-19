@@ -51,19 +51,19 @@ type Message struct {
 // Node represents a P2P node
 type Node struct {
 	Config     *Config
-	blockchain *blockchain.Blockchain
-	peers      map[string]*Peer
+	Blockchain *blockchain.Blockchain
+	Peers      map[string]*Peer
 	server     net.Listener
 	mu         sync.RWMutex
 }
 
 // Peer represents a connected peer
 type Peer struct {
-	address  string
-	conn     net.Conn
-	node     *Node
+	Address  string
+	Conn     net.Conn
+	Node     *Node
 	handlers map[MessageType]MessageHandler
-	lastSeen time.Time
+	LastSeen time.Time
 }
 
 // Config represents the node configuration
@@ -74,24 +74,20 @@ type Config struct {
 }
 
 // NewNode creates a new P2P node
-func NewNode(config *Config, bc *blockchain.Blockchain) (*Node, error) {
+func NewNode(config *Config) (*Node, error) {
+	bc := blockchain.NewBlockchain()
 	node := &Node{
 		Config:     config,
-		blockchain: bc,
-		peers:      make(map[string]*Peer),
+		Blockchain: bc,
+		Peers:      make(map[string]*Peer),
 	}
 
-	// Start the server
-	server, err := net.Listen("tcp", config.Address)
+	// Start listening for connections
+	listener, err := net.Listen("tcp", config.Address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to start node: %v", err)
 	}
-	node.server = server
-
-	// Connect to bootstrap peers
-	for _, peer := range config.BootstrapPeers {
-		go node.ConnectToPeer(peer)
-	}
+	node.server = listener
 
 	// Start accepting connections
 	go node.acceptConnections()
@@ -118,10 +114,10 @@ func (n *Node) handleConnection(conn net.Conn) {
 
 	// Create new peer
 	peer := &Peer{
-		conn:     conn,
-		address:  conn.RemoteAddr().String(),
-		lastSeen: time.Now(),
-		node:     n,
+		Conn:     conn,
+		Address:  conn.RemoteAddr().String(),
+		LastSeen: time.Now(),
+		Node:     n,
 		handlers: make(map[MessageType]MessageHandler),
 	}
 
@@ -144,14 +140,14 @@ func (n *Node) connectToPeer(address string) {
 	}
 
 	peer := &Peer{
-		address:  address,
-		conn:     conn,
-		node:     n,
+		Address:  address,
+		Conn:     conn,
+		Node:     n,
 		handlers: make(map[MessageType]MessageHandler),
 	}
 
 	n.mu.Lock()
-	n.peers[address] = peer
+	n.Peers[address] = peer
 	n.mu.Unlock()
 
 	// Register message handlers
@@ -177,13 +173,13 @@ func (n *Node) sendMessage(peer *Peer, msgType MessageType, payload interface{})
 		Payload: buf.Bytes(),
 	}
 
-	return gob.NewEncoder(peer.conn).Encode(msg)
+	return gob.NewEncoder(peer.Conn).Encode(msg)
 }
 
 // receiveMessage receives a message from a peer
 func (n *Node) receiveMessage(peer *Peer) (*Message, error) {
 	var msg Message
-	if err := gob.NewDecoder(peer.conn).Decode(&msg); err != nil {
+	if err := gob.NewDecoder(peer.Conn).Decode(&msg); err != nil {
 		return nil, fmt.Errorf("failed to decode message: %v", err)
 	}
 	return &msg, nil
@@ -233,7 +229,7 @@ func (n *Node) handleVersion(peer *Peer, msg *Message) error {
 
 func (n *Node) handleVerAck(peer *Peer, msg *Message) error {
 	n.mu.Lock()
-	n.peers[peer.address] = peer
+	n.Peers[peer.Address] = peer
 	n.mu.Unlock()
 
 	// Request blocks
@@ -243,11 +239,11 @@ func (n *Node) handleVerAck(peer *Peer, msg *Message) error {
 func (n *Node) handleGetBlocks(peer *Peer, msg *Message) error {
 	var blocks []*blockchain.Block
 	if n.Config.BlockType == blockchain.GoldenBlock {
-		for _, block := range n.blockchain.GoldenBlocks {
+		for _, block := range n.Blockchain.GoldenBlocks {
 			blocks = append(blocks, &block)
 		}
 	} else {
-		for _, block := range n.blockchain.SilverBlocks {
+		for _, block := range n.Blockchain.SilverBlocks {
 			blocks = append(blocks, &block)
 		}
 	}
@@ -262,7 +258,7 @@ func (n *Node) handleBlocks(peer *Peer, msg *Message) error {
 	}
 
 	for _, block := range blocks {
-		if err := n.blockchain.AddBlock(*block); err != nil {
+		if err := n.Blockchain.AddBlock(*block); err != nil {
 			logger.Error("Failed to add block", zap.Error(err))
 		}
 	}
@@ -277,10 +273,10 @@ func (n *Node) handleGetData(peer *Peer, msg *Message) error {
 	}
 
 	for _, hash := range inv {
-		if block, err := n.blockchain.GetBlock([]byte(hash)); err == nil {
+		if block, err := n.Blockchain.GetBlock([]byte(hash)); err == nil {
 			return n.sendMessage(peer, BlockMsg, block)
 		}
-		if tx, err := n.blockchain.GetTransaction([]byte(hash)); err == nil {
+		if tx, err := n.Blockchain.GetTransaction([]byte(hash)); err == nil {
 			return n.sendMessage(peer, TxMsg, tx)
 		}
 	}
@@ -303,7 +299,7 @@ func (n *Node) handleTx(peer *Peer, msg *Message) error {
 		return fmt.Errorf("failed to decode transaction: %v", err)
 	}
 
-	if err := n.blockchain.AddTransaction(tx); err != nil {
+	if err := n.Blockchain.AddTransaction(tx); err != nil {
 		return fmt.Errorf("failed to add transaction: %v", err)
 	}
 
@@ -318,7 +314,7 @@ func (n *Node) handleBlock(peer *Peer, msg *Message) error {
 		return fmt.Errorf("failed to decode block: %v", err)
 	}
 
-	if err := n.blockchain.AddBlock(*block); err != nil {
+	if err := n.Blockchain.AddBlock(*block); err != nil {
 		return fmt.Errorf("failed to add block: %v", err)
 	}
 
@@ -343,7 +339,7 @@ func (n *Node) handleAddr(peer *Peer, msg *Message) error {
 func (n *Node) handleGetAddr(peer *Peer, msg *Message) error {
 	var addrs []string
 	n.mu.RLock()
-	for addr := range n.peers {
+	for addr := range n.Peers {
 		addrs = append(addrs, addr)
 	}
 	n.mu.RUnlock()
@@ -356,7 +352,7 @@ func (n *Node) handlePing(peer *Peer, msg *Message) error {
 }
 
 func (n *Node) handlePong(peer *Peer, msg *Message) error {
-	peer.lastSeen = time.Now()
+	peer.LastSeen = time.Now()
 	return nil
 }
 
@@ -365,7 +361,7 @@ func (n *Node) broadcastMessage(msgType MessageType, payload interface{}) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
-	for _, peer := range n.peers {
+	for _, peer := range n.Peers {
 		if err := n.sendMessage(peer, msgType, payload); err != nil {
 			logger.Error("Failed to broadcast message", zap.Error(err))
 		}
@@ -398,8 +394,8 @@ func (n *Node) GetPeers() []*Peer {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
-	peers := make([]*Peer, 0, len(n.peers))
-	for _, peer := range n.peers {
+	peers := make([]*Peer, 0, len(n.Peers))
+	for _, peer := range n.Peers {
 		peers = append(peers, peer)
 	}
 
@@ -412,8 +408,8 @@ func (n *Node) Close() error {
 	defer n.mu.Unlock()
 
 	// Close all peer connections
-	for _, peer := range n.peers {
-		peer.conn.Close()
+	for _, peer := range n.Peers {
+		peer.Conn.Close()
 	}
 
 	// Close server
@@ -467,7 +463,7 @@ func (p *Peer) handleMessages() {
 
 // sendVersion sends a version message
 func (p *Peer) sendVersion() error {
-	payload, err := json.Marshal(p.node.Config)
+	payload, err := json.Marshal(p.Node.Config)
 	if err != nil {
 		return err
 	}
@@ -483,7 +479,7 @@ func (p *Peer) sendVersion() error {
 func (p *Peer) receiveMessage() (*Message, error) {
 	// Read message header
 	header := make([]byte, 24)
-	if _, err := io.ReadFull(p.conn, header); err != nil {
+	if _, err := io.ReadFull(p.Conn, header); err != nil {
 		return nil, err
 	}
 
@@ -496,7 +492,7 @@ func (p *Peer) receiveMessage() (*Message, error) {
 	length := binary.LittleEndian.Uint32(header[4:8])
 	if length > 0 {
 		msg.Payload = make([]byte, length)
-		if _, err := io.ReadFull(p.conn, msg.Payload); err != nil {
+		if _, err := io.ReadFull(p.Conn, msg.Payload); err != nil {
 			return nil, err
 		}
 
@@ -526,13 +522,13 @@ func (p *Peer) sendMessage(msg *Message) error {
 	binary.LittleEndian.PutUint32(header[4:8], uint32(len(msg.Payload)))
 
 	// Send message header
-	if _, err := p.conn.Write(header); err != nil {
+	if _, err := p.Conn.Write(header); err != nil {
 		return err
 	}
 
 	// Send message payload
 	if len(msg.Payload) > 0 {
-		if _, err := p.conn.Write(msg.Payload); err != nil {
+		if _, err := p.Conn.Write(msg.Payload); err != nil {
 			return err
 		}
 	}
@@ -555,31 +551,77 @@ func handleFilterLoad(p *Peer, payload []byte) error  { return nil }
 func handleMerkleBlock(p *Peer, payload []byte) error { return nil }
 func handleReject(p *Peer, payload []byte) error      { return nil }
 
-// ConnectToPeer connects to a peer
-func (n *Node) ConnectToPeer(address string) {
+// ConnectToPeer connects to a peer at the given address
+func (n *Node) ConnectToPeer(address string) error {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
-		logger.Error("Failed to connect to peer", zap.String("address", address), zap.Error(err))
-		return
+		return fmt.Errorf("failed to connect to peer: %v", err)
 	}
 
 	peer := &Peer{
-		address:  address,
-		conn:     conn,
-		node:     n,
+		Address:  address,
+		Conn:     conn,
+		Node:     n,
 		handlers: make(map[MessageType]MessageHandler),
 	}
 
 	n.mu.Lock()
-	n.peers[address] = peer
+	n.Peers[address] = peer
 	n.mu.Unlock()
 
-	// Register message handlers
-	peer.registerHandlers()
-
-	// Start handling messages
-	go peer.handleMessages()
+	// Start handling messages from this peer
+	go n.handlePeer(peer)
 
 	// Send version message
-	peer.sendVersion()
+	return peer.sendVersion()
+}
+
+// BroadcastMessage broadcasts a message to all connected peers
+func (n *Node) BroadcastMessage(msg *Message) error {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	for _, peer := range n.Peers {
+		if err := n.sendMessage(peer, msg.Type, msg.Payload); err != nil {
+			return fmt.Errorf("failed to send message to peer %s: %v", peer.Address, err)
+		}
+	}
+	return nil
+}
+
+// Stop stops the node and closes all connections
+func (n *Node) Stop() {
+	if n.server != nil {
+		n.server.Close()
+	}
+
+	// Close all peer connections
+	for _, peer := range n.Peers {
+		peer.Conn.Close()
+	}
+}
+
+// handlePeer handles messages from a peer
+func (n *Node) handlePeer(peer *Peer) {
+	defer func() {
+		peer.Conn.Close()
+		n.mu.Lock()
+		delete(n.Peers, peer.Address)
+		n.mu.Unlock()
+	}()
+
+	for {
+		msg, err := n.receiveMessage(peer)
+		if err != nil {
+			logger.Error("Failed to receive message", zap.Error(err))
+			return
+		}
+
+		if handler, ok := peer.handlers[msg.Type]; ok {
+			if err := handler(peer, msg.Payload); err != nil {
+				logger.Error("Failed to handle message", zap.Error(err))
+				return
+			}
+		}
+	}
 }

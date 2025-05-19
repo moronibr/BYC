@@ -264,23 +264,31 @@ func MiningDifficulty(coinType CoinType) int {
 
 // IsMineable checks if a coin type is mineable
 func IsMineable(coinType CoinType) bool {
-	return coinType == Ephraim || coinType == Manasseh || coinType == Joseph
+	switch coinType {
+	case Leah, Shiblum, Shiblon, Senine, Seon, Shum, Limnah, Antion, Senum, Amnor, Ezrom, Onti:
+		return true
+	default:
+		return false
+	}
 }
 
 // CanTransferBetweenBlocks checks if a coin type can be transferred between blocks
 func CanTransferBetweenBlocks(coinType CoinType) bool {
-	return coinType == Ephraim || coinType == Manasseh
+	switch coinType {
+	case Antion, Senum, Amnor, Ezrom, Onti:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetBlockType returns the block type for a coin type
 func GetBlockType(coinType CoinType) BlockType {
 	switch coinType {
-	case Ephraim:
+	case Leah, Shiblum, Shiblon, Senine, Seon, Shum, Limnah, Antion:
 		return GoldenBlock
-	case Manasseh:
+	case Senum, Amnor, Ezrom, Onti:
 		return SilverBlock
-	case Joseph:
-		return GoldenBlock
 	default:
 		return ""
 	}

@@ -8,160 +8,213 @@ import (
 )
 
 func getPeerAddresses(n *Node) []string {
-	peers := make([]string, 0, len(n.Peers))
-	for addr := range n.Peers {
+	peers := make([]string, 0, len(n.peers))
+	for addr := range n.peers {
 		peers = append(peers, addr)
 	}
 	return peers
 }
 
 func TestNewNode(t *testing.T) {
-	bc := blockchain.NewBlockchain()
-	// Test creating node with valid address
-	node := NewNode("localhost:3000", bc)
-	if node.Address != "localhost:3000" {
-		t.Errorf("Expected address localhost:3000, got %s", node.Address)
+	config := &Config{
+		Address:        "localhost:8000",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	}
+
+	node, err := NewNode(config)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	if node.Config != config {
+		t.Error("Node config not set correctly")
+	}
+
+	if node.Blockchain == nil {
+		t.Error("Blockchain not initialized")
+	}
+
+	if node.Peers == nil {
+		t.Error("Peers map not initialized")
 	}
 }
 
 func TestNodeStartStop(t *testing.T) {
-	bc := blockchain.NewBlockchain()
-	node := NewNode("localhost:3000", bc)
-
-	// Start node
-	err := node.Start()
-	if err != nil {
-		t.Errorf("Node.Start failed: %v", err)
+	config := &Config{
+		Address:        "localhost:8001",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
 
-	// Wait for a short time to ensure node has started
-	time.Sleep(100 * time.Millisecond)
+	node, err := NewNode(config)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
-	// No Stop method in Node, so nothing to call here
+	// Node starts automatically when created
+	if node.server == nil {
+		t.Error("Server not started")
+	}
+
+	// Stop node
+	node.Stop()
 }
 
 func TestNodeConnect(t *testing.T) {
-	bc1 := blockchain.NewBlockchain()
-	bc2 := blockchain.NewBlockchain()
-	node1 := NewNode("localhost:3001", bc1)
-	node2 := NewNode("localhost:3002", bc2)
-
-	// Start nodes
-	err := node1.Start()
-	if err != nil {
-		t.Fatalf("Failed to start node1: %v", err)
-	}
-	err = node2.Start()
-	if err != nil {
-		t.Fatalf("Failed to start node2: %v", err)
+	config1 := &Config{
+		Address:        "localhost:8002",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
 
-	// Wait for nodes to start
+	config2 := &Config{
+		Address:        "localhost:8003",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	}
+
+	node1, err := NewNode(config1)
+	if err != nil {
+		t.Fatalf("Failed to create node1: %v", err)
+	}
+	defer node1.Stop()
+
+	node2, err := NewNode(config2)
+	if err != nil {
+		t.Fatalf("Failed to create node2: %v", err)
+	}
+	defer node2.Stop()
+
+	// Connect node2 to node1
+	err = node2.ConnectToPeer("localhost:8002")
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
+	}
+
+	// Wait for connection to be established
 	time.Sleep(100 * time.Millisecond)
 
-	// Connect node1 to node2
-	err = node1.Connect("localhost:3002")
-	if err != nil {
-		t.Fatalf("Node.Connect failed: %v", err)
+	if len(node2.Peers) != 1 {
+		t.Error("Node2 should have one peer")
 	}
 
-	// Wait for connection to establish
-	time.Sleep(100 * time.Millisecond)
-
-	// Check peer count
-	peers := getPeerAddresses(node1)
-	found := false
-	for _, p := range peers {
-		if p == "localhost:3002" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("Expected peer localhost:3002, got peers: %v", peers)
-	}
-
-	// Clean up by closing connections
-	for _, peer := range node1.Peers {
-		peer.Conn.Close()
-	}
-	for _, peer := range node2.Peers {
-		peer.Conn.Close()
+	if len(node1.Peers) != 1 {
+		t.Error("Node1 should have one peer")
 	}
 }
 
 func TestNodeBroadcast(t *testing.T) {
-	bc := blockchain.NewBlockchain()
-	node := NewNode("localhost:3000", bc)
-
-	block := blockchain.Block{
-		Timestamp:    time.Now().Unix(),
-		Transactions: []blockchain.Transaction{},
-		PrevHash:     []byte{},
-		Hash:         []byte{},
-		Nonce:        0,
-		BlockType:    blockchain.GoldenBlock,
-		Difficulty:   4,
+	config1 := &Config{
+		Address:        "localhost:8004",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
 
-	node.broadcastBlock(block)
+	config2 := &Config{
+		Address:        "localhost:8005",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	}
+
+	node1, err := NewNode(config1)
+	if err != nil {
+		t.Fatalf("Failed to create node1: %v", err)
+	}
+	defer node1.Stop()
+
+	node2, err := NewNode(config2)
+	if err != nil {
+		t.Fatalf("Failed to create node2: %v", err)
+	}
+	defer node2.Stop()
+
+	// Connect node2 to node1
+	err = node2.ConnectToPeer("localhost:8004")
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
+	}
+
+	// Wait for connection to be established
+	time.Sleep(100 * time.Millisecond)
+
+	// Broadcast a message
+	msg := &Message{
+		Type:    PingMsg,
+		Payload: []byte("test"),
+	}
+
+	err = node1.BroadcastMessage(msg)
+	if err != nil {
+		t.Fatalf("Failed to broadcast message: %v", err)
+	}
+
+	// Wait for message to be received
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestPeerDisconnect(t *testing.T) {
-	bc1 := blockchain.NewBlockchain()
-	bc2 := blockchain.NewBlockchain()
-	node1 := NewNode("localhost:3011", bc1)
-	node2 := NewNode("localhost:3012", bc2)
+	config1 := &Config{
+		Address:        "localhost:8006",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	}
 
-	err := node1.Start()
-	if err != nil {
-		t.Fatalf("Failed to start node1: %v", err)
+	config2 := &Config{
+		Address:        "localhost:8007",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
-	err = node2.Start()
+
+	node1, err := NewNode(config1)
 	if err != nil {
-		t.Fatalf("Failed to start node2: %v", err)
+		t.Fatalf("Failed to create node1: %v", err)
 	}
+	defer node1.Stop()
+
+	node2, err := NewNode(config2)
+	if err != nil {
+		t.Fatalf("Failed to create node2: %v", err)
+	}
+	defer node2.Stop()
+
+	// Connect node2 to node1
+	err = node2.ConnectToPeer("localhost:8006")
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
+	}
+
+	// Wait for connection to be established
 	time.Sleep(100 * time.Millisecond)
 
-	err = node1.Connect("localhost:3012")
-	if err != nil {
-		t.Fatalf("Node.Connect failed: %v", err)
-	}
+	// Disconnect node2
+	node2.Stop()
+
+	// Wait for disconnect to be detected
 	time.Sleep(100 * time.Millisecond)
-
-	// Disconnect peer from both sides
-	for _, peer := range node1.Peers {
-		peer.Conn.Close()
-	}
-	for _, peer := range node2.Peers {
-		peer.Conn.Close()
-	}
-
-	// Wait for both peer maps to become empty (up to 1 second)
-	deadline := time.Now().Add(1 * time.Second)
-	for (len(node1.Peers) != 0 || len(node2.Peers) != 0) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
 
 	if len(node1.Peers) != 0 {
-		t.Errorf("Expected 0 peers after disconnect, got %d", len(node1.Peers))
-	}
-	if len(node2.Peers) != 0 {
-		t.Errorf("Expected 0 peers after disconnect, got %d", len(node2.Peers))
+		t.Error("Node1 should have no peers after disconnect")
 	}
 }
 
 func TestConnectToInvalidPeer(t *testing.T) {
-	bc := blockchain.NewBlockchain()
-	node := NewNode("localhost:3020", bc)
-	err := node.Start()
-	if err != nil {
-		t.Fatalf("Failed to start node: %v", err)
+	config := &Config{
+		Address:        "localhost:8008",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
-	time.Sleep(50 * time.Millisecond)
 
-	err = node.Connect("localhost:9999") // assuming nothing is listening here
+	node, err := NewNode(config)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+	defer node.Stop()
+
+	// Try to connect to non-existent peer
+	err = node.ConnectToPeer("localhost:9999")
 	if err == nil {
-		t.Errorf("Expected error when connecting to invalid peer, got nil")
+		t.Error("Should fail to connect to non-existent peer")
 	}
 }
 

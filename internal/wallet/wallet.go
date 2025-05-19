@@ -72,7 +72,7 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 				TxID:        []byte(utxo.TxID),
 				OutputIndex: utxo.OutputIndex,
 				Amount:      utxo.Amount,
-				PubKey:      []byte(w.Address),
+				PublicKey:   []byte(w.Address),
 			}
 			inputs = append(inputs, input)
 			totalInput += utxo.Amount
@@ -90,20 +90,20 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 	// Create outputs
 	outputs := []blockchain.TxOutput{
 		{
-			Value:      amount,
-			CoinType:   coinType,
-			PubKeyHash: []byte(to),
-			Address:    to,
+			Value:         amount,
+			CoinType:      coinType,
+			PublicKeyHash: []byte(to),
+			Address:       to,
 		},
 	}
 
 	// Add change output if needed
 	if totalInput > amount {
 		outputs = append(outputs, blockchain.TxOutput{
-			Value:      totalInput - amount,
-			CoinType:   coinType,
-			PubKeyHash: []byte(w.Address),
-			Address:    w.Address,
+			Value:         totalInput - amount,
+			CoinType:      coinType,
+			PublicKeyHash: []byte(w.Address),
+			Address:       w.Address,
 		})
 	}
 
@@ -111,7 +111,7 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 	tx := blockchain.NewTransaction(w.Address, to, amount, coinType, inputs, outputs)
 
 	// Sign transaction
-	if err := tx.Sign(w.PrivateKey); err != nil {
+	if err := tx.Sign(w.PrivateKey.D.Bytes()); err != nil {
 		return nil, fmt.Errorf("failed to sign transaction: %v", err)
 	}
 

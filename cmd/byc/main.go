@@ -57,17 +57,19 @@ func main() {
 }
 
 func runNode(bc *blockchain.Blockchain, address, peerAddress string) {
-	// Create and start node
-	node := network.NewNode(address, bc)
-	if err := node.Start(); err != nil {
-		log.Fatalf("Failed to start node: %v", err)
+	// Create node
+	node, err := network.NewNode(&network.Config{
+		Address:        address,
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	})
+	if err != nil {
+		log.Fatalf("Failed to create node: %v", err)
 	}
 
 	// Connect to peer if specified
 	if peerAddress != "" {
-		if err := node.Connect(peerAddress); err != nil {
-			log.Printf("Failed to connect to peer: %v", err)
-		}
+		node.ConnectToPeer(peerAddress)
 	}
 
 	// Wait for interrupt signal
