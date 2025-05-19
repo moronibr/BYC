@@ -136,3 +136,18 @@ func Sync() error {
 	}
 	return nil
 }
+
+// NewLogger creates a new logger with the specified name
+func NewLogger(name string) *zap.Logger {
+	config := zap.NewProductionConfig()
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	config.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+
+	logger, err := config.Build()
+	if err != nil {
+		// If we can't create a logger, return a no-op logger
+		return zap.NewNop()
+	}
+
+	return logger.Named(name)
+}

@@ -6,15 +6,41 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/byc/internal/blockchain"
+	"github.com/byc/internal/crypto"
+	"github.com/byc/internal/logger"
+	"go.uber.org/zap"
+)
+
+var (
+	ErrInsufficientFunds = errors.New("insufficient funds")
+	ErrInvalidAmount     = errors.New("invalid amount")
+	ErrInvalidAddress    = errors.New("invalid address")
+	ErrInvalidBackup     = errors.New("invalid backup data")
 )
 
 // Wallet represents a user's wallet
 type Wallet struct {
 	PrivateKey *ecdsa.PrivateKey
 	PublicKey  *ecdsa.PublicKey
+	Address    string
+	balances   map[blockchain.CoinType]float64
+	mu         sync.RWMutex
+	logger     *zap.Logger
+}
+
+// WalletBackup represents the backup data for a wallet
+type WalletBackup struct {
+	PrivateKey []byte
+	PublicKey  []byte
 	Address    string
 }
 
@@ -32,6 +58,8 @@ func NewWallet() (*Wallet, error) {
 		PrivateKey: privateKey,
 		PublicKey:  publicKey,
 		Address:    address,
+		balances:   make(map[blockchain.CoinType]float64),
+		logger:     logger.NewLogger("wallet"),
 	}, nil
 }
 
@@ -47,8 +75,50 @@ func generateAddress(publicKey *ecdsa.PublicKey) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// GetBalance returns the balance for a specific coin type
+func (w *Wallet) GetBalance(coinType blockchain.CoinType, bc *blockchain.Blockchain) float64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Update balance from blockchain
+	balance := bc.GetBalance(w.Address, coinType)
+	w.balances[coinType] = balance
+
+	return balance
+}
+
+// GetAllBalances returns balances for all coin types
+func (w *Wallet) GetAllBalances(bc *blockchain.Blockchain) map[blockchain.CoinType]float64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	balances := make(map[blockchain.CoinType]float64)
+
+	// Update balances for all coin types
+	for _, coinType := range []blockchain.CoinType{
+		blockchain.Leah, blockchain.Shiblum, blockchain.Shiblon,
+		blockchain.Senine, blockchain.Seon, blockchain.Shum,
+		blockchain.Limnah, blockchain.Antion, blockchain.Senum,
+		blockchain.Amnor, blockchain.Ezrom, blockchain.Onti,
+	} {
+		balances[coinType] = bc.GetBalance(w.Address, coinType)
+	}
+
+	w.balances = balances
+	return balances
+}
+
 // CreateTransaction creates a new transaction
 func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchain.CoinType, bc *blockchain.Blockchain) (*blockchain.Transaction, error) {
+	if amount <= 0 {
+		return nil, ErrInvalidAmount
+	}
+
+	// Validate recipient address
+	if !isValidAddress(to) {
+		return nil, ErrInvalidAddress
+	}
+
 	// Check if the coin can be transferred between blocks
 	if !blockchain.CanTransferBetweenBlocks(coinType) {
 		blockType := blockchain.GetBlockType(coinType)
@@ -84,7 +154,7 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 	}
 
 	if totalInput < amount {
-		return nil, fmt.Errorf("insufficient funds")
+		return nil, ErrInsufficientFunds
 	}
 
 	// Create outputs
@@ -118,101 +188,112 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 	return tx, nil
 }
 
-// GetBalance returns the balance for a specific coin type
-func (w *Wallet) GetBalance(coinType blockchain.CoinType, bc *blockchain.Blockchain) float64 {
-	return bc.GetBalance(w.Address, coinType)
-}
-
-// GetAllBalances returns balances for all coin types
-func (w *Wallet) GetAllBalances(bc *blockchain.Blockchain) map[blockchain.CoinType]float64 {
-	balances := make(map[blockchain.CoinType]float64)
-
-	// Golden Block coins
-	balances[blockchain.Leah] = w.GetBalance(blockchain.Leah, bc)
-	balances[blockchain.Shiblum] = w.GetBalance(blockchain.Shiblum, bc)
-	balances[blockchain.Shiblon] = w.GetBalance(blockchain.Shiblon, bc)
-	balances[blockchain.Senine] = w.GetBalance(blockchain.Senine, bc)
-	balances[blockchain.Seon] = w.GetBalance(blockchain.Seon, bc)
-	balances[blockchain.Shum] = w.GetBalance(blockchain.Shum, bc)
-	balances[blockchain.Limnah] = w.GetBalance(blockchain.Limnah, bc)
-	balances[blockchain.Antion] = w.GetBalance(blockchain.Antion, bc)
-
-	// Silver Block coins
-	balances[blockchain.Senum] = w.GetBalance(blockchain.Senum, bc)
-	balances[blockchain.Amnor] = w.GetBalance(blockchain.Amnor, bc)
-	balances[blockchain.Ezrom] = w.GetBalance(blockchain.Ezrom, bc)
-	balances[blockchain.Onti] = w.GetBalance(blockchain.Onti, bc)
-
-	// Special coins
-	balances[blockchain.Ephraim] = w.GetBalance(blockchain.Ephraim, bc)
-	balances[blockchain.Manasseh] = w.GetBalance(blockchain.Manasseh, bc)
-	balances[blockchain.Joseph] = w.GetBalance(blockchain.Joseph, bc)
-
-	return balances
-}
-
-// CreateEphraimCoin creates an Ephraim coin from Golden Block coins
-func (w *Wallet) CreateEphraimCoin(bc *blockchain.Blockchain) error {
-	// Check if we have enough coins to create an Ephraim coin
-	balances := w.GetAllBalances(bc)
-	if balances[blockchain.Limnah] < 1 {
-		return fmt.Errorf("insufficient Limnah coins to create Ephraim coin")
-	}
-
-	// Create a transaction to convert Limnah to Ephraim
-	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Ephraim, bc)
+// isValidAddress validates a wallet address
+func isValidAddress(address string) bool {
+	// Check if the address is a valid hex string
+	_, err := hex.DecodeString(address)
 	if err != nil {
-		return fmt.Errorf("failed to create conversion transaction: %v", err)
+		return false
 	}
 
-	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
-		return fmt.Errorf("failed to add conversion transaction: %v", err)
+	// Check if the address has the correct length (32 bytes = 64 hex characters)
+	return len(address) == 64
+}
+
+// Backup creates a backup of the wallet
+func (w *Wallet) Backup(path string) error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Create backup data
+	backup := WalletBackup{
+		PrivateKey: crypto.PrivateKeyToBytes(w.PrivateKey),
+		PublicKey:  crypto.PublicKeyToBytes(w.PublicKey),
+		Address:    w.Address,
 	}
 
+	// Marshal backup data
+	data, err := json.Marshal(backup)
+	if err != nil {
+		return fmt.Errorf("failed to marshal backup data: %v", err)
+	}
+
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create backup directory: %v", err)
+	}
+
+	// Write backup file
+	if err := ioutil.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write backup file: %v", err)
+	}
+
+	w.logger.Info("Wallet backup created", zap.String("path", path))
 	return nil
 }
 
-// CreateManassehCoin creates a Manasseh coin from Silver Block coins
-func (w *Wallet) CreateManassehCoin(bc *blockchain.Blockchain) error {
-	// Check if we have enough coins to create a Manasseh coin
-	balances := w.GetAllBalances(bc)
-	if balances[blockchain.Onti] < 1 {
-		return fmt.Errorf("insufficient Onti coins to create Manasseh coin")
-	}
-
-	// Create a transaction to convert Onti to Manasseh
-	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Manasseh, bc)
+// Restore restores a wallet from backup
+func Restore(path string) (*Wallet, error) {
+	// Read backup file
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to create conversion transaction: %v", err)
+		return nil, fmt.Errorf("failed to read backup file: %v", err)
 	}
 
-	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
-		return fmt.Errorf("failed to add conversion transaction: %v", err)
+	// Unmarshal backup data
+	var backup WalletBackup
+	if err := json.Unmarshal(data, &backup); err != nil {
+		return nil, ErrInvalidBackup
 	}
 
-	return nil
+	// Restore private key
+	privateKey, err := crypto.BytesToPrivateKey(backup.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to restore private key: %v", err)
+	}
+
+	// Restore public key
+	publicKey, err := crypto.BytesToPublicKey(backup.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to restore public key: %v", err)
+	}
+
+	// Create wallet
+	wallet := &Wallet{
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+		Address:    backup.Address,
+		balances:   make(map[blockchain.CoinType]float64),
+		logger:     logger.NewLogger("wallet"),
+	}
+
+	// Verify address
+	if wallet.Address != generateAddress(publicKey) {
+		return nil, ErrInvalidBackup
+	}
+
+	return wallet, nil
 }
 
-// CreateJosephCoin creates a Joseph coin from Ephraim and Manasseh coins
-func (w *Wallet) CreateJosephCoin(bc *blockchain.Blockchain) error {
-	// Check if we have both Ephraim and Manasseh coins
-	balances := w.GetAllBalances(bc)
-	if balances[blockchain.Ephraim] < 1 || balances[blockchain.Manasseh] < 1 {
-		return fmt.Errorf("insufficient Ephraim or Manasseh coins to create Joseph coin")
-	}
+// ExportPublicKey exports the wallet's public key
+func (w *Wallet) ExportPublicKey() []byte {
+	return crypto.PublicKeyToBytes(w.PublicKey)
+}
 
-	// Create a transaction to combine Ephraim and Manasseh into Joseph
-	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Joseph, bc)
-	if err != nil {
-		return fmt.Errorf("failed to create conversion transaction: %v", err)
-	}
+// ImportPublicKey imports a public key
+func ImportPublicKey(publicKeyBytes []byte) (*ecdsa.PublicKey, error) {
+	return crypto.BytesToPublicKey(publicKeyBytes)
+}
 
-	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
-		return fmt.Errorf("failed to add conversion transaction: %v", err)
-	}
+// SignMessage signs a message with the wallet's private key
+func (w *Wallet) SignMessage(message []byte) ([]byte, error) {
+	hash := sha256.Sum256(message)
+	return crypto.Sign(hash[:], w.PrivateKey.D.Bytes())
+}
 
-	return nil
+// VerifyMessage verifies a message signature
+func (w *Wallet) VerifyMessage(message, signature []byte) bool {
+	hash := sha256.Sum256(message)
+	return crypto.Verify(hash[:], signature, crypto.PublicKeyToBytes(w.PublicKey))
 }

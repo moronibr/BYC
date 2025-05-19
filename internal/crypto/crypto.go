@@ -5,64 +5,95 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/asn1"
+	"errors"
 	"math/big"
 )
 
-// Sign signs a message with a private key
-func Sign(message []byte, privateKey []byte) ([]byte, error) {
-	// Create a new private key
-	key := new(ecdsa.PrivateKey)
-	key.Curve = elliptic.P256()
+// PrivateKeyToBytes converts an ECDSA private key to bytes
+func PrivateKeyToBytes(privateKey *ecdsa.PrivateKey) []byte {
+	return privateKey.D.Bytes()
+}
 
-	// Set the private key value
-	key.D = new(big.Int).SetBytes(privateKey)
+// PublicKeyToBytes converts an ECDSA public key to bytes
+func PublicKeyToBytes(publicKey *ecdsa.PublicKey) []byte {
+	return elliptic.Marshal(publicKey.Curve, publicKey.X, publicKey.Y)
+}
 
-	// Calculate the public key
-	key.PublicKey.X, key.PublicKey.Y = key.Curve.ScalarBaseMult(key.D.Bytes())
+// BytesToPrivateKey converts bytes to an ECDSA private key
+func BytesToPrivateKey(privateKeyBytes []byte) (*ecdsa.PrivateKey, error) {
+	curve := elliptic.P256()
+	privateKey := new(ecdsa.PrivateKey)
+	privateKey.Curve = curve
+	privateKey.D = new(big.Int).SetBytes(privateKeyBytes)
 
-	// Hash the message
-	hash := sha256.Sum256(message)
+	// Calculate public key
+	privateKey.PublicKey.X, privateKey.PublicKey.Y = curve.ScalarBaseMult(privateKey.D.Bytes())
 
-	// Sign the hash
-	r, s, err := ecdsa.Sign(rand.Reader, key, hash[:])
+	return privateKey, nil
+}
+
+// BytesToPublicKey converts bytes to an ECDSA public key
+func BytesToPublicKey(publicKeyBytes []byte) (*ecdsa.PublicKey, error) {
+	curve := elliptic.P256()
+	x, y := elliptic.Unmarshal(curve, publicKeyBytes)
+	if x == nil {
+		return nil, errors.New("invalid public key bytes")
+	}
+
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     x,
+		Y:     y,
+	}, nil
+}
+
+// Sign signs a message using the private key
+func Sign(message []byte, privateKeyBytes []byte) ([]byte, error) {
+	curve := elliptic.P256()
+	privateKey := new(ecdsa.PrivateKey)
+	privateKey.Curve = curve
+	privateKey.D = new(big.Int).SetBytes(privateKeyBytes)
+
+	// Calculate public key
+	privateKey.PublicKey.X, privateKey.PublicKey.Y = curve.ScalarBaseMult(privateKey.D.Bytes())
+
+	// Sign the message
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, message)
 	if err != nil {
 		return nil, err
 	}
 
-	// Combine r and s into a single signature
-	signature := append(r.Bytes(), s.Bytes()...)
+	// Encode the signature
+	signature, err := asn1.Marshal(struct {
+		R, S *big.Int
+	}{r, s})
+	if err != nil {
+		return nil, err
+	}
 
 	return signature, nil
 }
 
-// Verify verifies a signature
-func Verify(message []byte, signature []byte, publicKey []byte) bool {
-	// Create a new public key
-	key := new(ecdsa.PublicKey)
-	key.Curve = elliptic.P256()
-
-	// Extract x and y coordinates
-	x, y := elliptic.Unmarshal(key.Curve, publicKey)
-	if x == nil {
+// Verify verifies a message signature using the public key
+func Verify(message []byte, signature []byte, publicKeyBytes []byte) bool {
+	// Parse the signature
+	var sig struct {
+		R, S *big.Int
+	}
+	_, err := asn1.Unmarshal(signature, &sig)
+	if err != nil {
 		return false
 	}
 
-	key.X = x
-	key.Y = y
-
-	// Hash the message
-	hash := sha256.Sum256(message)
-
-	// Split signature into r and s
-	if len(signature) != 64 {
+	// Parse the public key
+	publicKey, err := BytesToPublicKey(publicKeyBytes)
+	if err != nil {
 		return false
 	}
-
-	r := new(big.Int).SetBytes(signature[:32])
-	s := new(big.Int).SetBytes(signature[32:])
 
 	// Verify the signature
-	return ecdsa.Verify(key, hash[:], r, s)
+	return ecdsa.Verify(publicKey, message, sig.R, sig.S)
 }
 
 // HashPublicKey hashes a public key
