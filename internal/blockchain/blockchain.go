@@ -5,16 +5,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
+	"sync"
 	"time"
 )
 
 // Blockchain represents the dual blockchain system
 type Blockchain struct {
-	GoldenBlocks []Block
-	SilverBlocks []Block
-	UTXOSet      *UTXOSet
-	Difficulty   int
+	GoldenBlocks        []Block
+	SilverBlocks        []Block
+	UTXOSet             *UTXOSet
+	Difficulty          int
+	MiningReward        float64
+	pendingTransactions []*Transaction
+	mu                  sync.RWMutex
 }
 
 // NewBlockchain creates a new blockchain with genesis blocks
@@ -59,10 +64,12 @@ func (bc *Blockchain) AddBlock(block Block) error {
 		// Add new UTXOs
 		for i, output := range tx.Outputs {
 			utxo := UTXO{
-				TxID:        string(tx.ID),
-				OutputIndex: i,
-				Amount:      output.Value,
-				Address:     output.Address,
+				TxID:          tx.ID,
+				OutputIndex:   i,
+				Amount:        output.Value,
+				Address:       output.Address,
+				PublicKeyHash: output.PublicKeyHash,
+				CoinType:      output.CoinType,
 			}
 			bc.UTXOSet.Add(utxo)
 		}
@@ -210,4 +217,125 @@ func (bc *Blockchain) CreateTransaction(from, to string, amount float64, coinTyp
 	// and creating new outputs for the recipient
 
 	return tx, nil
+}
+
+// AddTransaction adds a new transaction to the blockchain
+func (bc *Blockchain) AddTransaction(tx *Transaction) error {
+	// Verify the transaction
+	if !tx.Verify() {
+		return fmt.Errorf("invalid transaction: verification failed")
+	}
+
+	// Validate the transaction against the UTXO set
+	if !tx.Validate(bc.UTXOSet) {
+		return fmt.Errorf("transaction validation failed")
+	}
+
+	// Add transaction to the pending transactions
+	bc.pendingTransactions = append(bc.pendingTransactions, tx)
+
+	// Update UTXO set
+	if err := bc.UTXOSet.Update(tx); err != nil {
+		return fmt.Errorf("failed to update UTXO set: %v", err)
+	}
+
+	return nil
+}
+
+// GetBlock retrieves a block by its hash
+func (bc *Blockchain) GetBlock(hash []byte) (*Block, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	// Search in golden blocks
+	for _, block := range bc.GoldenBlocks {
+		if bytes.Equal(block.Hash, hash) {
+			return &block, nil
+		}
+	}
+
+	// Search in silver blocks
+	for _, block := range bc.SilverBlocks {
+		if bytes.Equal(block.Hash, hash) {
+			return &block, nil
+		}
+	}
+
+	return nil, fmt.Errorf("block not found")
+}
+
+// GetTransaction retrieves a transaction by its ID
+func (bc *Blockchain) GetTransaction(id []byte) (*Transaction, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	// Search in golden blocks
+	for _, block := range bc.GoldenBlocks {
+		for _, tx := range block.Transactions {
+			if bytes.Equal(tx.ID, id) {
+				return &tx, nil
+			}
+		}
+	}
+
+	// Search in silver blocks
+	for _, block := range bc.SilverBlocks {
+		for _, tx := range block.Transactions {
+			if bytes.Equal(tx.ID, id) {
+				return &tx, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("transaction not found")
+}
+
+// GetTransactions retrieves all transactions for a given address
+func (bc *Blockchain) GetTransactions(address string) ([]*Transaction, error) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	var transactions []*Transaction
+
+	// Search in golden blocks
+	for _, block := range bc.GoldenBlocks {
+		for _, tx := range block.Transactions {
+			// Check inputs
+			for _, input := range tx.Inputs {
+				if input.Address == address {
+					transactions = append(transactions, &tx)
+					break
+				}
+			}
+			// Check outputs
+			for _, output := range tx.Outputs {
+				if output.Address == address {
+					transactions = append(transactions, &tx)
+					break
+				}
+			}
+		}
+	}
+
+	// Search in silver blocks
+	for _, block := range bc.SilverBlocks {
+		for _, tx := range block.Transactions {
+			// Check inputs
+			for _, input := range tx.Inputs {
+				if input.Address == address {
+					transactions = append(transactions, &tx)
+					break
+				}
+			}
+			// Check outputs
+			for _, output := range tx.Outputs {
+				if output.Address == address {
+					transactions = append(transactions, &tx)
+					break
+				}
+			}
+		}
+	}
+
+	return transactions, nil
 }

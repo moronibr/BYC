@@ -1,16 +1,20 @@
 package blockchain
 
 import (
+	"encoding/hex"
+	"fmt"
 	"strconv"
 	"sync"
 )
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxID        string
-	OutputIndex int
-	Amount      float64
-	Address     string
+	TxID          []byte
+	OutputIndex   int
+	Amount        float64
+	Address       string
+	PublicKeyHash []byte
+	CoinType      CoinType
 }
 
 // UTXOSet manages the set of unspent transaction outputs
@@ -30,7 +34,7 @@ func NewUTXOSet() *UTXOSet {
 func (u *UTXOSet) Add(utxo UTXO) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	key := utxo.TxID + ":" + strconv.Itoa(utxo.OutputIndex)
+	key := hex.EncodeToString(utxo.TxID) + ":" + strconv.Itoa(utxo.OutputIndex)
 	u.utxos[key] = utxo
 }
 
@@ -60,4 +64,60 @@ func (u *UTXOSet) GetAll() []UTXO {
 		utxos = append(utxos, utxo)
 	}
 	return utxos
+}
+
+// GetUTXOs returns all UTXOs for a given address
+func (utxoSet *UTXOSet) GetUTXOs(address string) ([]UTXO, error) {
+	utxoSet.mu.RLock()
+	defer utxoSet.mu.RUnlock()
+
+	var utxos []UTXO
+	for _, utxo := range utxoSet.utxos {
+		if utxo.Address == address {
+			utxos = append(utxos, utxo)
+		}
+	}
+	return utxos, nil
+}
+
+// Update updates the UTXO set with a new transaction
+func (utxoSet *UTXOSet) Update(tx *Transaction) error {
+	utxoSet.mu.Lock()
+	defer utxoSet.mu.Unlock()
+
+	// Remove spent UTXOs
+	for _, input := range tx.Inputs {
+		key := fmt.Sprintf("%x:%d", input.TxID, input.OutputIndex)
+		delete(utxoSet.utxos, key)
+	}
+
+	// Add new UTXOs
+	for i, output := range tx.Outputs {
+		utxo := UTXO{
+			TxID:          tx.ID,
+			OutputIndex:   i,
+			Amount:        output.Value,
+			Address:       output.Address,
+			PublicKeyHash: output.PublicKeyHash,
+			CoinType:      output.CoinType,
+		}
+		key := fmt.Sprintf("%x:%d", tx.ID, i)
+		utxoSet.utxos[key] = utxo
+	}
+
+	return nil
+}
+
+// GetUTXO retrieves a UTXO by its transaction ID and output index
+func (utxoSet *UTXOSet) GetUTXO(txID []byte, outputIndex int) UTXO {
+	utxoSet.mu.RLock()
+	defer utxoSet.mu.RUnlock()
+
+	key := fmt.Sprintf("%x:%d", txID, outputIndex)
+	utxo, exists := utxoSet.utxos[key]
+	if !exists {
+		return UTXO{}
+	}
+
+	return utxo
 }

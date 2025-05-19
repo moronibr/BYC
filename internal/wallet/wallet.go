@@ -57,13 +57,65 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 		}
 	}
 
-	// Create transaction
-	tx, err := bc.CreateTransaction(w.Address, to, amount, coinType)
+	// Get UTXOs for the sender
+	utxos, err := bc.UTXOSet.GetUTXOs(w.Address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %v", err)
+		return nil, fmt.Errorf("failed to get UTXOs: %v", err)
 	}
 
-	return &tx, nil
+	// Find UTXOs with the specified coin type
+	var inputs []blockchain.TxInput
+	var totalInput float64
+	for _, utxo := range utxos {
+		if utxo.CoinType == coinType {
+			input := blockchain.TxInput{
+				TxID:        []byte(utxo.TxID),
+				OutputIndex: utxo.OutputIndex,
+				Amount:      utxo.Amount,
+				PubKey:      []byte(w.Address),
+			}
+			inputs = append(inputs, input)
+			totalInput += utxo.Amount
+
+			if totalInput >= amount {
+				break
+			}
+		}
+	}
+
+	if totalInput < amount {
+		return nil, fmt.Errorf("insufficient funds")
+	}
+
+	// Create outputs
+	outputs := []blockchain.TxOutput{
+		{
+			Value:      amount,
+			CoinType:   coinType,
+			PubKeyHash: []byte(to),
+			Address:    to,
+		},
+	}
+
+	// Add change output if needed
+	if totalInput > amount {
+		outputs = append(outputs, blockchain.TxOutput{
+			Value:      totalInput - amount,
+			CoinType:   coinType,
+			PubKeyHash: []byte(w.Address),
+			Address:    w.Address,
+		})
+	}
+
+	// Create transaction
+	tx := blockchain.NewTransaction(w.Address, to, amount, coinType, inputs, outputs)
+
+	// Sign transaction
+	if err := tx.Sign(w.PrivateKey); err != nil {
+		return nil, fmt.Errorf("failed to sign transaction: %v", err)
+	}
+
+	return tx, nil
 }
 
 // GetBalance returns the balance for a specific coin type
@@ -107,9 +159,16 @@ func (w *Wallet) CreateEphraimCoin(bc *blockchain.Blockchain) error {
 		return fmt.Errorf("insufficient Limnah coins to create Ephraim coin")
 	}
 
-	// TODO: Implement the conversion logic
-	// This would involve creating a special transaction that converts
-	// the required coins into an Ephraim coin
+	// Create a transaction to convert Limnah to Ephraim
+	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Ephraim, bc)
+	if err != nil {
+		return fmt.Errorf("failed to create conversion transaction: %v", err)
+	}
+
+	// Add transaction to the blockchain
+	if err := bc.AddTransaction(tx); err != nil {
+		return fmt.Errorf("failed to add conversion transaction: %v", err)
+	}
 
 	return nil
 }
@@ -122,9 +181,16 @@ func (w *Wallet) CreateManassehCoin(bc *blockchain.Blockchain) error {
 		return fmt.Errorf("insufficient Onti coins to create Manasseh coin")
 	}
 
-	// TODO: Implement the conversion logic
-	// This would involve creating a special transaction that converts
-	// the required coins into a Manasseh coin
+	// Create a transaction to convert Onti to Manasseh
+	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Manasseh, bc)
+	if err != nil {
+		return fmt.Errorf("failed to create conversion transaction: %v", err)
+	}
+
+	// Add transaction to the blockchain
+	if err := bc.AddTransaction(tx); err != nil {
+		return fmt.Errorf("failed to add conversion transaction: %v", err)
+	}
 
 	return nil
 }
@@ -137,9 +203,16 @@ func (w *Wallet) CreateJosephCoin(bc *blockchain.Blockchain) error {
 		return fmt.Errorf("insufficient Ephraim or Manasseh coins to create Joseph coin")
 	}
 
-	// TODO: Implement the conversion logic
-	// This would involve creating a special transaction that combines
-	// an Ephraim coin and a Manasseh coin into a Joseph coin
+	// Create a transaction to combine Ephraim and Manasseh into Joseph
+	tx, err := w.CreateTransaction(w.Address, 1, blockchain.Joseph, bc)
+	if err != nil {
+		return fmt.Errorf("failed to create conversion transaction: %v", err)
+	}
+
+	// Add transaction to the blockchain
+	if err := bc.AddTransaction(tx); err != nil {
+		return fmt.Errorf("failed to add conversion transaction: %v", err)
+	}
 
 	return nil
 }

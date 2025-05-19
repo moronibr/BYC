@@ -1,7 +1,13 @@
 package blockchain
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"encoding/json"
 	"time"
+
+	"github.com/byc/internal/crypto"
 )
 
 // CoinType represents the different types of coins in the system
@@ -64,21 +70,22 @@ type TxInput struct {
 	OutputIndex int
 	Amount      float64
 	Signature   []byte
-	PubKey      []byte
+	PublicKey   []byte
+	Address     string
 }
 
 // TxOutput represents a transaction output
 type TxOutput struct {
-	Value      float64
-	CoinType   CoinType
-	PubKeyHash []byte
-	Address    string
+	Value         float64
+	CoinType      CoinType
+	PublicKeyHash []byte
+	Address       string
 }
 
 // Wallet represents a user's wallet
 type Wallet struct {
-	PrivateKey []byte
-	PublicKey  []byte
+	PrivateKey *ecdsa.PrivateKey
+	PublicKey  *ecdsa.PublicKey
 	Address    string
 }
 
@@ -89,6 +96,156 @@ type Node struct {
 	BlockType  BlockType
 	IsMining   bool
 	MiningCoin CoinType
+}
+
+// NewTransaction creates a new transaction
+func NewTransaction(from, to string, amount float64, coinType CoinType, inputs []TxInput, outputs []TxOutput) *Transaction {
+	tx := &Transaction{
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Timestamp: time.Now(),
+		BlockType: GetBlockType(coinType),
+	}
+
+	// Calculate transaction ID
+	tx.ID = tx.CalculateHash()
+
+	return tx
+}
+
+// CalculateHash calculates the hash of a transaction
+func (tx *Transaction) CalculateHash() []byte {
+	// Create a copy of the transaction without signatures
+	txCopy := *tx
+	txCopy.Inputs = make([]TxInput, len(tx.Inputs))
+	copy(txCopy.Inputs, tx.Inputs)
+
+	// Clear signatures and public keys
+	for i := range txCopy.Inputs {
+		txCopy.Inputs[i].Signature = nil
+		txCopy.Inputs[i].PublicKey = nil
+	}
+
+	// Convert the transaction to bytes
+	data, err := json.Marshal(txCopy)
+	if err != nil {
+		return nil
+	}
+
+	// Calculate the hash
+	hash := sha256.Sum256(data)
+	return hash[:]
+}
+
+// Sign signs a transaction with the given private key
+func (tx *Transaction) Sign(privateKey []byte) error {
+	txCopy := tx.TrimmedCopy()
+
+	for i, input := range txCopy.Inputs {
+		// Set the public key for this input
+		txCopy.Inputs[i].PublicKey = input.PublicKey
+
+		// Calculate the hash of the transaction
+		hash := txCopy.CalculateHash()
+
+		// Sign the hash with the private key
+		signature, err := crypto.Sign(hash, privateKey)
+		if err != nil {
+			return err
+		}
+
+		// Set the signature for this input
+		tx.Inputs[i].Signature = signature
+	}
+
+	return nil
+}
+
+// Verify verifies the signature of a transaction
+func (tx *Transaction) Verify() bool {
+	txCopy := tx.TrimmedCopy()
+
+	for i, input := range tx.Inputs {
+		// Set the public key for this input
+		txCopy.Inputs[i].PublicKey = input.PublicKey
+
+		// Calculate the hash of the transaction
+		hash := txCopy.CalculateHash()
+
+		// Verify the signature
+		if !crypto.Verify(hash, input.Signature, input.PublicKey) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// IsCoinbase checks if a transaction is a coinbase transaction
+func (tx *Transaction) IsCoinbase() bool {
+	return len(tx.Inputs) == 1 && len(tx.Inputs[0].TxID) == 0 && tx.Inputs[0].OutputIndex == -1
+}
+
+// GetTotalInput returns the total input amount
+func (tx *Transaction) GetTotalInput() float64 {
+	var total float64
+	for _, input := range tx.Inputs {
+		total += input.Amount
+	}
+	return total
+}
+
+// GetTotalOutput returns the total output amount
+func (tx *Transaction) GetTotalOutput() float64 {
+	var total float64
+	for _, output := range tx.Outputs {
+		total += output.Value
+	}
+	return total
+}
+
+// GetFee returns the transaction fee
+func (tx *Transaction) GetFee() float64 {
+	return tx.GetTotalInput() - tx.GetTotalOutput()
+}
+
+// Validate validates a transaction against the UTXO set
+func (tx *Transaction) Validate(utxoSet *UTXOSet) bool {
+	// Verify the transaction signature
+	if !tx.Verify() {
+		return false
+	}
+
+	// Check if the transaction is a coinbase transaction
+	if tx.IsCoinbase() {
+		return true
+	}
+
+	// Get the total input amount
+	totalInput := tx.GetTotalInput()
+
+	// Get the total output amount
+	totalOutput := tx.GetTotalOutput()
+
+	// Check if the input amount is sufficient
+	if totalInput < totalOutput {
+		return false
+	}
+
+	// Check if all inputs are valid UTXOs
+	for _, input := range tx.Inputs {
+		utxo := utxoSet.GetUTXO(input.TxID, input.OutputIndex)
+		if len(utxo.TxID) == 0 {
+			return false
+		}
+
+		// Check if the input belongs to the sender
+		if !bytes.Equal(utxo.PublicKeyHash, crypto.HashPublicKey(input.PublicKey)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // MiningDifficulty returns the difficulty multiplier for a given coin type
@@ -105,32 +262,41 @@ func MiningDifficulty(coinType CoinType) int {
 	}
 }
 
-// IsMineable returns whether a coin type is mineable
+// IsMineable checks if a coin type is mineable
 func IsMineable(coinType CoinType) bool {
-	return coinType == Leah || coinType == Shiblum || coinType == Shiblon
+	return coinType == Ephraim || coinType == Manasseh || coinType == Joseph
 }
 
-// CanTransferBetweenBlocks returns whether a coin can be transferred between blocks
+// CanTransferBetweenBlocks checks if a coin type can be transferred between blocks
 func CanTransferBetweenBlocks(coinType CoinType) bool {
-	return coinType == Antion
+	return coinType == Ephraim || coinType == Manasseh
 }
 
-// GetBlockType returns the block type for a given coin
+// GetBlockType returns the block type for a coin type
 func GetBlockType(coinType CoinType) BlockType {
 	switch coinType {
-	case Senine, Seon, Shum, Limnah:
-		return GoldenBlock
-	case Senum, Amnor, Ezrom, Onti:
-		return SilverBlock
-	case Leah, Shiblum, Shiblon, Antion:
-		return "" // These coins exist in both blocks
 	case Ephraim:
 		return GoldenBlock
 	case Manasseh:
 		return SilverBlock
 	case Joseph:
-		return "" // Special case, not tied to a specific block
+		return GoldenBlock
 	default:
 		return ""
 	}
+}
+
+// TrimmedCopy creates a copy of the transaction without signatures
+func (tx *Transaction) TrimmedCopy() *Transaction {
+	txCopy := *tx
+	txCopy.Inputs = make([]TxInput, len(tx.Inputs))
+	copy(txCopy.Inputs, tx.Inputs)
+
+	// Clear signatures and public keys
+	for i := range txCopy.Inputs {
+		txCopy.Inputs[i].Signature = nil
+		txCopy.Inputs[i].PublicKey = nil
+	}
+
+	return &txCopy
 }
