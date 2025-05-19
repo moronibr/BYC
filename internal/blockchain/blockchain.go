@@ -27,6 +27,10 @@ func NewBlockchain() *Blockchain {
 	genesisGolden := createGenesisBlock(GoldenBlock)
 	genesisSilver := createGenesisBlock(SilverBlock)
 
+	// Debug print to check genesis block hash
+	fmt.Printf("Genesis Golden Block Hash: %x\n", genesisGolden.Hash)
+	fmt.Printf("Genesis Silver Block Hash: %x\n", genesisSilver.Hash)
+
 	return &Blockchain{
 		GoldenBlocks: []Block{genesisGolden},
 		SilverBlocks: []Block{genesisSilver},
@@ -37,15 +41,16 @@ func NewBlockchain() *Blockchain {
 
 // createGenesisBlock creates the first block in a chain
 func createGenesisBlock(blockType BlockType) Block {
-	return Block{
+	block := Block{
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
 		PrevHash:     []byte{},
-		Hash:         []byte{},
 		Nonce:        0,
 		BlockType:    blockType,
 		Difficulty:   4,
 	}
+	block.Hash = calculateHash(block)
+	return block
 }
 
 // AddBlock adds a block to the blockchain
@@ -120,6 +125,7 @@ func calculateHash(block Block) []byte {
 		[]byte(string(block.BlockType)),
 		[]byte(strconv.Itoa(block.Difficulty)),
 		[]byte(strconv.FormatInt(block.Nonce, 10)),
+		[]byte(strconv.FormatInt(block.Timestamp, 10)),
 	}, []byte{})
 
 	h := sha256.New()

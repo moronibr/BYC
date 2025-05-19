@@ -213,7 +213,7 @@ func (n *Node) handleMessage(peer *Peer, msg *Message) error {
 	case PongMsg:
 		return n.handlePong(peer, msg)
 	default:
-		return fmt.Errorf("unknown message type: %s", msg.Type)
+		return fmt.Errorf("unknown message type: %v", msg.Type)
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -162,9 +163,15 @@ func (s *Server) getBlocks(w http.ResponseWriter, r *http.Request) {
 // getBlock returns a specific block
 func (s *Server) getBlock(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	hash := vars["hash"]
+	hashHex := vars["hash"]
 
-	block, err := s.blockchain.GetBlock([]byte(hash))
+	hash, err := hex.DecodeString(hashHex)
+	if err != nil {
+		s.sendResponse(w, http.StatusBadRequest, nil, fmt.Errorf("invalid hash encoding: %v", err))
+		return
+	}
+
+	block, err := s.blockchain.GetBlock(hash)
 	if err != nil {
 		s.sendResponse(w, http.StatusNotFound, nil, err)
 		return
@@ -381,4 +388,9 @@ func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sendResponse(w, http.StatusOK, info, nil)
+}
+
+// ServeHTTP allows Server to be used as an http.Handler in tests
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.router.ServeHTTP(w, r)
 }

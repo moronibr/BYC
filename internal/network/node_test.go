@@ -8,8 +8,8 @@ import (
 )
 
 func getPeerAddresses(n *Node) []string {
-	peers := make([]string, 0, len(n.peers))
-	for addr := range n.peers {
+	peers := make([]string, 0, len(n.Peers))
+	for addr := range n.Peers {
 		peers = append(peers, addr)
 	}
 	return peers
@@ -219,27 +219,35 @@ func TestConnectToInvalidPeer(t *testing.T) {
 }
 
 func TestMultiplePeerConnections(t *testing.T) {
-	bc := blockchain.NewBlockchain()
-	node := NewNode("localhost:3030", bc)
-	err := node.Start()
-	if err != nil {
-		t.Fatalf("Failed to start node: %v", err)
+	config := &Config{
+		Address:        "localhost:3030",
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
 	}
+	node, err := NewNode(config)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+	defer node.Stop()
 
 	peerAddrs := []string{"localhost:3031", "localhost:3032", "localhost:3033"}
 	peers := []*Node{}
 	for _, addr := range peerAddrs {
-		peer := NewNode(addr, blockchain.NewBlockchain())
-		err := peer.Start()
+		peerConfig := &Config{
+			Address:        addr,
+			BlockType:      blockchain.GoldenBlock,
+			BootstrapPeers: []string{},
+		}
+		peer, err := NewNode(peerConfig)
 		if err != nil {
-			t.Fatalf("Failed to start peer %s: %v", addr, err)
+			t.Fatalf("Failed to create peer %s: %v", addr, err)
 		}
 		peers = append(peers, peer)
 	}
 	time.Sleep(100 * time.Millisecond)
 
 	for _, addr := range peerAddrs {
-		err := node.Connect(addr)
+		err := node.ConnectToPeer(addr)
 		if err != nil {
 			t.Errorf("Failed to connect to peer %s: %v", addr, err)
 		}

@@ -3,6 +3,7 @@ package tests
 import (
 	"encoding/json"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func setupTestNetwork(t *testing.T) (*network.Node, string) {
 
 	// Create test node
 	node, err := network.NewNode(&network.Config{
-		Address:        "localhost:" + string(port),
+		Address:        "localhost:" + strconv.Itoa(port),
 		BlockType:      blockchain.GoldenBlock,
 		BootstrapPeers: []string{},
 	})
