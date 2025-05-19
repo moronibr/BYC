@@ -308,3 +308,41 @@ func (tx *Transaction) TrimmedCopy() *Transaction {
 
 	return &txCopy
 }
+
+// String returns the string representation of the coin type
+func (c CoinType) String() string {
+	switch c {
+	case Leah:
+		return "Leah"
+	case Shiblum:
+		return "Shiblum"
+	case Shiblon:
+		return "Shiblon"
+	case Senine:
+		return "Senine"
+	case Seon:
+		return "Seon"
+	case Shum:
+		return "Shum"
+	case Limnah:
+		return "Limnah"
+	case Antion:
+		return "Antion"
+	case Senum:
+		return "Senum"
+	case Amnor:
+		return "Amnor"
+	case Ezrom:
+		return "Ezrom"
+	case Onti:
+		return "Onti"
+	case Ephraim:
+		return "Ephraim"
+	case Manasseh:
+		return "Manasseh"
+	case Joseph:
+		return "Joseph"
+	default:
+		return "Unknown"
+	}
+}
