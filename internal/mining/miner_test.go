@@ -117,7 +117,7 @@ func TestMinerRewards(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a new miner
-			miner, err := NewMiner(bc, blockchain.Golden, tc.coinType, "test_address")
+			miner, err := NewMiner(bc, blockchain.GoldenBlock, tc.coinType, "test_address")
 			assert.NoError(t, err)
 
 			// Start mining
@@ -138,7 +138,7 @@ func TestMinerRewards(t *testing.T) {
 
 func TestBlockTime(t *testing.T) {
 	bc := blockchain.NewBlockchain()
-	miner, err := NewMiner(bc, blockchain.Golden, blockchain.Leah, "test_address")
+	miner, err := NewMiner(bc, blockchain.GoldenBlock, blockchain.Leah, "test_address")
 	assert.NoError(t, err)
 
 	// Start mining
@@ -170,7 +170,7 @@ func TestSupplyLimits(t *testing.T) {
 
 	// Test Ephraim supply limit
 	t.Run("Ephraim Supply Limit", func(t *testing.T) {
-		miner, err := NewMiner(bc, blockchain.Golden, blockchain.Ephraim, "test_address")
+		miner, err := NewMiner(bc, blockchain.GoldenBlock, blockchain.Ephraim, "test_address")
 		assert.NoError(t, err)
 
 		// Start mining
@@ -189,7 +189,7 @@ func TestSupplyLimits(t *testing.T) {
 
 	// Test Manasseh supply limit
 	t.Run("Manasseh Supply Limit", func(t *testing.T) {
-		miner, err := NewMiner(bc, blockchain.Silver, blockchain.Manasseh, "test_address")
+		miner, err := NewMiner(bc, blockchain.SilverBlock, blockchain.Manasseh, "test_address")
 		assert.NoError(t, err)
 
 		// Start mining
@@ -214,7 +214,7 @@ func TestMiningPool(t *testing.T) {
 
 	// Create a test miner
 	bc := blockchain.NewBlockchain()
-	miner, err := NewMiner(bc, blockchain.Golden, blockchain.Leah, "test_miner")
+	miner, err := NewMiner(bc, blockchain.GoldenBlock, blockchain.Leah, "test_miner")
 	assert.NoError(t, err)
 
 	// Add miner to pool
