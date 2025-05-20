@@ -326,6 +326,8 @@ func handleMiningMenu() {
 			log.Fatalf("Failed to create miner: %v", err)
 		}
 		miner.Start(ctx)
+		fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
+		<-ctx.Done() // Wait until user cancels (Esc, 'q', or Ctrl+C)
 		miner.Stop()
 		return
 	case 2:
