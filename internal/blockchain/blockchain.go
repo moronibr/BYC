@@ -35,7 +35,7 @@ func NewBlockchain() *Blockchain {
 		GoldenBlocks: []Block{genesisGolden},
 		SilverBlocks: []Block{genesisSilver},
 		UTXOSet:      NewUTXOSet(),
-		Difficulty:   4, // Initial difficulty
+		Difficulty:   1, // Set to 1 for easier mining
 	}
 }
 
@@ -47,7 +47,7 @@ func createGenesisBlock(blockType BlockType) Block {
 		PrevHash:     []byte{},
 		Nonce:        0,
 		BlockType:    blockType,
-		Difficulty:   4,
+		Difficulty:   1, // Set to 1 to match base difficulty
 	}
 	block.Hash = calculateHash(block)
 	return block
@@ -115,7 +115,13 @@ func (bc *Blockchain) isValidProof(block Block) bool {
 	for i := 0; i < block.Difficulty; i++ {
 		target[i] = 0
 	}
-	return bytes.Compare(hash, target) == -1
+	// Check if the hash has enough leading zeros
+	for i := 0; i < block.Difficulty; i++ {
+		if hash[i] != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // calculateHash calculates the hash of a block

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/byc/internal/crypto"
@@ -254,9 +255,9 @@ func MiningDifficulty(coinType CoinType) int {
 	case Leah:
 		return 1
 	case Shiblum:
-		return 2
+		return 3
 	case Shiblon:
-		return 4
+		return 5
 	default:
 		return 0 // Not mineable
 	}
@@ -345,4 +346,237 @@ func (c CoinType) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+// ConvertLeahToShiblum converts Leah to Shiblum (1 Shiblum = 2 Leah)
+func ConvertLeahToShiblum(leah float64) float64 {
+	return leah / 2
+}
+
+// ConvertShiblumToShiblon converts Shiblum to Shiblon (1 Shiblon = 2 Shiblum)
+func ConvertShiblumToShiblon(shiblum float64) float64 {
+	return shiblum / 2
+}
+
+// ConvertShiblonToSenum converts Shiblon to Senum (1 Senum = 2 Shiblon)
+func ConvertShiblonToSenum(shiblon float64) float64 {
+	return shiblon * 2
+}
+
+// ConvertLeahToSenum converts Leah directly to Senum (1 Senum = 8 Leah)
+func ConvertLeahToSenum(leah float64) float64 {
+	return leah / 8
+}
+
+// Gold coin conversions
+// ConvertSenineToSeon converts Senine to Seon (1 Seon = 2 Senine)
+func ConvertSenineToSeon(senine float64) float64 {
+	return senine * 2
+}
+
+// ConvertSeonToShum converts Seon to Shum (1 Shum = 2 Seon)
+func ConvertSeonToShum(seon float64) float64 {
+	return seon * 2
+}
+
+// ConvertShumToLimnah converts Shum to Limnah (1 Limnah = 7 Senine)
+func ConvertShumToLimnah(shum float64) float64 {
+	return shum * 1.75 // Since 1 Shum = 4 Senine, and 1 Limnah = 7 Senine
+}
+
+// Silver coin conversions
+// ConvertSenumToAmnor converts Senum to Amnor (1 Amnor = 2 Senum)
+func ConvertSenumToAmnor(senum float64) float64 {
+	return senum * 2
+}
+
+// ConvertAmnorToEzrom converts Amnor to Ezrom (1 Ezrom = 4 Senum)
+func ConvertAmnorToEzrom(amnor float64) float64 {
+	return amnor * 2
+}
+
+// ConvertEzromToOnti converts Ezrom to Onti (1 Onti = 7 Senum)
+func ConvertEzromToOnti(ezrom float64) float64 {
+	return ezrom * 1.75 // Since 1 Ezrom = 4 Senum, and 1 Onti = 7 Senum
+}
+
+// Lesser number conversions (already implemented)
+// ConvertLeahToShiblum (1 Shiblum = 2 Leah)
+// ConvertShiblumToShiblon (1 Shiblon = 2 Shiblum)
+// ConvertShiblonToSenum (1 Senum = 2 Shiblon)
+
+// Direct conversions from Leah to higher denominations
+// ConvertLeahToShiblon converts Leah to Shiblon (1 Shiblon = 4 Leah)
+func ConvertLeahToShiblon(leah float64) float64 {
+	return leah / 4
+}
+
+// ConvertLeahToSenine converts Leah to Senine (1 Senine = 8 Leah)
+func ConvertLeahToSenine(leah float64) float64 {
+	return leah / 8
+}
+
+// ConvertLeahToSeon converts Leah to Seon (1 Seon = 16 Leah)
+func ConvertLeahToSeon(leah float64) float64 {
+	return leah / 16
+}
+
+// ConvertLeahToShum converts Leah to Shum (1 Shum = 32 Leah)
+func ConvertLeahToShum(leah float64) float64 {
+	return leah / 32
+}
+
+// ConvertLeahToLimnah converts Leah to Limnah (1 Limnah = 56 Leah)
+func ConvertLeahToLimnah(leah float64) float64 {
+	return leah / 56
+}
+
+// ConvertLeahToAntion converts Leah to Antion (1 Antion = 24 Leah)
+func ConvertLeahToAntion(leah float64) float64 {
+	return leah / 24
+}
+
+// Special coin creation requirements using Fibonacci sequence
+const (
+	// Golden Block requirements (for Ephraim)
+	// Fibonacci sequence: 1, 1, 2, 3, 5, 8, 13, 21
+	RequiredLeah    float64 = 1  // F(1)
+	RequiredShiblum float64 = 1  // F(2)
+	RequiredShiblon float64 = 2  // F(3)
+	RequiredSenine  float64 = 3  // F(4)
+	RequiredSeon    float64 = 5  // F(5)
+	RequiredShum    float64 = 8  // F(6)
+	RequiredLimnah  float64 = 13 // F(7)
+	RequiredAntion  float64 = 21 // F(8)
+
+	// Silver Block requirements (for Manasseh)
+	// Fibonacci sequence: 1, 1, 2, 3
+	RequiredSenum float64 = 1 // F(1)
+	RequiredAmnor float64 = 1 // F(2)
+	RequiredEzrom float64 = 2 // F(3)
+	RequiredOnti  float64 = 3 // F(4)
+)
+
+// CanCreateEphraim checks if the user has enough of each Golden Block coin to create an Ephraim
+func CanCreateEphraim(balances map[CoinType]float64) bool {
+	return balances[Leah] >= RequiredLeah &&
+		balances[Shiblum] >= RequiredShiblum &&
+		balances[Shiblon] >= RequiredShiblon &&
+		balances[Senine] >= RequiredSenine &&
+		balances[Seon] >= RequiredSeon &&
+		balances[Shum] >= RequiredShum &&
+		balances[Limnah] >= RequiredLimnah &&
+		balances[Antion] >= RequiredAntion
+}
+
+// CanCreateManasseh checks if the user has enough of each Silver Block coin to create a Manasseh
+func CanCreateManasseh(balances map[CoinType]float64) bool {
+	return balances[Senum] >= RequiredSenum &&
+		balances[Amnor] >= RequiredAmnor &&
+		balances[Ezrom] >= RequiredEzrom &&
+		balances[Onti] >= RequiredOnti &&
+		balances[Antion] >= RequiredAntion
+}
+
+// SpecialCoinStats tracks the creation of special coins
+type SpecialCoinStats struct {
+	EphraimCreated  int64
+	ManassehCreated int64
+	LastCreated     time.Time
+}
+
+// CalculateTotalValueInLeah calculates the total value of all coins in terms of Leah
+func CalculateTotalValueInLeah(balances map[CoinType]float64) float64 {
+	var total float64
+
+	// Golden Block coins
+	total += balances[Leah] * 1    // 1 Leah = 1 Leah
+	total += balances[Shiblum] * 2 // 1 Shiblum = 2 Leah
+	total += balances[Shiblon] * 4 // 1 Shiblon = 4 Leah
+	total += balances[Senine] * 8  // 1 Senine = 8 Leah
+	total += balances[Seon] * 16   // 1 Seon = 16 Leah
+	total += balances[Shum] * 32   // 1 Shum = 32 Leah
+	total += balances[Limnah] * 56 // 1 Limnah = 56 Leah
+	total += balances[Antion] * 24 // 1 Antion = 24 Leah
+
+	// Silver Block coins (converted to Leah)
+	total += balances[Senum] * 8  // 1 Senum = 8 Leah
+	total += balances[Amnor] * 16 // 1 Amnor = 16 Leah
+	total += balances[Ezrom] * 32 // 1 Ezrom = 32 Leah
+	total += balances[Onti] * 56  // 1 Onti = 56 Leah
+
+	// Special coins (using their creation cost in Leah)
+	total += balances[Ephraim] * 54  // Sum of all Golden Block requirements
+	total += balances[Manasseh] * 28 // Sum of all Silver Block requirements
+
+	return total
+}
+
+// CreateEphraim creates an Ephraim coin by consuming Fibonacci amounts of each Golden Block coin
+func CreateEphraim(balances map[CoinType]float64, stats *SpecialCoinStats) (bool, map[CoinType]float64) {
+	if !CanCreateEphraim(balances) {
+		return false, balances
+	}
+
+	// Create a copy of the balances to modify
+	newBalances := make(map[CoinType]float64)
+	for k, v := range balances {
+		newBalances[k] = v
+	}
+
+	// Deduct Fibonacci amounts of each required coin
+	newBalances[Leah] -= RequiredLeah
+	newBalances[Shiblum] -= RequiredShiblum
+	newBalances[Shiblon] -= RequiredShiblon
+	newBalances[Senine] -= RequiredSenine
+	newBalances[Seon] -= RequiredSeon
+	newBalances[Shum] -= RequiredShum
+	newBalances[Limnah] -= RequiredLimnah
+	newBalances[Antion] -= RequiredAntion
+
+	// Add one Ephraim
+	newBalances[Ephraim]++
+
+	// Update stats
+	stats.EphraimCreated++
+	stats.LastCreated = time.Now()
+
+	return true, newBalances
+}
+
+// CreateManasseh creates a Manasseh coin by consuming Fibonacci amounts of each Silver Block coin
+func CreateManasseh(balances map[CoinType]float64, stats *SpecialCoinStats) (bool, map[CoinType]float64) {
+	if !CanCreateManasseh(balances) {
+		return false, balances
+	}
+
+	// Create a copy of the balances to modify
+	newBalances := make(map[CoinType]float64)
+	for k, v := range balances {
+		newBalances[k] = v
+	}
+
+	// Deduct Fibonacci amounts of each required coin
+	newBalances[Senum] -= RequiredSenum
+	newBalances[Amnor] -= RequiredAmnor
+	newBalances[Ezrom] -= RequiredEzrom
+	newBalances[Onti] -= RequiredOnti
+	newBalances[Antion] -= RequiredAntion
+
+	// Add one Manasseh
+	newBalances[Manasseh]++
+
+	// Update stats
+	stats.ManassehCreated++
+	stats.LastCreated = time.Now()
+
+	return true, newBalances
+}
+
+// GetSpecialCoinStats returns the current statistics of special coin creation
+func GetSpecialCoinStats(stats *SpecialCoinStats) string {
+	return fmt.Sprintf("Ephraim created: %d\nManasseh created: %d\nLast created: %s",
+		stats.EphraimCreated,
+		stats.ManassehCreated,
+		stats.LastCreated.Format(time.RFC3339))
 }

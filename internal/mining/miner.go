@@ -181,26 +181,16 @@ func (m *Miner) mine(ctx context.Context) {
 		case <-m.stopChan:
 			fmt.Println("\nMining stopped by user.")
 			return
-		case <-ticker.C:
-			// Update hash rate
-			now := time.Now()
-			elapsed := now.Sub(lastUpdate).Seconds()
-			if elapsed > 0 {
-				hashRate := (hashCount - lastHashCount) / int64(elapsed)
-				m.mu.Lock()
-				m.status.HashRate = hashRate
-				m.status.LastUpdate = now
-				m.mu.Unlock()
-				lastHashCount = hashCount
-				lastUpdate = now
-			}
-
+		default:
 			// Attempt to mine a block
 			block, err := m.Blockchain.MineBlock([]blockchain.Transaction{}, m.BlockType, m.CoinType)
 			if err != nil {
 				fmt.Printf("Error mining block: %v\n", err)
 				continue
 			}
+
+			// Update hash count
+			hashCount++
 
 			// Update mining stats
 			m.mu.Lock()
@@ -231,6 +221,24 @@ func (m *Miner) mine(ctx context.Context) {
 			fmt.Printf("Wallet balance: %.2f %s\n", m.Blockchain.GetBalance(m.status.MiningWallet.Address, m.CoinType), m.CoinType)
 			fmt.Println("--------------------------------------------------------")
 			fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
+		}
+
+		// Update hash rate every second
+		select {
+		case <-ticker.C:
+			now := time.Now()
+			elapsed := now.Sub(lastUpdate).Seconds()
+			if elapsed >= 1.0 { // Only update if at least 1 second has passed
+				hashRate := (hashCount - lastHashCount) / int64(elapsed)
+				m.mu.Lock()
+				m.status.HashRate = hashRate
+				m.status.LastUpdate = now
+				m.mu.Unlock()
+				lastHashCount = hashCount
+				lastUpdate = now
+			}
+		default:
+			// Continue mining
 		}
 	}
 }
