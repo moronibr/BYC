@@ -64,7 +64,7 @@ export const Network: React.FC = () => {
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <CircularProgress />
+        <CircularProgress data-testid="loading-spinner" />
       </div>
     );
   }

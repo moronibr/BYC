@@ -2,12 +2,33 @@ package mining
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/byc/internal/blockchain"
+	"github.com/byc/internal/wallet"
 )
+
+// WalletInfo stores wallet information for persistence
+type WalletInfo struct {
+	Address string
+	Rewards map[string]float64 // map[coinType]amount
+}
+
+// Status represents the current mining status
+type Status struct {
+	HashRate     int64
+	Shares       int64
+	BlocksFound  int64
+	Difficulty   int
+	LastUpdate   time.Time
+	MiningWallet *wallet.Wallet
+	Rewards      map[blockchain.CoinType]float64
+}
 
 // Miner represents a mining node
 type Miner struct {
@@ -17,6 +38,9 @@ type Miner struct {
 	Address    string
 	stopChan   chan struct{}
 	wg         sync.WaitGroup
+	status     Status
+	mu         sync.RWMutex
+	walletFile string
 }
 
 // NewMiner creates a new miner
@@ -25,13 +49,88 @@ func NewMiner(bc *blockchain.Blockchain, blockType blockchain.BlockType, coinTyp
 		return nil, fmt.Errorf("coin type %s is not mineable", coinType)
 	}
 
+	// Create wallets directory if it doesn't exist
+	walletsDir := "wallets"
+	if err := os.MkdirAll(walletsDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create wallets directory: %v", err)
+	}
+
+	// Try to load existing wallet
+	walletFile := filepath.Join(walletsDir, "mining_wallet.json")
+	var miningWallet *wallet.Wallet
+	var rewards map[blockchain.CoinType]float64
+
+	if _, err := os.Stat(walletFile); err == nil {
+		// Load existing wallet
+		data, err := os.ReadFile(walletFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read wallet file: %v", err)
+		}
+
+		var walletInfo WalletInfo
+		if err := json.Unmarshal(data, &walletInfo); err != nil {
+			return nil, fmt.Errorf("failed to parse wallet file: %v", err)
+		}
+
+		// Convert rewards map
+		rewards = make(map[blockchain.CoinType]float64)
+		for coinType, amount := range walletInfo.Rewards {
+			rewards[blockchain.CoinType(coinType)] = amount
+		}
+
+		// Create wallet with existing address
+		miningWallet = &wallet.Wallet{Address: walletInfo.Address}
+	} else {
+		// Create new wallet
+		var err error
+		miningWallet, err = wallet.NewWallet()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mining wallet: %v", err)
+		}
+		rewards = make(map[blockchain.CoinType]float64)
+	}
+
 	return &Miner{
 		Blockchain: bc,
 		BlockType:  blockType,
 		CoinType:   coinType,
 		Address:    address,
 		stopChan:   make(chan struct{}),
+		status: Status{
+			Difficulty:   bc.Difficulty * blockchain.MiningDifficulty(coinType),
+			MiningWallet: miningWallet,
+			Rewards:      rewards,
+		},
+		walletFile: walletFile,
 	}, nil
+}
+
+// saveWallet saves the wallet information to a file
+func (m *Miner) saveWallet() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Convert rewards map to string keys for JSON
+	rewards := make(map[string]float64)
+	for coinType, amount := range m.status.Rewards {
+		rewards[string(coinType)] = amount
+	}
+
+	walletInfo := WalletInfo{
+		Address: m.status.MiningWallet.Address,
+		Rewards: rewards,
+	}
+
+	data, err := json.MarshalIndent(walletInfo, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal wallet info: %v", err)
+	}
+
+	if err := os.WriteFile(m.walletFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write wallet file: %v", err)
+	}
+
+	return nil
 }
 
 // Start starts the mining process
@@ -44,6 +143,18 @@ func (m *Miner) Start(ctx context.Context) {
 func (m *Miner) Stop() {
 	close(m.stopChan)
 	m.wg.Wait()
+
+	// Save wallet before stopping
+	if err := m.saveWallet(); err != nil {
+		fmt.Printf("Warning: Failed to save wallet: %v\n", err)
+	}
+}
+
+// GetStatus returns the current mining status
+func (m *Miner) GetStatus() Status {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.status
 }
 
 // mine performs the mining process
@@ -53,6 +164,15 @@ func (m *Miner) mine(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	hashCount := int64(0)
+	lastHashCount := int64(0)
+	lastUpdate := time.Now()
+
+	fmt.Printf("\nMining wallet address: %s\n", m.status.MiningWallet.Address)
+	fmt.Printf("Mining rewards will be sent to this wallet\n")
+	fmt.Printf("Wallet file location: %s\n", m.walletFile)
+	fmt.Println("--------------------------------------------------------")
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -60,27 +180,55 @@ func (m *Miner) mine(ctx context.Context) {
 		case <-m.stopChan:
 			return
 		case <-ticker.C:
-			m.mineBlock()
+			// Update hash rate
+			now := time.Now()
+			elapsed := now.Sub(lastUpdate).Seconds()
+			if elapsed > 0 {
+				hashRate := (hashCount - lastHashCount) / int64(elapsed)
+				m.mu.Lock()
+				m.status.HashRate = hashRate
+				m.status.LastUpdate = now
+				m.mu.Unlock()
+				lastHashCount = hashCount
+				lastUpdate = now
+			}
+
+			// Attempt to mine a block
+			block, err := m.Blockchain.MineBlock([]blockchain.Transaction{}, m.BlockType, m.CoinType)
+			if err != nil {
+				fmt.Printf("Error mining block: %v\n", err)
+				continue
+			}
+
+			// Update mining stats
+			m.mu.Lock()
+			m.status.Shares++
+			m.mu.Unlock()
+
+			// Add the block to the blockchain
+			if err := m.Blockchain.AddBlock(block); err != nil {
+				fmt.Printf("Error adding block: %v\n", err)
+				continue
+			}
+
+			// Update mining stats and rewards
+			m.mu.Lock()
+			m.status.BlocksFound++
+			reward := float64(50) // Base reward of 50 coins
+			m.status.Rewards[m.CoinType] += reward
+			m.mu.Unlock()
+
+			// Save wallet after each successful block
+			if err := m.saveWallet(); err != nil {
+				fmt.Printf("Warning: Failed to save wallet: %v\n", err)
+			}
+
+			fmt.Printf("\nMined new block: %x\n", block.Hash)
+			fmt.Printf("Reward: %.2f %s\n", reward, m.CoinType)
+			fmt.Printf("Total rewards: %.2f %s\n", m.status.Rewards[m.CoinType], m.CoinType)
+			fmt.Printf("Wallet balance: %.2f %s\n", m.Blockchain.GetBalance(m.status.MiningWallet.Address, m.CoinType), m.CoinType)
 		}
 	}
-}
-
-// mineBlock attempts to mine a new block
-func (m *Miner) mineBlock() {
-	// Create a new block with pending transactions
-	block, err := m.Blockchain.MineBlock([]blockchain.Transaction{}, m.BlockType, m.CoinType)
-	if err != nil {
-		fmt.Printf("Error mining block: %v\n", err)
-		return
-	}
-
-	// Add the block to the blockchain
-	if err := m.Blockchain.AddBlock(block); err != nil {
-		fmt.Printf("Error adding block: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Mined new block: %x\n", block.Hash)
 }
 
 // GetMiningDifficulty returns the current mining difficulty
@@ -90,12 +238,21 @@ func (m *Miner) GetMiningDifficulty() int {
 
 // GetMiningStats returns current mining statistics
 func (m *Miner) GetMiningStats() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return map[string]interface{}{
-		"block_type": m.BlockType,
-		"coin_type":  m.CoinType,
-		"difficulty": m.GetMiningDifficulty(),
-		"address":    m.Address,
-		"is_mining":  true,
+		"block_type":  m.BlockType,
+		"coin_type":   m.CoinType,
+		"difficulty":  m.status.Difficulty,
+		"hash_rate":   m.status.HashRate,
+		"shares":      m.status.Shares,
+		"blocks":      m.status.BlocksFound,
+		"address":     m.Address,
+		"is_mining":   true,
+		"wallet":      m.status.MiningWallet.Address,
+		"rewards":     m.status.Rewards,
+		"wallet_file": m.walletFile,
 	}
 }
 
