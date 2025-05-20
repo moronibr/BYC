@@ -176,8 +176,10 @@ func (m *Miner) mine(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Println("\nMining stopped by user.")
 			return
 		case <-m.stopChan:
+			fmt.Println("\nMining stopped by user.")
 			return
 		case <-ticker.C:
 			// Update hash rate
@@ -227,6 +229,8 @@ func (m *Miner) mine(ctx context.Context) {
 			fmt.Printf("Reward: %.2f %s\n", reward, m.CoinType)
 			fmt.Printf("Total rewards: %.2f %s\n", m.status.Rewards[m.CoinType], m.CoinType)
 			fmt.Printf("Wallet balance: %.2f %s\n", m.Blockchain.GetBalance(m.status.MiningWallet.Address, m.CoinType), m.CoinType)
+			fmt.Println("--------------------------------------------------------")
+			fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
 		}
 	}
 }
