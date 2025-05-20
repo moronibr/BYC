@@ -167,6 +167,7 @@ func (m *Miner) mine(ctx context.Context) {
 	hashCount := int64(0)
 	lastHashCount := int64(0)
 	lastUpdate := time.Now()
+	lastBlockTime := time.Now()
 
 	fmt.Printf("\nMining wallet address: %s\n", m.status.MiningWallet.Address)
 	fmt.Printf("Mining rewards will be sent to this wallet\n")
@@ -182,6 +183,42 @@ func (m *Miner) mine(ctx context.Context) {
 			fmt.Println("\nMining stopped by user.")
 			return
 		default:
+			// Calculate time since last block
+			timeSinceLastBlock := time.Since(lastBlockTime)
+
+			// Only attempt to mine if enough time has passed (target 10 minutes per block)
+			if timeSinceLastBlock < 600*time.Second {
+				time.Sleep(100 * time.Millisecond) // Small delay to prevent CPU overload
+				continue
+			}
+
+			// Calculate reward based on coin type (mirroring Bitcoin's original 50 BTC reward)
+			var reward float64
+			switch m.CoinType {
+			case blockchain.Leah:
+				reward = 50 // 50 Leah per block (every 10 minutes)
+			case blockchain.Shiblum:
+				reward = 25 // 25 Shiblum per block (every 10 minutes)
+			case blockchain.Shiblon:
+				reward = 12.5 // 12.5 Shiblon per block (every 10 minutes)
+			case blockchain.Ephraim:
+				// Check if we've reached the maximum Ephraim supply
+				if m.Blockchain.GetTotalSupply(blockchain.Ephraim) >= blockchain.MaxEphraimSupply {
+					fmt.Printf("Maximum Ephraim supply reached\n")
+					continue
+				}
+				reward = 0.5 // 0.5 Ephraim per block (every 10 minutes)
+			case blockchain.Manasseh:
+				// Check if we've reached the maximum Manasseh supply
+				if m.Blockchain.GetTotalSupply(blockchain.Manasseh) >= blockchain.MaxManassehSupply {
+					fmt.Printf("Maximum Manasseh supply reached\n")
+					continue
+				}
+				reward = 0.5 // 0.5 Manasseh per block (every 10 minutes)
+			default:
+				reward = 1 // 1 coin for other types (every 10 minutes)
+			}
+
 			// Attempt to mine a block
 			block, err := m.Blockchain.MineBlock([]blockchain.Transaction{}, m.BlockType, m.CoinType)
 			if err != nil {
@@ -206,9 +243,11 @@ func (m *Miner) mine(ctx context.Context) {
 			// Update mining stats and rewards
 			m.mu.Lock()
 			m.status.BlocksFound++
-			reward := float64(50) // Base reward of 50 coins
 			m.status.Rewards[m.CoinType] += reward
 			m.mu.Unlock()
+
+			// Update last block time
+			lastBlockTime = time.Now()
 
 			// Save wallet after each successful block
 			if err := m.saveWallet(); err != nil {

@@ -580,3 +580,44 @@ func GetSpecialCoinStats(stats *SpecialCoinStats) string {
 		stats.ManassehCreated,
 		stats.LastCreated.Format(time.RFC3339))
 }
+
+// Maximum supply constants
+const (
+	MaxEphraimSupply  = 15_000_000
+	MaxManassehSupply = 15_000_000
+	MaxJosephSupply   = 3_000_000
+)
+
+// CreateJoseph creates a Joseph coin by combining 1 Ephraim and 1 Manasseh
+func CreateJoseph(balances map[CoinType]float64) (bool, error) {
+	// Check if we have enough Ephraim and Manasseh
+	if balances[Ephraim] < 1 || balances[Manasseh] < 1 {
+		return false, fmt.Errorf("need 1 Ephraim and 1 Manasseh to create a Joseph coin")
+	}
+
+	// Check if we've reached the maximum Joseph supply
+	if balances[Joseph] >= MaxJosephSupply {
+		return false, fmt.Errorf("maximum Joseph supply reached")
+	}
+
+	// Check if we've reached the maximum Ephraim or Manasseh supply
+	if balances[Ephraim] >= MaxEphraimSupply || balances[Manasseh] >= MaxManassehSupply {
+		return false, fmt.Errorf("maximum Ephraim or Manasseh supply reached")
+	}
+
+	// Create Joseph coin by consuming 1 Ephraim and 1 Manasseh
+	balances[Ephraim]--
+	balances[Manasseh]--
+	balances[Joseph]++
+
+	return true, nil
+}
+
+// GetRemainingSupply returns the remaining supply for each special coin
+func GetRemainingSupply(balances map[CoinType]float64) map[CoinType]float64 {
+	return map[CoinType]float64{
+		Ephraim:  MaxEphraimSupply - balances[Ephraim],
+		Manasseh: MaxManassehSupply - balances[Manasseh],
+		Joseph:   MaxJosephSupply - balances[Joseph],
+	}
+}

@@ -368,3 +368,31 @@ func (bc *Blockchain) Size() int64 {
 	}
 	return size
 }
+
+// GetTotalSupply returns the total supply of a specific coin type
+func (bc *Blockchain) GetTotalSupply(coinType CoinType) float64 {
+	var total float64
+
+	// Check both chains for the balance
+	for _, block := range bc.GoldenBlocks {
+		for _, tx := range block.Transactions {
+			for _, output := range tx.Outputs {
+				if output.CoinType == coinType {
+					total += output.Value
+				}
+			}
+		}
+	}
+
+	for _, block := range bc.SilverBlocks {
+		for _, tx := range block.Transactions {
+			for _, output := range tx.Outputs {
+				if output.CoinType == coinType {
+					total += output.Value
+				}
+			}
+		}
+	}
+
+	return total
+}

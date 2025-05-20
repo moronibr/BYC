@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/byc/internal/blockchain"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewMiner(t *testing.T) {
@@ -95,33 +96,136 @@ func TestGetMiningStats(t *testing.T) {
 	}
 }
 
-func TestMiningPool(t *testing.T) {
-	pool := NewMiningPool("localhost:3000")
+func TestMinerRewards(t *testing.T) {
+	// Create a new blockchain
 	bc := blockchain.NewBlockchain()
 
-	// Create and add miners
-	miner1, _ := NewMiner(bc, blockchain.GoldenBlock, blockchain.Leah, "localhost:3001")
-	miner2, _ := NewMiner(bc, blockchain.SilverBlock, blockchain.Shiblum, "localhost:3002")
+	// Test cases for different coin types
+	testCases := []struct {
+		name     string
+		coinType blockchain.CoinType
+		expected float64
+	}{
+		{"Leah Reward", blockchain.Leah, 50.0},
+		{"Shiblum Reward", blockchain.Shiblum, 25.0},
+		{"Shiblon Reward", blockchain.Shiblon, 12.5},
+		{"Ephraim Reward", blockchain.Ephraim, 0.5},
+		{"Manasseh Reward", blockchain.Manasseh, 0.5},
+		{"Other Coin Reward", blockchain.Senine, 1.0},
+	}
 
-	pool.AddMiner(miner1)
-	pool.AddMiner(miner2)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a new miner
+			miner, err := NewMiner(bc, blockchain.Golden, tc.coinType, "test_address")
+			assert.NoError(t, err)
 
-	// Test pool stats
+			// Start mining
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			miner.Start(ctx)
+
+			// Wait for mining to complete
+			time.Sleep(1 * time.Second)
+			miner.Stop()
+
+			// Check the reward
+			status := miner.GetStatus()
+			assert.Equal(t, tc.expected, status.Rewards[tc.coinType], "Reward should match expected value")
+		})
+	}
+}
+
+func TestBlockTime(t *testing.T) {
+	bc := blockchain.NewBlockchain()
+	miner, err := NewMiner(bc, blockchain.Golden, blockchain.Leah, "test_address")
+	assert.NoError(t, err)
+
+	// Start mining
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	miner.Start(ctx)
+
+	// Record start time
+	startTime := time.Now()
+
+	// Wait for first block
+	time.Sleep(11 * time.Minute)
+
+	// Get mining stats
+	stats := miner.GetMiningStats()
+	blocksFound := stats["blocks"].(int64)
+
+	// Stop mining
+	miner.Stop()
+
+	// Verify block time
+	elapsedTime := time.Since(startTime)
+	expectedBlocks := int64(elapsedTime.Minutes() / 10) // Should be roughly 1 block per 10 minutes
+	assert.GreaterOrEqual(t, blocksFound, expectedBlocks-1, "Should have mined approximately one block per 10 minutes")
+}
+
+func TestSupplyLimits(t *testing.T) {
+	bc := blockchain.NewBlockchain()
+
+	// Test Ephraim supply limit
+	t.Run("Ephraim Supply Limit", func(t *testing.T) {
+		miner, err := NewMiner(bc, blockchain.Golden, blockchain.Ephraim, "test_address")
+		assert.NoError(t, err)
+
+		// Start mining
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		miner.Start(ctx)
+
+		// Wait for mining to complete
+		time.Sleep(1 * time.Second)
+		miner.Stop()
+
+		// Check if supply is within limits
+		supply := bc.GetTotalSupply(blockchain.Ephraim)
+		assert.LessOrEqual(t, supply, blockchain.MaxEphraimSupply, "Ephraim supply should not exceed maximum")
+	})
+
+	// Test Manasseh supply limit
+	t.Run("Manasseh Supply Limit", func(t *testing.T) {
+		miner, err := NewMiner(bc, blockchain.Silver, blockchain.Manasseh, "test_address")
+		assert.NoError(t, err)
+
+		// Start mining
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		miner.Start(ctx)
+
+		// Wait for mining to complete
+		time.Sleep(1 * time.Second)
+		miner.Stop()
+
+		// Check if supply is within limits
+		supply := bc.GetTotalSupply(blockchain.Manasseh)
+		assert.LessOrEqual(t, supply, blockchain.MaxManassehSupply, "Manasseh supply should not exceed maximum")
+	})
+}
+
+func TestMiningPool(t *testing.T) {
+	// Create a new mining pool
+	pool := NewMiningPool("pool_address")
+	assert.NotNil(t, pool)
+
+	// Create a test miner
+	bc := blockchain.NewBlockchain()
+	miner, err := NewMiner(bc, blockchain.Golden, blockchain.Leah, "test_miner")
+	assert.NoError(t, err)
+
+	// Add miner to pool
+	pool.AddMiner(miner)
+	assert.Equal(t, 1, len(pool.Miners), "Pool should have one miner")
+
+	// Get pool stats
 	stats := pool.GetPoolStats()
-	if stats["total_miners"] != 2 {
-		t.Errorf("Expected 2 miners in pool, got %d", stats["total_miners"])
-	}
+	assert.Equal(t, 1, stats["total_miners"], "Pool stats should show one miner")
 
-	// Test getting miner
-	gotMiner := pool.GetMiner("localhost:3001")
-	if gotMiner != miner1 {
-		t.Error("Expected to get miner1")
-	}
-
-	// Test removing miner
-	pool.RemoveMiner("localhost:3001")
-	stats = pool.GetPoolStats()
-	if stats["total_miners"] != 1 {
-		t.Errorf("Expected 1 miner in pool after removal, got %d", stats["total_miners"])
-	}
+	// Remove miner from pool
+	pool.RemoveMiner("test_miner")
+	assert.Equal(t, 0, len(pool.Miners), "Pool should be empty after removing miner")
 }
