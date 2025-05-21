@@ -11,32 +11,30 @@ import (
 	"time"
 )
 
-// Blockchain represents the dual blockchain system
+// Blockchain represents the BYC blockchain
 type Blockchain struct {
-	GoldenBlocks        []Block
-	SilverBlocks        []Block
-	UTXOSet             *UTXOSet
-	Difficulty          int
-	MiningReward        float64
-	pendingTransactions []*Transaction
-	mu                  sync.RWMutex
+	GoldenBlocks []Block
+	SilverBlocks []Block
+	PendingTxs   []Transaction
+	UTXOSet      map[string]UTXO
+	Difficulty   int
+	MiningConfig *MiningConfig
+	MiningPool   *MiningPool
+	mu           sync.RWMutex
 }
 
-// NewBlockchain creates a new blockchain with genesis blocks
+// NewBlockchain creates a new blockchain
 func NewBlockchain() *Blockchain {
-	genesisGolden := createGenesisBlock(GoldenBlock)
-	genesisSilver := createGenesisBlock(SilverBlock)
-
-	// Debug print to check genesis block hash
-	fmt.Printf("Genesis Golden Block Hash: %x\n", genesisGolden.Hash)
-	fmt.Printf("Genesis Silver Block Hash: %x\n", genesisSilver.Hash)
-
-	return &Blockchain{
-		GoldenBlocks: []Block{genesisGolden},
-		SilverBlocks: []Block{genesisSilver},
-		UTXOSet:      NewUTXOSet(),
-		Difficulty:   1, // Set to 1 for easier mining
+	bc := &Blockchain{
+		GoldenBlocks: make([]Block, 0),
+		SilverBlocks: make([]Block, 0),
+		PendingTxs:   make([]Transaction, 0),
+		UTXOSet:      make(map[string]UTXO),
+		Difficulty:   1,
+		MiningConfig: NewMiningConfig(),
+		MiningPool:   NewMiningPool("main", "pool.byc"),
 	}
+	return bc
 }
 
 // createGenesisBlock creates the first block in a chain
@@ -360,7 +358,7 @@ func (bc *Blockchain) AddTransaction(tx *Transaction) error {
 	}
 
 	// Add transaction to the pending transactions
-	bc.pendingTransactions = append(bc.pendingTransactions, tx)
+	bc.PendingTxs = append(bc.PendingTxs, *tx)
 
 	// Update UTXO set
 	if err := bc.UTXOSet.Update(tx); err != nil {

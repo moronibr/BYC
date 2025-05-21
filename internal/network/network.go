@@ -17,6 +17,7 @@ import (
 
 	"github.com/byc/internal/blockchain"
 	"github.com/byc/internal/logger"
+	"github.com/moroni/BYC/internal/network/common"
 	"go.uber.org/zap"
 )
 
@@ -73,14 +74,15 @@ type NetworkMessage struct {
 // NetworkManager handles network operations
 type NetworkManager struct {
 	mu             sync.RWMutex
-	peers          map[string]*Peer
-	bootstrapPeers []*Peer
+	peers          map[string]*common.Peer
+	bootstrapPeers []*common.Peer
 	connections    map[string]net.Conn
-	messageChan    chan *NetworkMessage
+	messageChan    chan *common.NetworkMessage
 	stopChan       chan struct{}
-	config         *NetworkConfig
+	config         *common.NetworkConfig
 	ctx            context.Context
 	cancel         context.CancelFunc
+	server         net.Listener
 }
 
 // NetworkConfig represents network configuration
@@ -661,13 +663,13 @@ func (n *Node) handlePeer(peer *Peer) {
 }
 
 // NewNetworkManager creates a new network manager
-func NewNetworkManager(config *NetworkConfig) *NetworkManager {
+func NewNetworkManager(config *common.NetworkConfig) *NetworkManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &NetworkManager{
-		peers:          make(map[string]*Peer),
-		bootstrapPeers: make([]*Peer, 0),
+		peers:          make(map[string]*common.Peer),
+		bootstrapPeers: make([]*common.Peer, 0),
 		connections:    make(map[string]net.Conn),
-		messageChan:    make(chan *NetworkMessage, 100),
+		messageChan:    make(chan *common.NetworkMessage, 100),
 		stopChan:       make(chan struct{}),
 		config:         config,
 		ctx:            ctx,
@@ -718,7 +720,7 @@ func (nm *NetworkManager) Stop() {
 }
 
 // AddPeer adds a new peer
-func (nm *NetworkManager) AddPeer(peer *Peer) error {
+func (nm *NetworkManager) AddPeer(peer *common.Peer) error {
 	nm.mu.Lock()
 	defer nm.mu.Unlock()
 
@@ -744,11 +746,11 @@ func (nm *NetworkManager) RemovePeer(peerID string) {
 }
 
 // GetPeers returns all known peers
-func (nm *NetworkManager) GetPeers() []*Peer {
+func (nm *NetworkManager) GetPeers() []*common.Peer {
 	nm.mu.RLock()
 	defer nm.mu.RUnlock()
 
-	peers := make([]*Peer, 0, len(nm.peers))
+	peers := make([]*common.Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
@@ -756,7 +758,7 @@ func (nm *NetworkManager) GetPeers() []*Peer {
 }
 
 // SendMessage sends a message to a peer
-func (nm *NetworkManager) SendMessage(msg *NetworkMessage) error {
+func (nm *NetworkManager) SendMessage(msg *common.NetworkMessage) error {
 	nm.mu.RLock()
 	conn, exists := nm.connections[msg.To]
 	nm.mu.RUnlock()
@@ -779,10 +781,8 @@ func (nm *NetworkManager) SendMessage(msg *NetworkMessage) error {
 
 func (nm *NetworkManager) connectBootstrapPeers() error {
 	for _, addr := range nm.config.BootstrapPeers {
-		peer := &Peer{
-			Address:     addr,
-			IsBootstrap: true,
-		}
+		peer := common.NewPeer(addr, addr, 0)
+		peer.IsBootstrap = true
 		if err := nm.connectToPeer(peer); err != nil {
 			return fmt.Errorf("failed to connect to bootstrap peer %s: %v", addr, err)
 		}
@@ -791,7 +791,7 @@ func (nm *NetworkManager) connectBootstrapPeers() error {
 	return nil
 }
 
-func (nm *NetworkManager) connectToPeer(peer *Peer) error {
+func (nm *NetworkManager) connectToPeer(peer *common.Peer) error {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", peer.Address, peer.Port), nm.config.DialTimeout)
 	if err != nil {
 		return err
@@ -820,17 +820,18 @@ func (nm *NetworkManager) startPeerDiscovery() {
 
 func (nm *NetworkManager) discoverPeers() {
 	nm.mu.RLock()
-	peers := make([]*Peer, 0, len(nm.peers))
+	peers := make([]*common.Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
 	nm.mu.RUnlock()
 
 	for _, peer := range peers {
-		msg := &NetworkMessage{
-			Type:      "get_peers",
-			From:      "self",
+		msg := &common.NetworkMessage{
+			Type:      common.MessageTypePeerDiscovery,
+			From:      nm.config.NodeID,
 			To:        peer.ID,
+			Payload:   []byte("discovery"),
 			Timestamp: time.Now(),
 		}
 		if err := nm.SendMessage(msg); err != nil {
@@ -855,7 +856,7 @@ func (nm *NetworkManager) startConnectionManager() {
 
 func (nm *NetworkManager) checkConnections() {
 	nm.mu.RLock()
-	peers := make([]*Peer, 0, len(nm.peers))
+	peers := make([]*common.Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
@@ -879,16 +880,22 @@ func (nm *NetworkManager) startMessageHandler() {
 	}
 }
 
-func (nm *NetworkManager) handleMessage(msg *NetworkMessage) {
+func (nm *NetworkManager) handleMessage(msg *common.NetworkMessage) error {
 	switch msg.Type {
-	case "get_peers":
-		nm.handleGetPeers(msg)
-	case "peer_list":
-		nm.handlePeerList(msg)
-	case "ping":
-		nm.handlePing(msg)
-	case "pong":
-		nm.handlePong(msg)
+	case common.MessageTypePeerDiscovery:
+		return nm.handlePeerDiscovery(msg)
+	case common.MessageTypePeerList:
+		return nm.handlePeerList(msg)
+	case common.MessageTypePing:
+		return nm.handlePing(msg)
+	case common.MessageTypePong:
+		return nm.handlePong(msg)
+	case common.MessageTypeBlock:
+		return nm.handleBlock(msg)
+	case common.MessageTypeTransaction:
+		return nm.handleTransaction(msg)
+	default:
+		return fmt.Errorf("unknown message type: %d", msg.Type)
 	}
 }
 
@@ -921,7 +928,7 @@ func (nm *NetworkManager) handleConnection(conn net.Conn) {
 			return
 		}
 
-		var msg NetworkMessage
+		var msg common.NetworkMessage
 		if err := json.Unmarshal(buffer[:n], &msg); err != nil {
 			continue
 		}
@@ -934,53 +941,42 @@ func (nm *NetworkManager) handleConnection(conn net.Conn) {
 	}
 }
 
-func (nm *NetworkManager) handleGetPeers(msg *NetworkMessage) {
-	peers := nm.GetPeers()
-	data, err := json.Marshal(peers)
-	if err != nil {
-		return
-	}
+func (nm *NetworkManager) handlePeerDiscovery(msg *common.NetworkMessage) error {
+	// TODO: Implement peer discovery
+	return nil
+}
 
-	response := &NetworkMessage{
-		Type:      "peer_list",
-		From:      "self",
+func (nm *NetworkManager) handlePeerList(msg *common.NetworkMessage) error {
+	// TODO: Implement peer list handling
+	return nil
+}
+
+func (nm *NetworkManager) handlePing(msg *common.NetworkMessage) error {
+	pong := &common.NetworkMessage{
+		Type:      common.MessageTypePong,
+		From:      nm.config.NodeID,
 		To:        msg.From,
-		Data:      data,
+		Payload:   []byte("pong"),
 		Timestamp: time.Now(),
 	}
-
-	nm.SendMessage(response)
+	return nm.SendMessage(pong)
 }
 
-func (nm *NetworkManager) handlePeerList(msg *NetworkMessage) {
-	var peers []*Peer
-	if err := json.Unmarshal(msg.Data, &peers); err != nil {
-		return
-	}
-
-	for _, peer := range peers {
-		if peer.ID != "self" {
-			nm.AddPeer(peer)
-		}
-	}
-}
-
-func (nm *NetworkManager) handlePing(msg *NetworkMessage) {
-	response := &NetworkMessage{
-		Type:      "pong",
-		From:      "self",
-		To:        msg.From,
-		Timestamp: time.Now(),
-	}
-
-	nm.SendMessage(response)
-}
-
-func (nm *NetworkManager) handlePong(msg *NetworkMessage) {
+func (nm *NetworkManager) handlePong(msg *common.NetworkMessage) error {
 	nm.mu.Lock()
-	if peer, exists := nm.peers[msg.From]; exists {
-		peer.LastSeen = time.Now()
-		peer.Latency = time.Since(msg.Timestamp).Milliseconds()
+	if peer, ok := nm.peers[msg.From]; ok {
+		peer.UpdateLastSeen()
 	}
 	nm.mu.Unlock()
+	return nil
+}
+
+func (nm *NetworkManager) handleBlock(msg *common.NetworkMessage) error {
+	// TODO: Implement block handling
+	return nil
+}
+
+func (nm *NetworkManager) handleTransaction(msg *common.NetworkMessage) error {
+	// TODO: Implement transaction handling
+	return nil
 }

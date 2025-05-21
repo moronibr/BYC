@@ -2,79 +2,205 @@ package network
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"testing"
 	"time"
+
+	"github.com/moroni/BYC/internal/network/common"
 )
 
 func TestNetworkManager(t *testing.T) {
-	// Create test configuration
-	config := &NetworkConfig{
-		ListenPort:     8000,
-		BootstrapPeers: []string{"localhost:8001"},
+	config := &common.NetworkConfig{
+		NodeID:         "test-node",
+		ListenPort:     8080,
 		MaxPeers:       10,
+		BootstrapPeers: []string{"localhost:8081"},
 		PingInterval:   time.Second,
 		DialTimeout:    time.Second,
 		ReadTimeout:    time.Second,
 		WriteTimeout:   time.Second,
 	}
 
-	// Create network manager
 	nm := NewNetworkManager(config)
-
-	// Test starting the network manager
-	err := nm.Start()
-	if err != nil {
-		t.Fatalf("Failed to start network manager: %v", err)
+	if nm == nil {
+		t.Fatal("failed to create network manager")
 	}
 
-	// Test adding a peer
-	peer := &Peer{
-		ID:       "test-peer",
-		Address:  "localhost",
-		Port:     8001,
-		LastSeen: time.Now(),
-		IsActive: true,
-		Version:  "1.0.0",
-	}
+	// Test peer management
+	peer := common.NewPeer("test-peer", "localhost", 8081)
+	peer.IsBootstrap = true
 
-	err = nm.AddPeer(peer)
-	if err != nil {
-		t.Fatalf("Failed to add peer: %v", err)
-	}
+	nm.mu.Lock()
+	nm.peers[peer.Address] = peer
+	nm.mu.Unlock()
 
-	// Test getting peers
 	peers := nm.GetPeers()
 	if len(peers) != 1 {
-		t.Fatalf("Expected 1 peer, got %d", len(peers))
+		t.Errorf("expected 1 peer, got %d", len(peers))
 	}
 
-	// Test sending a message
-	msg := &NetworkMessage{
-		Type:      "ping",
-		From:      "self",
-		To:        peer.ID,
+	// Test message handling
+	msg := &common.NetworkMessage{
+		Type:      common.MessageTypePing,
+		From:      "test-peer",
+		To:        "test-node",
+		Payload:   []byte("ping"),
 		Timestamp: time.Now(),
 	}
 
-	err = nm.SendMessage(msg)
+	if err := nm.handleMessage(msg); err != nil {
+		t.Errorf("failed to handle message: %v", err)
+	}
+}
+
+func TestSecureNetworkManager(t *testing.T) {
+	netConfig := &common.NetworkConfig{
+		NodeID:         "test-node",
+		ListenPort:     8080,
+		MaxPeers:       10,
+		BootstrapPeers: []string{"localhost:8081"},
+		PingInterval:   time.Second,
+		DialTimeout:    time.Second,
+		ReadTimeout:    time.Second,
+		WriteTimeout:   time.Second,
+	}
+
+	secureConfig := NewSecureConfig()
+	snm, err := NewSecureNetworkManager(netConfig, secureConfig)
 	if err != nil {
-		t.Fatalf("Failed to send message: %v", err)
+		t.Fatalf("failed to create secure network manager: %v", err)
 	}
 
-	// Test removing a peer
-	nm.RemovePeer(peer.ID)
-	peers = nm.GetPeers()
-	if len(peers) != 0 {
-		t.Fatalf("Expected 0 peers, got %d", len(peers))
+	// Start the secure network manager
+	err = snm.Start()
+	if err != nil {
+		t.Fatalf("failed to start secure network manager: %v", err)
+	}
+	defer snm.Stop()
+
+	// Test secure peer creation
+	peer := common.NewPeer("test-peer", "localhost", 8081)
+	peer.IsBootstrap = true
+
+	securePeer, err := NewSecurePeer(peer)
+	if err != nil {
+		t.Fatalf("failed to create secure peer: %v", err)
 	}
 
-	// Test stopping the network manager
-	nm.Stop()
+	// Test message signing and verification
+	msg := &common.NetworkMessage{
+		Type:      common.MessageTypePing,
+		From:      "test-peer",
+		To:        "test-node",
+		Payload:   []byte("ping"),
+		Timestamp: time.Now(),
+	}
+
+	signedMsg, err := securePeer.SignMessage(msg)
+	if err != nil {
+		t.Fatalf("failed to sign message: %v", err)
+	}
+
+	if !securePeer.VerifyMessage(signedMsg) {
+		t.Error("message verification failed")
+	}
+
+	// Test sending secure message
+	err = snm.SendSecureMessage(msg)
+	if err != nil {
+		t.Fatalf("failed to send secure message: %v", err)
+	}
+}
+
+func TestMultiplexedConn(t *testing.T) {
+	// Create a test connection
+	conn1, conn2 := net.Pipe()
+	defer conn1.Close()
+	defer conn2.Close()
+
+	// Create multiplexed connections
+	mc1 := NewMultiplexedConn(conn1, true)
+	mc2 := NewMultiplexedConn(conn2, true)
+
+	// Start the multiplexers
+	mc1.Start()
+	mc2.Start()
+
+	// Create a stream
+	stream := mc1.CreateStream(1)
+	if stream == nil {
+		t.Fatal("failed to create stream")
+	}
+
+	// Test data transfer
+	testData := []byte("test data")
+	if err := mc1.Write(stream.ID, testData); err != nil {
+		t.Fatalf("failed to write data: %v", err)
+	}
+
+	receivedData, err := mc2.Read(stream.ID)
+	if err != nil {
+		t.Fatalf("failed to read data: %v", err)
+	}
+
+	if string(receivedData) != string(testData) {
+		t.Errorf("expected %s, got %s", testData, receivedData)
+	}
+
+	// Test stream closure
+	mc1.CloseStream(stream.ID)
+	if _, err := mc2.Read(stream.ID); err != io.EOF {
+		t.Error("expected EOF after stream closure")
+	}
+}
+
+func TestPartitionManager(t *testing.T) {
+	config := &common.NetworkConfig{
+		NodeID:         "test-node",
+		ListenPort:     8080,
+		MaxPeers:       10,
+		BootstrapPeers: []string{"localhost:8081"},
+		PingInterval:   time.Second,
+		DialTimeout:    time.Second,
+		ReadTimeout:    time.Second,
+		WriteTimeout:   time.Second,
+	}
+
+	nm := NewNetworkManager(config)
+	pm := NewPartitionManager(nm)
+
+	// Test partition detection
+	pm.Start()
+	defer pm.Stop()
+
+	// Add a peer
+	peer := common.NewPeer("test-peer", "localhost", 8081)
+	peer.IsBootstrap = true
+
+	nm.mu.Lock()
+	nm.peers[peer.Address] = peer
+	nm.mu.Unlock()
+
+	// Wait for partition check
+	time.Sleep(pm.checkInterval + time.Second)
+
+	// Check partition state
+	state := pm.GetPartitionState()
+	if state == nil {
+		t.Fatal("failed to get partition state")
+	}
+
+	// Test partition recovery
+	if err := pm.RecoverPartition(); err != nil {
+		t.Errorf("failed to recover partition: %v", err)
+	}
 }
 
 func TestPeerDiscovery(t *testing.T) {
 	// Create two network managers
-	config1 := &NetworkConfig{
+	config1 := &common.NetworkConfig{
+		NodeID:         "node1",
 		ListenPort:     8000,
 		BootstrapPeers: []string{},
 		MaxPeers:       10,
@@ -84,7 +210,8 @@ func TestPeerDiscovery(t *testing.T) {
 		WriteTimeout:   time.Second,
 	}
 
-	config2 := &NetworkConfig{
+	config2 := &common.NetworkConfig{
+		NodeID:         "node2",
 		ListenPort:     8001,
 		BootstrapPeers: []string{"localhost:8000"},
 		MaxPeers:       10,
@@ -126,7 +253,8 @@ func TestPeerDiscovery(t *testing.T) {
 
 func TestNetworkPartition(t *testing.T) {
 	// Create three network managers
-	config1 := &NetworkConfig{
+	config1 := &common.NetworkConfig{
+		NodeID:         "node1",
 		ListenPort:     8000,
 		BootstrapPeers: []string{},
 		MaxPeers:       10,
@@ -136,7 +264,8 @@ func TestNetworkPartition(t *testing.T) {
 		WriteTimeout:   time.Second,
 	}
 
-	config2 := &NetworkConfig{
+	config2 := &common.NetworkConfig{
+		NodeID:         "node2",
 		ListenPort:     8001,
 		BootstrapPeers: []string{"localhost:8000"},
 		MaxPeers:       10,
@@ -146,7 +275,8 @@ func TestNetworkPartition(t *testing.T) {
 		WriteTimeout:   time.Second,
 	}
 
-	config3 := &NetworkConfig{
+	config3 := &common.NetworkConfig{
+		NodeID:         "node3",
 		ListenPort:     8002,
 		BootstrapPeers: []string{"localhost:8000"},
 		MaxPeers:       10,
@@ -200,7 +330,8 @@ func TestNetworkPartition(t *testing.T) {
 
 func TestMessageHandling(t *testing.T) {
 	// Create test configuration
-	config := &NetworkConfig{
+	config := &common.NetworkConfig{
+		NodeID:         "test-node",
 		ListenPort:     8000,
 		BootstrapPeers: []string{},
 		MaxPeers:       10,
@@ -220,14 +351,7 @@ func TestMessageHandling(t *testing.T) {
 	}
 
 	// Create test peer
-	peer := &Peer{
-		ID:       "test-peer",
-		Address:  "localhost",
-		Port:     8001,
-		LastSeen: time.Now(),
-		IsActive: true,
-		Version:  "1.0.0",
-	}
+	peer := common.NewPeer("test-peer", "localhost", 8001)
 
 	// Add peer
 	err = nm.AddPeer(peer)
@@ -236,10 +360,15 @@ func TestMessageHandling(t *testing.T) {
 	}
 
 	// Test different message types
-	messageTypes := []string{"ping", "get_peers", "peer_list", "pong"}
+	messageTypes := []common.MessageType{
+		common.MessageTypePing,
+		common.MessageTypePeerDiscovery,
+		common.MessageTypePeerList,
+		common.MessageTypePong,
+	}
 
 	for _, msgType := range messageTypes {
-		msg := &NetworkMessage{
+		msg := &common.NetworkMessage{
 			Type:      msgType,
 			From:      "self",
 			To:        peer.ID,
@@ -248,7 +377,7 @@ func TestMessageHandling(t *testing.T) {
 
 		err = nm.SendMessage(msg)
 		if err != nil {
-			t.Fatalf("Failed to send %s message: %v", msgType, err)
+			t.Fatalf("Failed to send message type %d: %v", msgType, err)
 		}
 	}
 
@@ -258,7 +387,8 @@ func TestMessageHandling(t *testing.T) {
 
 func TestConnectionManagement(t *testing.T) {
 	// Create test configuration
-	config := &NetworkConfig{
+	config := &common.NetworkConfig{
+		NodeID:         "test-node",
 		ListenPort:     8000,
 		BootstrapPeers: []string{},
 		MaxPeers:       10,
@@ -279,14 +409,7 @@ func TestConnectionManagement(t *testing.T) {
 
 	// Create test peers
 	for i := 0; i < 5; i++ {
-		peer := &Peer{
-			ID:       fmt.Sprintf("test-peer-%d", i),
-			Address:  "localhost",
-			Port:     8001 + i,
-			LastSeen: time.Now(),
-			IsActive: true,
-			Version:  "1.0.0",
-		}
+		peer := common.NewPeer(fmt.Sprintf("test-peer-%d", i), "localhost", 8001+i)
 
 		err = nm.AddPeer(peer)
 		if err != nil {

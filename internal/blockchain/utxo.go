@@ -1,25 +1,24 @@
 package blockchain
 
 import (
-	"encoding/hex"
 	"fmt"
-	"strconv"
 	"sync"
 )
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxID          []byte
-	OutputIndex   int
-	Amount        float64
-	Address       string
-	PublicKeyHash []byte
-	CoinType      CoinType
+	TxID      string
+	Index     int
+	Amount    float64
+	Address   string
+	CoinType  CoinType
+	Spent     bool
+	Timestamp int64
 }
 
 // UTXOSet manages the set of unspent transaction outputs
 type UTXOSet struct {
-	utxos map[string]UTXO // key: txID:outputIndex
+	utxos map[string]UTXO
 	mu    sync.RWMutex
 }
 
@@ -30,29 +29,93 @@ func NewUTXOSet() *UTXOSet {
 	}
 }
 
-// Add adds a UTXO to the set
-func (u *UTXOSet) Add(utxo UTXO) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	key := hex.EncodeToString(utxo.TxID) + ":" + strconv.Itoa(utxo.OutputIndex)
-	u.utxos[key] = utxo
+// Add adds a new UTXO to the set
+func (us *UTXOSet) Add(utxo UTXO) {
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	us.utxos[utxo.TxID] = utxo
 }
 
 // Remove removes a UTXO from the set
-func (u *UTXOSet) Remove(txID string, outputIndex int) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	key := txID + ":" + strconv.Itoa(outputIndex)
-	delete(u.utxos, key)
+func (us *UTXOSet) Remove(txID string) {
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	delete(us.utxos, txID)
 }
 
-// Get returns a UTXO by its transaction ID and output index
-func (u *UTXOSet) Get(txID string, outputIndex int) (UTXO, bool) {
-	u.mu.RLock()
-	defer u.mu.RUnlock()
-	key := txID + ":" + strconv.Itoa(outputIndex)
-	utxo, exists := u.utxos[key]
+// Get retrieves a UTXO from the set
+func (us *UTXOSet) Get(txID string) (UTXO, bool) {
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+	utxo, exists := us.utxos[txID]
 	return utxo, exists
+}
+
+// HasUTXO checks if a UTXO exists in the set
+func (us *UTXOSet) HasUTXO(txID string) bool {
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+	_, exists := us.utxos[txID]
+	return exists
+}
+
+// Update updates a UTXO in the set
+func (us *UTXOSet) Update(utxo UTXO) {
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	us.utxos[utxo.TxID] = utxo
+}
+
+// GetBalance returns the balance for an address
+func (us *UTXOSet) GetBalance(address string, coinType CoinType) float64 {
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+
+	var balance float64
+	for _, utxo := range us.utxos {
+		if utxo.Address == address && utxo.CoinType == coinType && !utxo.Spent {
+			balance += utxo.Amount
+		}
+	}
+	return balance
+}
+
+// GetUTXOsForAddress returns all UTXOs for an address
+func (us *UTXOSet) GetUTXOsForAddress(address string, coinType CoinType) []UTXO {
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+
+	var utxos []UTXO
+	for _, utxo := range us.utxos {
+		if utxo.Address == address && utxo.CoinType == coinType && !utxo.Spent {
+			utxos = append(utxos, utxo)
+		}
+	}
+	return utxos
+}
+
+// MarkSpent marks a UTXO as spent
+func (us *UTXOSet) MarkSpent(txID string) {
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	if utxo, exists := us.utxos[txID]; exists {
+		utxo.Spent = true
+		us.utxos[txID] = utxo
+	}
+}
+
+// GetTotalSupply returns the total supply of a coin type
+func (us *UTXOSet) GetTotalSupply(coinType CoinType) float64 {
+	us.mu.RLock()
+	defer us.mu.RUnlock()
+
+	var supply float64
+	for _, utxo := range us.utxos {
+		if utxo.CoinType == coinType && !utxo.Spent {
+			supply += utxo.Amount
+		}
+	}
+	return supply
 }
 
 // GetAll returns all UTXOs

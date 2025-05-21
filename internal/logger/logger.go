@@ -1,153 +1,47 @@
 package logger
 
 import (
-	"os"
-	"path/filepath"
-	"sync"
-
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var (
-	globalLogger *zap.Logger
-	once         sync.Once
-)
+var log *zap.Logger
 
-// Config represents the logging configuration
-type Config struct {
-	Level      string
-	File       string
-	MaxSize    int
-	MaxBackups int
-	MaxAge     int
-}
-
-// InitLogger initializes the global logger
-func InitLogger(config Config) error {
+// Init initializes the logger
+func Init() error {
 	var err error
-	once.Do(func() {
-		// Create log directory if it doesn't exist
-		if err = os.MkdirAll(filepath.Dir(config.File), 0755); err != nil {
-			return
-		}
-
-		// Configure log rotation
-		writer := &lumberjack.Logger{
-			Filename:   config.File,
-			MaxSize:    config.MaxSize,
-			MaxBackups: config.MaxBackups,
-			MaxAge:     config.MaxAge,
-		}
-
-		// Create encoder config
-		encoderConfig := zapcore.EncoderConfig{
-			TimeKey:        "time",
-			LevelKey:       "level",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.SecondsDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		}
-
-		// Create core
-		core := zapcore.NewCore(
-			zapcore.NewJSONEncoder(encoderConfig),
-			zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), zapcore.AddSync(writer)),
-			getLogLevel(config.Level),
-		)
-
-		// Create logger
-		globalLogger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-	})
-
-	return err
-}
-
-// getLogLevel converts string level to zapcore.Level
-func getLogLevel(level string) zapcore.Level {
-	switch level {
-	case "debug":
-		return zapcore.DebugLevel
-	case "info":
-		return zapcore.InfoLevel
-	case "warn":
-		return zapcore.WarnLevel
-	case "error":
-		return zapcore.ErrorLevel
-	default:
-		return zapcore.InfoLevel
-	}
-}
-
-// Debug logs a debug message
-func Debug(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Debug(msg, fields...)
-	}
-}
-
-// Info logs an info message
-func Info(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Info(msg, fields...)
-	}
-}
-
-// Warn logs a warning message
-func Warn(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Warn(msg, fields...)
-	}
-}
-
-// Error logs an error message
-func Error(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Error(msg, fields...)
-	}
-}
-
-// Fatal logs a fatal message and exits
-func Fatal(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Fatal(msg, fields...)
-	}
-}
-
-// With creates a child logger with the given fields
-func With(fields ...zap.Field) *zap.Logger {
-	if globalLogger != nil {
-		return globalLogger.With(fields...)
-	}
-	return zap.NewNop()
-}
-
-// Sync flushes any buffered log entries
-func Sync() error {
-	if globalLogger != nil {
-		return globalLogger.Sync()
+	log, err = zap.NewProduction()
+	if err != nil {
+		return err
 	}
 	return nil
 }
 
-// NewLogger creates a new logger with the specified name
-func NewLogger(name string) *zap.Logger {
-	config := zap.NewProductionConfig()
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+// Info logs an info message
+func Info(msg string, fields ...zap.Field) {
+	log.Info(msg, fields...)
+}
 
-	logger, err := config.Build()
-	if err != nil {
-		// If we can't create a logger, return a no-op logger
-		return zap.NewNop()
-	}
+// Error logs an error message
+func Error(msg string, fields ...zap.Field) {
+	log.Error(msg, fields...)
+}
 
-	return logger.Named(name)
+// Debug logs a debug message
+func Debug(msg string, fields ...zap.Field) {
+	log.Debug(msg, fields...)
+}
+
+// Warn logs a warning message
+func Warn(msg string, fields ...zap.Field) {
+	log.Warn(msg, fields...)
+}
+
+// Fatal logs a fatal message and exits
+func Fatal(msg string, fields ...zap.Field) {
+	log.Fatal(msg, fields...)
+}
+
+// Sync flushes any buffered log entries
+func Sync() error {
+	return log.Sync()
 }
