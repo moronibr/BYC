@@ -8,7 +8,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/monitoring"
+	"github.com/moroni/BYC/internal/network"
 )
 
 type SystemMetrics struct {
@@ -26,8 +28,16 @@ func handleDashboard(cmd *flag.FlagSet) {
 	// Create a channel to handle graceful shutdown
 	done := make(chan bool)
 
-	// Create monitoring instance
-	monitor := monitoring.NewMonitor(nil, nil, "")
+	// Initialize blockchain and node
+	bc := blockchain.NewBlockchain()
+	node, err := network.NewNode(&network.Config{})
+	if err != nil {
+		fmt.Printf("Error initializing node: %v\n", err)
+		return
+	}
+
+	// Create monitoring instance with initialized components
+	monitor := monitoring.NewMonitor(bc, node, "")
 
 	// Start the dashboard in a goroutine
 	go func() {
@@ -80,19 +90,23 @@ func showDashboard(monitor *monitoring.Monitor) {
 
 	fmt.Printf("Peers: %d\n", network["peers"])
 	fmt.Printf("Last Sync: %s\n", network["last_sync_time"])
-	fmt.Printf("Block Height: %d\n", int(blockchain["golden_blocks"].(float64))+int(blockchain["silver_blocks"].(float64)))
+
+	// Handle block counts with proper type assertions
+	goldenBlocks := int(blockchain["golden_blocks"].(int))
+	silverBlocks := int(blockchain["silver_blocks"].(int))
+	fmt.Printf("Block Height: %d\n", goldenBlocks+silverBlocks)
 
 	fmt.Println("\nBlockchain Status:")
 	fmt.Println("-----------------")
-	fmt.Printf("Golden Blocks: %d\n", int(blockchain["golden_blocks"].(float64)))
-	fmt.Printf("Silver Blocks: %d\n", int(blockchain["silver_blocks"].(float64)))
+	fmt.Printf("Golden Blocks: %d\n", goldenBlocks)
+	fmt.Printf("Silver Blocks: %d\n", silverBlocks)
 	fmt.Printf("Sync Status: %v\n", blockchain["is_synced"])
 
 	fmt.Println("\nSystem Health:")
 	fmt.Println("-------------")
-	fmt.Printf("Memory Usage: %.1f MB\n", float64(system["memory_usage_bytes"].(float64))/1024/1024)
+	fmt.Printf("Memory Usage: %.1f MB\n", float64(system["memory_usage_bytes"].(int64))/1024/1024)
 	fmt.Printf("CPU Usage: %.1f%%\n", system["cpu_usage_percent"].(float64))
-	fmt.Printf("Disk Usage: %.1f GB\n", float64(system["disk_usage_bytes"].(float64))/1024/1024/1024)
+	fmt.Printf("Disk Usage: %.1f GB\n", float64(system["disk_usage_bytes"].(int64))/1024/1024/1024)
 }
 
 func getSystemMetrics() SystemMetrics {
