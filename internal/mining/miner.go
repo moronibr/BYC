@@ -187,7 +187,7 @@ func (m *Miner) mine(ctx context.Context) {
 			timeSinceLastBlock := time.Since(lastBlockTime)
 
 			// Only attempt to mine if enough time has passed (target 10 minutes per block)
-			if timeSinceLastBlock < 600*time.Second {
+			if timeSinceLastBlock < 600*time.Second { // 600 seconds = 10 minutes
 				time.Sleep(100 * time.Millisecond) // Small delay to prevent CPU overload
 				continue
 			}

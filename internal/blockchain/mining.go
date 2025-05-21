@@ -45,7 +45,7 @@ type Miner struct {
 // NewMiningConfig creates a new mining configuration
 func NewMiningConfig() *MiningConfig {
 	return &MiningConfig{
-		TargetBlockTime:  2 * time.Minute,
+		TargetBlockTime:  10 * time.Minute,
 		DifficultyWindow: 2016, // Similar to Bitcoin
 		MaxDifficulty:    32,
 		MinDifficulty:    1,
