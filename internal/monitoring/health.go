@@ -123,3 +123,33 @@ func (h *HealthCheck) UpdateLastSync() {
 	h.lastSync = time.Now()
 	logger.Info("Blockchain sync completed", zap.Time("timestamp", h.lastSync))
 }
+
+// GetStatus returns the current health status
+func (h *HealthCheck) GetStatus() map[string]interface{} {
+	status := h.checkHealth()
+
+	// Convert HealthStatus to map
+	result := map[string]interface{}{
+		"status":    status.Status,
+		"timestamp": status.Timestamp,
+		"details": map[string]interface{}{
+			"blockchain": map[string]interface{}{
+				"golden_blocks": status.Details.Blockchain.GoldenBlocks,
+				"silver_blocks": status.Details.Blockchain.SilverBlocks,
+				"is_synced":     status.Details.Blockchain.IsSynced,
+			},
+			"network": map[string]interface{}{
+				"peers":          status.Details.Network.Peers,
+				"is_connected":   status.Details.Network.IsConnected,
+				"last_sync_time": status.Details.Network.LastSyncTime,
+			},
+			"system": map[string]interface{}{
+				"memory_usage_bytes": status.Details.System.MemoryUsage,
+				"cpu_usage_percent":  status.Details.System.CPUUsage,
+				"disk_usage_bytes":   status.Details.System.DiskUsage,
+			},
+		},
+	}
+
+	return result
+}

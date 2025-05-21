@@ -60,13 +60,60 @@ func handleNetwork(cmd *flag.FlagSet) {
 }
 
 func showNetworkStatus() {
-	// TODO: Implement actual network status check
+	// Get network stats
+	stats := getNetworkStats()
+	peers := getActivePeers()
+
 	fmt.Println("Network Status:")
 	fmt.Println("---------------")
-	fmt.Println("Total Nodes: 100")
-	fmt.Println("Active Nodes: 50")
-	fmt.Println("Average Block Time: 10s")
-	fmt.Println("Network Hash Rate: 1000 H/s")
+	fmt.Printf("Total Nodes: %d\n", stats.TotalNodes)
+	fmt.Printf("Active Nodes: %d\n", stats.ActiveNodes)
+	fmt.Printf("Average Block Time: %.1fs\n", stats.AvgBlockTime)
+	fmt.Printf("Network Hash Rate: %d H/s\n", stats.HashRate)
+
+	fmt.Println("\nActive Peers:")
+	fmt.Println("-------------")
+	if len(peers) == 0 {
+		fmt.Println("No active peers")
+	} else {
+		for _, peer := range peers {
+			fmt.Printf("Address: %s\n", peer.Address)
+			fmt.Printf("  Version: %s\n", peer.Version)
+			fmt.Printf("  Latency: %dms\n", peer.Latency)
+			fmt.Printf("  Last Seen: %s\n", peer.LastSeen.Format("15:04:05"))
+			fmt.Println()
+		}
+	}
+}
+
+func getNetworkStats() NetworkStats {
+	// TODO: Implement actual network stats collection
+	// This is a placeholder that returns dummy data
+	return NetworkStats{
+		TotalNodes:   100,
+		ActiveNodes:  50,
+		AvgBlockTime: 10.0,
+		HashRate:     1000,
+	}
+}
+
+func getActivePeers() []Peer {
+	// TODO: Implement actual peer list collection
+	// This is a placeholder that returns dummy data
+	return []Peer{
+		{
+			Address:  "192.168.1.1:3000",
+			Version:  "1.0.0",
+			Latency:  50,
+			LastSeen: time.Now(),
+		},
+		{
+			Address:  "192.168.1.2:3000",
+			Version:  "1.0.0",
+			Latency:  75,
+			LastSeen: time.Now().Add(-time.Minute),
+		},
+	}
 }
 
 func monitorNetwork(interval int) {

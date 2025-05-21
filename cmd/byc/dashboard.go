@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/moroni/BYC/internal/monitoring"
 )
 
 type SystemMetrics struct {
@@ -24,6 +26,9 @@ func handleDashboard(cmd *flag.FlagSet) {
 	// Create a channel to handle graceful shutdown
 	done := make(chan bool)
 
+	// Create monitoring instance
+	monitor := monitoring.NewMonitor(nil, nil, "")
+
 	// Start the dashboard in a goroutine
 	go func() {
 		for {
@@ -31,7 +36,7 @@ func handleDashboard(cmd *flag.FlagSet) {
 			case <-done:
 				return
 			default:
-				showDashboard()
+				showDashboard(monitor)
 				time.Sleep(5 * time.Second)
 				fmt.Println("\n---")
 			}
@@ -51,14 +56,52 @@ func handleDashboard(cmd *flag.FlagSet) {
 	time.Sleep(1 * time.Second) // Give user time to read the message
 }
 
-func showDashboard() {
-	// TODO: Implement actual dashboard metrics
+func showDashboard(monitor *monitoring.Monitor) {
+	// Get system metrics
+	metrics := getSystemMetrics()
+	health := monitor.GetHealth()
+
 	fmt.Println("System Metrics:")
 	fmt.Println("---------------")
-	fmt.Println("CPU Usage: 45%")
-	fmt.Println("Memory Usage: 2.3GB")
-	fmt.Println("Network Traffic: 1.2MB/s")
-	fmt.Println("Active Connections: 15")
-	fmt.Println("Block Height: 1234")
-	fmt.Println("Last Block Time: 2 minutes ago")
+	fmt.Printf("CPU Usage: %.1f%%\n", metrics.CPU)
+	fmt.Printf("Memory Usage: %.1f%%\n", metrics.Memory)
+	fmt.Printf("Network Traffic: %.1f MB/s\n", metrics.Network)
+	fmt.Printf("Last Update: %s\n", metrics.Time.Format("15:04:05"))
+
+	fmt.Println("\nNetwork Status:")
+	fmt.Println("---------------")
+
+	fmt.Printf("Status: %s\n", health["status"])
+
+	details := health["details"].(map[string]interface{})
+	network := details["network"].(map[string]interface{})
+	blockchain := details["blockchain"].(map[string]interface{})
+	system := details["system"].(map[string]interface{})
+
+	fmt.Printf("Peers: %d\n", network["peers"])
+	fmt.Printf("Last Sync: %s\n", network["last_sync_time"])
+	fmt.Printf("Block Height: %d\n", int(blockchain["golden_blocks"].(float64))+int(blockchain["silver_blocks"].(float64)))
+
+	fmt.Println("\nBlockchain Status:")
+	fmt.Println("-----------------")
+	fmt.Printf("Golden Blocks: %d\n", int(blockchain["golden_blocks"].(float64)))
+	fmt.Printf("Silver Blocks: %d\n", int(blockchain["silver_blocks"].(float64)))
+	fmt.Printf("Sync Status: %v\n", blockchain["is_synced"])
+
+	fmt.Println("\nSystem Health:")
+	fmt.Println("-------------")
+	fmt.Printf("Memory Usage: %.1f MB\n", float64(system["memory_usage_bytes"].(float64))/1024/1024)
+	fmt.Printf("CPU Usage: %.1f%%\n", system["cpu_usage_percent"].(float64))
+	fmt.Printf("Disk Usage: %.1f GB\n", float64(system["disk_usage_bytes"].(float64))/1024/1024/1024)
+}
+
+func getSystemMetrics() SystemMetrics {
+	// TODO: Implement actual system metrics collection
+	// This is a placeholder that returns dummy data
+	return SystemMetrics{
+		CPU:     45.0,
+		Memory:  2.3,
+		Network: 1.2,
+		Time:    time.Now(),
+	}
 }

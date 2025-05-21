@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -77,4 +78,30 @@ func (m *Monitor) RecordLatency(duration time.Duration) {
 // RecordMessage records a network message
 func (m *Monitor) RecordMessage() {
 	// You may want to add a custom metric for messages if needed
+}
+
+// GetHealth returns the current health status
+func (m *Monitor) GetHealth() map[string]interface{} {
+	// Get health check status
+	health := m.healthCheck.GetStatus()
+
+	// Add monitoring status
+	health["monitoring"] = map[string]interface{}{
+		"uptime":     time.Since(m.metrics.startTime).String(),
+		"errors":     m.metrics.errorCount,
+		"peer_count": m.metrics.peerCount,
+	}
+
+	// Add resource usage
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	health["resources"] = map[string]interface{}{
+		"memory_alloc": mem.Alloc,
+		"memory_total": mem.TotalAlloc,
+		"goroutines":   runtime.NumGoroutine(),
+		"cpu_count":    runtime.NumCPU(),
+		"last_update":  m.metrics.resourceStats.LastUpdate,
+	}
+
+	return health
 }

@@ -297,6 +297,16 @@ func (m *Metrics) RecordMiningStats(stats *MiningStats) {
 	m.miningStats = stats
 }
 
+// RecordNetworkError records a network error
+func (m *Metrics) RecordNetworkError() {
+	m.errorCount.Inc()
+}
+
+// RecordNetworkLatency records network message latency
+func (m *Metrics) RecordNetworkLatency(duration time.Duration) {
+	m.networkLatency.Observe(duration.Seconds())
+}
+
 // ServeHTTP implements the http.Handler interface for Prometheus metrics
 func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Collect all metrics

@@ -25,6 +25,7 @@ const (
 	MessageTypeGetAddr   MessageType = "GET_ADDR"
 	MessageTypeVerAck    MessageType = "VERACK"
 	MessageTypeVersion   MessageType = "VERSION"
+	MessageTypeGetHeight MessageType = "GET_HEIGHT"
 )
 
 // Message represents a network message
@@ -64,6 +65,7 @@ type Peer struct {
 	Connection net.Conn
 	Node       *Node
 	handlers   map[MessageType]MessageHandler
+	Height     int64
 }
 
 // NetworkManager manages the P2P network

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/logger"
+	"go.uber.org/zap"
 )
 
 // DiscoveryConfig holds configuration for peer discovery
@@ -47,16 +49,28 @@ type PeerInfo struct {
 	IsTLS        bool
 }
 
+// BootstrapNode represents a known bootstrap node
+type BootstrapNode struct {
+	Address   string
+	LastSeen  time.Time
+	IsActive  bool
+	Version   string
+	BlockType string
+}
+
 // DiscoveryManager manages peer discovery and network security
 type DiscoveryManager struct {
-	config       *DiscoveryConfig
-	blockchain   *blockchain.Blockchain
-	peers        map[string]*PeerInfo
-	connections  map[string]net.Conn
-	rateLimiters map[string]*RateLimiter
-	mu           sync.RWMutex
-	ctx          context.Context
-	cancel       context.CancelFunc
+	config         *DiscoveryConfig
+	blockchain     *blockchain.Blockchain
+	peers          map[string]*PeerInfo
+	connections    map[string]net.Conn
+	rateLimiters   map[string]*RateLimiter
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	bootstrapNodes map[string]*BootstrapNode
+	knownPeers     map[string]*Peer
+	node           *Node
 }
 
 // NewDiscoveryConfig creates a new discovery configuration
@@ -78,32 +92,30 @@ func NewDiscoveryConfig() *DiscoveryConfig {
 }
 
 // NewDiscoveryManager creates a new discovery manager
-func NewDiscoveryManager(config *DiscoveryConfig, bc *blockchain.Blockchain) *DiscoveryManager {
+func NewDiscoveryManager(node *Node, config *DiscoveryConfig) *DiscoveryManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &DiscoveryManager{
-		config:       config,
-		blockchain:   bc,
-		peers:        make(map[string]*PeerInfo),
-		connections:  make(map[string]net.Conn),
-		rateLimiters: make(map[string]*RateLimiter),
-		ctx:          ctx,
-		cancel:       cancel,
+		config:         config,
+		blockchain:     nil,
+		peers:          make(map[string]*PeerInfo),
+		connections:    make(map[string]net.Conn),
+		rateLimiters:   make(map[string]*RateLimiter),
+		mu:             sync.RWMutex{},
+		ctx:            ctx,
+		cancel:         cancel,
+		bootstrapNodes: make(map[string]*BootstrapNode),
+		knownPeers:     make(map[string]*Peer),
+		node:           node,
 	}
 }
 
 // Start starts the discovery manager
 func (dm *DiscoveryManager) Start() error {
-	// Connect to bootstrap nodes
-	for _, addr := range dm.config.BootstrapNodes {
-		if err := dm.connectToPeer(addr, true); err != nil {
-			fmt.Printf("Failed to connect to bootstrap node %s: %v\n", addr, err)
-		}
-	}
+	// Load bootstrap nodes from config
+	dm.loadBootstrapNodes()
 
-	// Start peer discovery
-	go dm.discoverPeers()
-	go dm.monitorPeers()
-	go dm.handleConnections()
+	// Start periodic discovery
+	go dm.startPeriodicDiscovery()
 
 	return nil
 }
@@ -122,6 +134,178 @@ func (dm *DiscoveryManager) Stop() {
 	// Clear peers and connections
 	dm.peers = make(map[string]*PeerInfo)
 	dm.connections = make(map[string]net.Conn)
+}
+
+// loadBootstrapNodes loads bootstrap nodes from configuration
+func (dm *DiscoveryManager) loadBootstrapNodes() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	// Add default bootstrap nodes
+	defaultNodes := []string{
+		"bootstrap1.byc.network:3000",
+		"bootstrap2.byc.network:3000",
+		"bootstrap3.byc.network:3000",
+	}
+
+	for _, addr := range defaultNodes {
+		dm.bootstrapNodes[addr] = &BootstrapNode{
+			Address:   addr,
+			LastSeen:  time.Now(),
+			IsActive:  true,
+			Version:   "1.0.0",
+			BlockType: "golden", // Default block type
+		}
+	}
+
+	// Add custom bootstrap nodes from config
+	for _, addr := range dm.config.BootstrapNodes {
+		dm.bootstrapNodes[addr] = &BootstrapNode{
+			Address:   addr,
+			LastSeen:  time.Now(),
+			IsActive:  true,
+			Version:   "1.0.0",
+			BlockType: "golden", // Default block type
+		}
+	}
+}
+
+// startPeriodicDiscovery starts periodic peer discovery
+func (dm *DiscoveryManager) startPeriodicDiscovery() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		dm.discoverPeers()
+		dm.cleanupInactivePeers()
+	}
+}
+
+// discoverPeers attempts to discover new peers
+func (dm *DiscoveryManager) discoverPeers() {
+	dm.mu.RLock()
+	bootstrapNodes := make([]*BootstrapNode, 0, len(dm.bootstrapNodes))
+	for _, node := range dm.bootstrapNodes {
+		bootstrapNodes = append(bootstrapNodes, node)
+	}
+	dm.mu.RUnlock()
+
+	// Try to connect to bootstrap nodes
+	for _, node := range bootstrapNodes {
+		if !node.IsActive {
+			continue
+		}
+
+		// Send getaddr message to bootstrap node
+		if err := dm.node.sendMessage(&Peer{Address: node.Address}, MessageTypeGetAddr, nil); err != nil {
+			logger.Error("Failed to send getaddr to bootstrap node",
+				zap.String("address", node.Address),
+				zap.Error(err))
+			continue
+		}
+
+		// Update last seen time
+		dm.mu.Lock()
+		node.LastSeen = time.Now()
+		dm.mu.Unlock()
+	}
+
+	// Get random peers to request addresses from
+	peers := dm.GetRandomPeers(10)
+	for _, peer := range peers {
+		if err := dm.node.sendMessage(peer, MessageTypeGetAddr, nil); err != nil {
+			logger.Error("Failed to send getaddr to peer",
+				zap.String("address", peer.Address),
+				zap.Error(err))
+			continue
+		}
+	}
+}
+
+// cleanupInactivePeers removes inactive peers
+func (dm *DiscoveryManager) cleanupInactivePeers() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	now := time.Now()
+	for addr, peer := range dm.knownPeers {
+		if now.Sub(peer.LastSeen) > 30*time.Minute {
+			delete(dm.knownPeers, addr)
+		}
+	}
+}
+
+// AddPeer adds a new peer to the known peers list
+func (dm *DiscoveryManager) AddPeer(peer *Peer) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	dm.knownPeers[peer.Address] = peer
+}
+
+// GetRandomPeers returns a random selection of peers
+func (dm *DiscoveryManager) GetRandomPeers(count int) []*Peer {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	peers := make([]*Peer, 0, len(dm.knownPeers))
+	for _, peer := range dm.knownPeers {
+		peers = append(peers, peer)
+	}
+
+	// Shuffle peers
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(peers), func(i, j int) {
+		peers[i], peers[j] = peers[j], peers[i]
+	})
+
+	// Return requested number of peers
+	if count > len(peers) {
+		count = len(peers)
+	}
+	return peers[:count]
+}
+
+// HandleAddr handles incoming addr messages
+func (dm *DiscoveryManager) HandleAddr(addrs []string) {
+	for _, addr := range addrs {
+		// Validate address
+		if _, err := net.ResolveTCPAddr("tcp", addr); err != nil {
+			continue
+		}
+
+		// Add to known peers
+		dm.AddPeer(&Peer{
+			Address:  addr,
+			LastSeen: time.Now(),
+		})
+
+		// Try to connect to new peer
+		go dm.node.connectToPeer(addr)
+	}
+}
+
+// GetBootstrapNodes returns the list of bootstrap nodes
+func (dm *DiscoveryManager) GetBootstrapNodes() []*BootstrapNode {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	nodes := make([]*BootstrapNode, 0, len(dm.bootstrapNodes))
+	for _, node := range dm.bootstrapNodes {
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// UpdateBootstrapNode updates a bootstrap node's status
+func (dm *DiscoveryManager) UpdateBootstrapNode(addr string, isActive bool) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	if node, exists := dm.bootstrapNodes[addr]; exists {
+		node.IsActive = isActive
+		node.LastSeen = time.Now()
+	}
 }
 
 // connectToPeer connects to a peer
@@ -169,34 +353,6 @@ func (dm *DiscoveryManager) connectToPeer(addr string, isBootstrap bool) error {
 	dm.rateLimiters[addr] = NewRateLimiter(dm.config.MaxInboundRate, dm.config.MaxOutboundRate)
 
 	return nil
-}
-
-// discoverPeers discovers new peers
-func (dm *DiscoveryManager) discoverPeers() {
-	ticker := time.NewTicker(dm.config.PingInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-dm.ctx.Done():
-			return
-		case <-ticker.C:
-			dm.mu.RLock()
-			peerCount := len(dm.peers)
-			dm.mu.RUnlock()
-
-			if peerCount < dm.config.MinPeers {
-				// Get random peers to ask for new peers
-				peers := dm.getRandomPeers(3)
-				for _, peer := range peers {
-					// Request peer list
-					if err := dm.requestPeerList(peer.Address); err != nil {
-						fmt.Printf("Failed to request peer list from %s: %v\n", peer.Address, err)
-					}
-				}
-			}
-		}
-	}
 }
 
 // monitorPeers monitors peer health
@@ -336,28 +492,6 @@ func (dm *DiscoveryManager) disconnectPeer(addr string) {
 	delete(dm.rateLimiters, addr)
 }
 
-// getRandomPeers returns a random selection of peers
-func (dm *DiscoveryManager) getRandomPeers(count int) []*PeerInfo {
-	dm.mu.RLock()
-	defer dm.mu.RUnlock()
-
-	peers := make([]*PeerInfo, 0, len(dm.peers))
-	for _, peer := range dm.peers {
-		peers = append(peers, peer)
-	}
-
-	// Shuffle peers
-	rand.Shuffle(len(peers), func(i, j int) {
-		peers[i], peers[j] = peers[j], peers[i]
-	})
-
-	// Return requested number of peers
-	if count > len(peers) {
-		count = len(peers)
-	}
-	return peers[:count]
-}
-
 // pingPeer pings a peer
 func (dm *DiscoveryManager) pingPeer(addr string) (time.Duration, error) {
 	start := time.Now()
@@ -491,7 +625,7 @@ func (dm *DiscoveryManager) handleMessage(addr string, msg []byte) error {
 		return nil
 	case "getpeers":
 		// Get random peers
-		peers := dm.getRandomPeers(10)
+		peers := dm.GetRandomPeers(10)
 		peerAddrs := make([]string, len(peers))
 		for i, peer := range peers {
 			peerAddrs[i] = peer.Address

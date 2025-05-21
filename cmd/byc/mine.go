@@ -86,16 +86,31 @@ func handleMining(cmd *flag.FlagSet) {
 
 	// Display mining status
 	go func() {
+		lastUpdate := time.Now()
+		lastShares := int64(0)
 		for {
 			select {
 			case <-done:
 				return
 			case status := <-statusChan:
-				fmt.Printf("\rHash Rate: %d H/s | Shares: %d | Blocks Found: %d | Difficulty: %d",
+				now := time.Now()
+				elapsed := now.Sub(lastUpdate).Seconds()
+				sharesPerSecond := float64(status.Shares-lastShares) / elapsed
+
+				// Clear previous line
+				fmt.Print("\033[2K\r")
+
+				// Display mining status with better formatting
+				fmt.Printf("Mining Status | Hash Rate: %d H/s | Shares: %d (%.1f/s) | Blocks: %d | Difficulty: %d",
 					status.HashRate,
 					status.Shares,
+					sharesPerSecond,
 					status.BlocksFound,
 					status.Difficulty)
+
+				// Update last values
+				lastUpdate = now
+				lastShares = status.Shares
 			}
 		}
 	}()
@@ -109,6 +124,17 @@ func handleMining(cmd *flag.FlagSet) {
 	done <- true
 	fmt.Println("\n\nStopping miner...")
 	miner.Stop()
-	fmt.Println("Returning to main menu...")
+
+	// Show final statistics
+	stats := miner.GetMiningStats()
+	fmt.Println("\nMining Statistics:")
+	fmt.Println("-----------------")
+	fmt.Printf("Total Blocks Found: %d\n", stats["blocks"])
+	fmt.Printf("Total Shares: %d\n", stats["shares"])
+	fmt.Printf("Final Hash Rate: %d H/s\n", stats["hash_rate"])
+	fmt.Printf("Mining Address: %s\n", stats["address"])
+	fmt.Printf("Total Rewards: %.2f %s\n", stats["rewards"], coinType)
+
+	fmt.Println("\nReturning to main menu...")
 	time.Sleep(1 * time.Second) // Give user time to read the message
 }
