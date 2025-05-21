@@ -621,3 +621,18 @@ func GetRemainingSupply(balances map[CoinType]float64) map[CoinType]float64 {
 		Joseph:   MaxJosephSupply - balances[Joseph],
 	}
 }
+
+const (
+	// MaxBlockSize is the maximum size of a block in bytes
+	MaxBlockSize = 1024 * 1024 // 1MB
+)
+
+// HasUTXO checks if a UTXO exists in the set
+func (utxoSet *UTXOSet) HasUTXO(txID string, outputIndex int) bool {
+	utxoSet.mu.RLock()
+	defer utxoSet.mu.RUnlock()
+
+	key := fmt.Sprintf("%s:%d", txID, outputIndex)
+	_, exists := utxoSet.utxos[key]
+	return exists
+}

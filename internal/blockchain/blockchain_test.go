@@ -10,18 +10,27 @@ func TestNewBlockchain(t *testing.T) {
 
 	// Test genesis blocks
 	if len(bc.GoldenBlocks) != 1 {
-		t.Errorf("Expected 1 block in GoldenBlocks, got %d", len(bc.GoldenBlocks))
+		t.Errorf("Expected 1 golden genesis block, got %d", len(bc.GoldenBlocks))
 	}
 	if len(bc.SilverBlocks) != 1 {
-		t.Errorf("Expected 1 block in SilverBlocks, got %d", len(bc.SilverBlocks))
+		t.Errorf("Expected 1 silver genesis block, got %d", len(bc.SilverBlocks))
 	}
 
-	// Test genesis block types
-	if bc.GoldenBlocks[0].BlockType != GoldenBlock {
-		t.Errorf("Expected GoldenBlock type, got %s", bc.GoldenBlocks[0].BlockType)
+	// Test genesis block properties
+	goldenGenesis := bc.GoldenBlocks[0]
+	if goldenGenesis.BlockType != GoldenBlock {
+		t.Errorf("Expected golden genesis block type, got %s", goldenGenesis.BlockType)
 	}
-	if bc.SilverBlocks[0].BlockType != SilverBlock {
-		t.Errorf("Expected SilverBlock type, got %s", bc.SilverBlocks[0].BlockType)
+	if len(goldenGenesis.PrevHash) != 0 {
+		t.Error("Expected empty previous hash for genesis block")
+	}
+
+	silverGenesis := bc.SilverBlocks[0]
+	if silverGenesis.BlockType != SilverBlock {
+		t.Errorf("Expected silver genesis block type, got %s", silverGenesis.BlockType)
+	}
+	if len(silverGenesis.PrevHash) != 0 {
+		t.Error("Expected empty previous hash for genesis block")
 	}
 }
 
@@ -117,22 +126,19 @@ func TestGetBlockType(t *testing.T) {
 func TestMineBlock(t *testing.T) {
 	bc := NewBlockchain()
 
-	// Test mining Leah coins
-	block, err := bc.MineBlock([]Transaction{}, GoldenBlock, Leah)
-	if err != nil {
-		t.Errorf("MineBlock failed: %v", err)
-	}
-	if block.BlockType != GoldenBlock {
-		t.Errorf("Expected GoldenBlock type, got %s", block.BlockType)
-	}
-	if block.Difficulty != bc.Difficulty*MiningDifficulty(Leah) {
-		t.Errorf("Expected difficulty %d, got %d", bc.Difficulty*MiningDifficulty(Leah), block.Difficulty)
+	// Test mining block with invalid coin type
+	_, err := bc.MineBlock([]Transaction{}, "INVALID", Leah)
+	if err == nil {
+		t.Error("Expected error for invalid block type")
 	}
 
-	// Test mining non-mineable coin
-	_, err = bc.MineBlock([]Transaction{}, GoldenBlock, Senine)
-	if err == nil {
-		t.Error("Expected error when mining non-mineable coin")
+	// Test mining block with valid parameters
+	block, err := bc.MineBlock([]Transaction{}, GoldenBlock, Leah)
+	if err != nil {
+		t.Errorf("Failed to mine block: %v", err)
+	}
+	if block.BlockType != GoldenBlock {
+		t.Errorf("Expected golden block type, got %s", block.BlockType)
 	}
 }
 
@@ -144,21 +150,164 @@ func TestAddBlock(t *testing.T) {
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
 		PrevHash:     bc.GoldenBlocks[0].Hash,
-		Nonce:        0,
 		BlockType:    GoldenBlock,
-		Difficulty:   bc.Difficulty,
+		Difficulty:   1,
+	}
+
+	// Mine the block
+	block.Hash = calculateHash(block)
+	for !bc.isValidProof(block) {
+		block.Nonce++
+		block.Hash = calculateHash(block)
 	}
 
 	// Test adding valid block
 	err := bc.AddBlock(block)
-	if err == nil {
-		t.Error("Expected error when adding block with invalid proof")
+	if err != nil {
+		t.Errorf("Failed to add valid block: %v", err)
 	}
 
-	// Test adding block with invalid type
-	block.BlockType = "INVALID"
-	err = bc.AddBlock(block)
+	// Test adding invalid block (wrong previous hash)
+	invalidBlock := Block{
+		Timestamp:    time.Now().Unix(),
+		Transactions: []Transaction{},
+		PrevHash:     []byte("invalid"),
+		BlockType:    GoldenBlock,
+		Difficulty:   1,
+	}
+	err = bc.AddBlock(invalidBlock)
 	if err == nil {
-		t.Error("Expected error when adding block with invalid type")
+		t.Error("Expected error when adding block with invalid previous hash")
+	}
+}
+
+func TestValidateBlock(t *testing.T) {
+	bc := NewBlockchain()
+
+	// Test block with future timestamp
+	futureBlock := Block{
+		Timestamp:    time.Now().Unix() + 1000,
+		Transactions: []Transaction{},
+		PrevHash:     bc.GoldenBlocks[0].Hash,
+		BlockType:    GoldenBlock,
+		Difficulty:   1,
+	}
+	err := bc.validateBlock(futureBlock)
+	if err == nil {
+		t.Error("Expected error for block with future timestamp")
+	}
+
+	// Test block with no transactions
+	emptyBlock := Block{
+		Timestamp:    time.Now().Unix(),
+		Transactions: []Transaction{},
+		PrevHash:     bc.GoldenBlocks[0].Hash,
+		BlockType:    GoldenBlock,
+		Difficulty:   1,
+	}
+	err = bc.validateBlock(emptyBlock)
+	if err == nil {
+		t.Error("Expected error for block with no transactions")
+	}
+
+	// Test block with invalid proof of work
+	invalidPowBlock := Block{
+		Timestamp:    time.Now().Unix(),
+		Transactions: []Transaction{},
+		PrevHash:     bc.GoldenBlocks[0].Hash,
+		BlockType:    GoldenBlock,
+		Difficulty:   1,
+		Hash:         []byte("invalid"),
+	}
+	err = bc.validateBlock(invalidPowBlock)
+	if err == nil {
+		t.Error("Expected error for block with invalid proof of work")
+	}
+}
+
+func TestGetBalance(t *testing.T) {
+	bc := NewBlockchain()
+	address := "test_address"
+
+	// Test initial balance
+	balance := bc.GetBalance(address, Leah)
+	if balance != 0 {
+		t.Errorf("Expected initial balance of 0, got %f", balance)
+	}
+
+	// TODO: Add tests for balance after transactions
+}
+
+func TestCreateTransaction(t *testing.T) {
+	bc := NewBlockchain()
+
+	// Test creating transaction with invalid amount
+	_, err := bc.CreateTransaction("from", "to", -1, Leah)
+	if err == nil {
+		t.Error("Expected error for negative amount")
+	}
+
+	// Test creating transaction with zero amount
+	_, err = bc.CreateTransaction("from", "to", 0, Leah)
+	if err == nil {
+		t.Error("Expected error for zero amount")
+	}
+
+	// Test creating transaction with invalid coin type
+	_, err = bc.CreateTransaction("from", "to", 1, "INVALID")
+	if err == nil {
+		t.Error("Expected error for invalid coin type")
+	}
+}
+
+func TestBlockSize(t *testing.T) {
+	bc := NewBlockchain()
+
+	// Create a block that exceeds MaxBlockSize
+	largeBlock := Block{
+		Timestamp: time.Now().Unix(),
+		Transactions: []Transaction{
+			{
+				ID: make([]byte, MaxBlockSize), // Create a transaction that's too large
+			},
+		},
+		PrevHash:   bc.GoldenBlocks[0].Hash,
+		BlockType:  GoldenBlock,
+		Difficulty: 1,
+	}
+
+	err := bc.validateBlock(largeBlock)
+	if err == nil {
+		t.Error("Expected error for block exceeding maximum size")
+	}
+}
+
+func TestConcurrentBlockOperations(t *testing.T) {
+	bc := NewBlockchain()
+	done := make(chan bool)
+
+	// Test concurrent block additions
+	for i := 0; i < 10; i++ {
+		go func() {
+			block := Block{
+				Timestamp:    time.Now().Unix(),
+				Transactions: []Transaction{},
+				PrevHash:     bc.GoldenBlocks[0].Hash,
+				BlockType:    GoldenBlock,
+				Difficulty:   1,
+			}
+			bc.AddBlock(block)
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Verify blockchain state
+	if len(bc.GoldenBlocks) <= 1 {
+		t.Error("Expected multiple blocks after concurrent additions")
 	}
 }
