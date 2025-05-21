@@ -3,14 +3,17 @@ package network
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/byc/internal/blockchain"
+	"github.com/moroni/BYC/internal/blockchain"
 )
 
 // DiscoveryConfig holds configuration for peer discovery
@@ -264,15 +267,16 @@ func (dm *DiscoveryManager) handleConnections() {
 	}
 }
 
-// handleConnection handles an incoming connection
+// handleConnection handles a new connection
 func (dm *DiscoveryManager) handleConnection(conn net.Conn) {
+	defer conn.Close()
+
 	addr := conn.RemoteAddr().String()
 
 	// Check connection limit
 	dm.mu.Lock()
 	if len(dm.connections) >= dm.config.MaxConnections {
 		dm.mu.Unlock()
-		conn.Close()
 		return
 	}
 
@@ -388,8 +392,25 @@ func (dm *DiscoveryManager) requestPeerList(addr string) error {
 
 // readMessage reads a message from a connection
 func (dm *DiscoveryManager) readMessage(conn net.Conn) ([]byte, error) {
-	// TODO: Implement message reading with compression and rate limiting
-	return nil, nil
+	// Read message length (4 bytes)
+	lenBuf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, lenBuf); err != nil {
+		return nil, fmt.Errorf("failed to read message length: %v", err)
+	}
+
+	// Parse message length
+	msgLen := binary.BigEndian.Uint32(lenBuf)
+	if msgLen > 1024*1024 { // 1MB max message size
+		return nil, fmt.Errorf("message too large: %d bytes", msgLen)
+	}
+
+	// Read message payload
+	msgBuf := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, msgBuf); err != nil {
+		return nil, fmt.Errorf("failed to read message payload: %v", err)
+	}
+
+	return msgBuf, nil
 }
 
 // sendMessage sends a message to a peer
@@ -408,14 +429,99 @@ func (dm *DiscoveryManager) sendMessage(addr string, msgType string, payload int
 		return errors.New("outbound rate limit exceeded")
 	}
 
-	// TODO: Implement message sending with compression
+	// Create message
+	msg := struct {
+		Type    string      `json:"type"`
+		Payload interface{} `json:"payload"`
+	}{
+		Type:    msgType,
+		Payload: payload,
+	}
+
+	// Marshal message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %v", err)
+	}
+
+	// Send message length
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(data)))
+	if _, err := conn.Write(lenBuf); err != nil {
+		return fmt.Errorf("failed to write message length: %v", err)
+	}
+
+	// Send message payload
+	if _, err := conn.Write(data); err != nil {
+		return fmt.Errorf("failed to write message payload: %v", err)
+	}
+
 	return nil
 }
 
 // handleMessage handles a message from a peer
 func (dm *DiscoveryManager) handleMessage(addr string, msg []byte) error {
-	// TODO: Implement message handling
-	return nil
+	// Unmarshal message
+	var data struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		return fmt.Errorf("failed to unmarshal message: %v", err)
+	}
+
+	// Update peer's last seen time
+	dm.mu.Lock()
+	if peer, exists := dm.peers[addr]; exists {
+		peer.LastSeen = time.Now()
+	}
+	dm.mu.Unlock()
+
+	// Handle message based on type
+	switch data.Type {
+	case "ping":
+		return dm.sendMessage(addr, "pong", nil)
+	case "pong":
+		// Update peer latency
+		dm.mu.Lock()
+		if peer, exists := dm.peers[addr]; exists {
+			peer.Latency = time.Since(peer.LastSeen)
+		}
+		dm.mu.Unlock()
+		return nil
+	case "getpeers":
+		// Get random peers
+		peers := dm.getRandomPeers(10)
+		peerAddrs := make([]string, len(peers))
+		for i, peer := range peers {
+			peerAddrs[i] = peer.Address
+		}
+		return dm.sendMessage(addr, "peers", peerAddrs)
+	case "peers":
+		// Parse peer list
+		var peerAddrs []string
+		if err := json.Unmarshal(data.Payload, &peerAddrs); err != nil {
+			return fmt.Errorf("failed to unmarshal peer list: %v", err)
+		}
+
+		// Connect to new peers
+		for _, peerAddr := range peerAddrs {
+			if peerAddr != addr && !dm.isPeerConnected(peerAddr) {
+				go dm.connectToPeer(peerAddr, false)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown message type: %s", data.Type)
+	}
+}
+
+// isPeerConnected checks if a peer is already connected
+func (dm *DiscoveryManager) isPeerConnected(addr string) bool {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	_, exists := dm.peers[addr]
+	return exists
 }
 
 // RateLimiter implements rate limiting

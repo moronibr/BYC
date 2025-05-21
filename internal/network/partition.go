@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/byc/internal/logger"
+	"github.com/moroni/BYC/internal/logger"
 	"go.uber.org/zap"
 )
 
@@ -88,61 +88,46 @@ func (pm *PartitionManager) checkPartition() error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	// Get current peer list
 	peers := pm.networkManager.GetPeers()
-	if len(peers) == 0 {
-		return nil
-	}
-
-	// Check connectivity to each peer
-	affectedPeers := make(map[string]bool)
 	for _, peer := range peers {
-		if !pm.checkPeerConnectivity(peer) {
-			affectedPeers[peer] = true
+		if err := pm.checkPeerConnectivity(peer.Address); err != nil {
+			pm.state.AffectedPeers[peer.Address] = true
+			if !pm.state.RecoveryMode {
+				pm.state.DetectedAt = time.Now()
+				pm.state.RecoveryMode = true
+			}
+		} else {
+			delete(pm.state.AffectedPeers, peer.Address)
 		}
-	}
-
-	// Update partition state
-	if len(affectedPeers) > 0 {
-		if pm.state.DetectedAt.IsZero() {
-			pm.state.DetectedAt = time.Now()
-			logger.Warn("network partition detected",
-				zap.Int("affected_peers", len(affectedPeers)))
-		}
-		pm.state.AffectedPeers = affectedPeers
-		pm.state.RecoveryMode = true
-	} else if pm.state.RecoveryMode {
-		// Partition resolved
-		pm.state.DetectedAt = time.Time{}
-		pm.state.AffectedPeers = make(map[string]bool)
-		pm.state.RecoveryMode = false
-		logger.Info("network partition resolved")
 	}
 
 	pm.state.LastCheck = time.Now()
 	return nil
 }
 
-// checkPeerConnectivity checks connectivity to a peer
-func (pm *PartitionManager) checkPeerConnectivity(peer string) bool {
-	// Try to ping the peer
-	if err := pm.networkManager.Ping(peer); err != nil {
-		return false
-	}
-
-	// Check if we can send a message
-	msg := &NetworkMessage{
-		Type:    MessageTypePing,
-		From:    pm.networkManager.config.NodeID,
-		To:      peer,
-		Payload: []byte("ping"),
-	}
+// checkPeerConnectivity checks if a peer is reachable
+func (pm *PartitionManager) checkPeerConnectivity(peerAddr string) error {
+	// Send ping message
+	msg := NewNetworkMessage(MessageTypePing, pm.networkManager.config.NodeID, peerAddr, []byte("ping"))
 
 	if err := pm.networkManager.SendMessage(msg); err != nil {
-		return false
+		return fmt.Errorf("failed to send ping to %s: %v", peerAddr, err)
 	}
 
-	return true
+	// Wait for pong response
+	timeout := time.After(pm.timeout)
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("ping timeout for %s", peerAddr)
+		default:
+			// Check if we received a pong
+			if pm.networkManager.HasReceivedPong(peerAddr) {
+				return nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 // RecoverPartition attempts to recover from a network partition
@@ -164,7 +149,7 @@ func (pm *PartitionManager) RecoverPartition() error {
 		}
 
 		// Verify connection
-		if pm.checkPeerConnectivity(peer) {
+		if err := pm.checkPeerConnectivity(peer); err == nil {
 			delete(pm.state.AffectedPeers, peer)
 			logger.Info("reconnected to peer",
 				zap.String("peer", peer))

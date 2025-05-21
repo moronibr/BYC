@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/byc/internal/storage"
+	"github.com/moroni/BYC/internal/storage"
 )
 
 // PruningConfig holds configuration for block pruning
@@ -118,7 +118,7 @@ func (pm *PruningManager) pruneBlockBatch(start, end int) error {
 		// Update UTXO set
 		for _, tx := range block.Transactions {
 			for _, input := range tx.Inputs {
-				delete(pm.blockchain.UTXOSet, fmt.Sprintf("%s:%d", string(input.TxID), input.OutputIndex))
+				pm.blockchain.UTXOSet.Remove(fmt.Sprintf("%s:%d", string(input.TxID), input.OutputIndex))
 			}
 		}
 	}
@@ -132,14 +132,11 @@ func (pm *PruningManager) OptimizeUTXOSet() error {
 	defer pm.mu.Unlock()
 
 	// Create new optimized UTXO set
-	optimized := make(map[string]UTXO)
+	optimized := NewUTXOSet()
 
 	// Process UTXOs in batches
 	batchSize := pm.config.BatchSize
-	utxos := make([]UTXO, 0, len(pm.blockchain.UTXOSet))
-	for _, utxo := range pm.blockchain.UTXOSet {
-		utxos = append(utxos, utxo)
-	}
+	utxos := pm.blockchain.UTXOSet.GetAll()
 
 	for i := 0; i < len(utxos); i += batchSize {
 		end := i + batchSize
@@ -158,7 +155,7 @@ func (pm *PruningManager) OptimizeUTXOSet() error {
 }
 
 // processUTXOBatch processes a batch of UTXOs
-func (pm *PruningManager) processUTXOBatch(utxos []UTXO, optimized map[string]UTXO) error {
+func (pm *PruningManager) processUTXOBatch(utxos []UTXO, optimized *UTXOSet) error {
 	for _, utxo := range utxos {
 		// Check if UTXO is spent
 		spent := false
@@ -198,10 +195,8 @@ func (pm *PruningManager) processUTXOBatch(utxos []UTXO, optimized map[string]UT
 			}
 		}
 
-		// Add unspent UTXO to optimized set
 		if !spent {
-			key := fmt.Sprintf("%s:%d", utxo.TxID, utxo.Index)
-			optimized[key] = utxo
+			optimized.Add(utxo)
 		}
 	}
 

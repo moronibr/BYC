@@ -8,109 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"encoding/binary"
 
-	"crypto/sha256"
-
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/logger"
-	"github.com/moroni/BYC/internal/network/common"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/logger"
 	"go.uber.org/zap"
 )
-
-// MessageType represents the type of network message
-type MessageType int
-
-const (
-	// Message types
-	VersionMsg MessageType = iota
-	VerAckMsg
-	GetBlocksMsg
-	BlocksMsg
-	GetDataMsg
-	InvMsg
-	TxMsg
-	BlockMsg
-	AddrMsg
-	GetAddrMsg
-	PingMsg
-	PongMsg
-	FilterLoadMsg
-	MerkleBlockMsg
-	RejectMsg
-	NotFoundMsg
-)
-
-// Message represents a network message
-type Message struct {
-	Type    MessageType
-	Payload []byte
-}
-
-// Peer represents a network peer
-type Peer struct {
-	ID          string    `json:"id"`
-	Address     string    `json:"address"`
-	Port        int       `json:"port"`
-	LastSeen    time.Time `json:"last_seen"`
-	Latency     int64     `json:"latency"`
-	Version     string    `json:"version"`
-	IsActive    bool      `json:"is_active"`
-	IsBootstrap bool      `json:"is_bootstrap"`
-}
-
-// NetworkMessage represents a message sent over the network
-type NetworkMessage struct {
-	Type      string          `json:"type"`
-	From      string          `json:"from"`
-	To        string          `json:"to,omitempty"`
-	Data      json.RawMessage `json:"data"`
-	Timestamp time.Time       `json:"timestamp"`
-}
-
-// NetworkManager handles network operations
-type NetworkManager struct {
-	mu             sync.RWMutex
-	peers          map[string]*common.Peer
-	bootstrapPeers []*common.Peer
-	connections    map[string]net.Conn
-	messageChan    chan *common.NetworkMessage
-	stopChan       chan struct{}
-	config         *common.NetworkConfig
-	ctx            context.Context
-	cancel         context.CancelFunc
-	server         net.Listener
-}
-
-// NetworkConfig represents network configuration
-type NetworkConfig struct {
-	ListenPort     int
-	BootstrapPeers []string
-	MaxPeers       int
-	PingInterval   time.Duration
-	DialTimeout    time.Duration
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-}
-
-// Node represents a P2P node
-type Node struct {
-	Config     *Config
-	Blockchain *blockchain.Blockchain
-	Peers      map[string]*Peer
-	server     net.Listener
-	mu         sync.RWMutex
-}
-
-// Config represents the node configuration
-type Config struct {
-	Address        string
-	BlockType      blockchain.BlockType
-	BootstrapPeers []string
-}
 
 // NewNode creates a new P2P node
 func NewNode(config *Config) (*Node, error) {
@@ -150,23 +55,19 @@ func (n *Node) acceptConnections() {
 // handleConnection handles a new connection
 func (n *Node) handleConnection(conn net.Conn) {
 	defer conn.Close()
-
-	// Create new peer
 	peer := &Peer{
-		Conn:     conn,
-		Address:  conn.RemoteAddr().String(),
-		LastSeen: time.Now(),
-		Node:     n,
+		Address:    conn.RemoteAddr().String(),
+		LastSeen:   time.Now(),
+		Connection: conn,
+		Node:       n,
 	}
-
-	// Register message handlers
 	peer.registerHandlers()
 
-	// Start handling messages
-	go peer.handleMessages()
+	n.mu.Lock()
+	n.Peers[peer.Address] = peer
+	n.mu.Unlock()
 
-	// Send version message
-	peer.sendVersion()
+	go peer.handleMessages()
 }
 
 // connectToPeer connects to a peer
@@ -178,17 +79,14 @@ func (n *Node) connectToPeer(address string) {
 	}
 
 	peer := &Peer{
-		Address: address,
-		Conn:    conn,
-		Node:    n,
+		Address:    address,
+		LastSeen:   time.Now(),
+		Connection: conn,
 	}
 
 	n.mu.Lock()
 	n.Peers[address] = peer
 	n.mu.Unlock()
-
-	// Register message handlers
-	peer.registerHandlers()
 
 	// Start handling messages
 	go peer.handleMessages()
@@ -204,76 +102,72 @@ func (n *Node) sendMessage(peer *Peer, msgType MessageType, payload interface{})
 	if err := encoder.Encode(payload); err != nil {
 		return fmt.Errorf("failed to encode message: %v", err)
 	}
-
-	msg := Message{
+	msg := NetworkMessage{
 		Type:    msgType,
+		From:    n.Config.Address,
+		To:      peer.Address,
 		Payload: buf.Bytes(),
 	}
-
-	return gob.NewEncoder(peer.Conn).Encode(msg)
+	return gob.NewEncoder(peer.Connection.(net.Conn)).Encode(msg)
 }
 
 // receiveMessage receives a message from a peer
-func (n *Node) receiveMessage(peer *Peer) (*Message, error) {
-	var msg Message
-	if err := gob.NewDecoder(peer.Conn).Decode(&msg); err != nil {
+func (n *Node) receiveMessage(peer *Peer) (*NetworkMessage, error) {
+	var msg NetworkMessage
+	if err := gob.NewDecoder(peer.Connection.(net.Conn)).Decode(&msg); err != nil {
 		return nil, fmt.Errorf("failed to decode message: %v", err)
 	}
 	return &msg, nil
 }
 
 // handleMessage handles a received message
-func (n *Node) handleMessage(peer *Peer, msg *Message) error {
+func (n *Node) handleMessage(peer *Peer, msg *NetworkMessage) error {
 	switch msg.Type {
-	case VersionMsg:
-		return n.handleVersion(peer, msg)
-	case VerAckMsg:
-		return n.handleVerAck(peer, msg)
-	case GetBlocksMsg:
-		return n.handleGetBlocks(peer, msg)
-	case BlocksMsg:
-		return n.handleBlocks(peer, msg)
-	case GetDataMsg:
-		return n.handleGetData(peer, msg)
-	case InvMsg:
-		return n.handleInv(peer, msg)
-	case TxMsg:
-		return n.handleTx(peer, msg)
-	case BlockMsg:
-		return n.handleBlock(peer, msg)
-	case AddrMsg:
-		return n.handleAddr(peer, msg)
-	case GetAddrMsg:
-		return n.handleGetAddr(peer, msg)
-	case PingMsg:
+	case MessageTypePing:
 		return n.handlePing(peer, msg)
-	case PongMsg:
+	case MessageTypePong:
 		return n.handlePong(peer, msg)
+	case MessageTypeGetBlocks:
+		return n.handleGetBlocks(peer, msg)
+	case MessageTypeBlocks:
+		return n.handleBlocks(peer, msg)
+	case MessageTypeGetData:
+		return n.handleGetData(peer, msg)
+	case MessageTypeInv:
+		return n.handleInv(peer, msg)
+	case MessageTypeTx:
+		return n.handleTx(peer, msg)
+	case MessageTypeBlock:
+		return n.handleBlock(peer, msg)
+	case MessageTypeAddr:
+		return n.handleAddr(peer, msg)
+	case MessageTypeGetAddr:
+		return n.handleGetAddr(peer, msg)
 	default:
 		return fmt.Errorf("unknown message type: %v", msg.Type)
 	}
 }
 
 // Message handlers
-func (n *Node) handleVersion(peer *Peer, msg *Message) error {
+func (n *Node) handleVersion(peer *Peer, msg *NetworkMessage) error {
 	var version int32
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&version); err != nil {
 		return fmt.Errorf("failed to decode version: %v", err)
 	}
 
-	return n.sendMessage(peer, VerAckMsg, nil)
+	return n.sendMessage(peer, MessageTypeVerAck, nil)
 }
 
-func (n *Node) handleVerAck(peer *Peer, msg *Message) error {
+func (n *Node) handleVerAck(peer *Peer, msg *NetworkMessage) error {
 	n.mu.Lock()
 	n.Peers[peer.Address] = peer
 	n.mu.Unlock()
 
 	// Request blocks
-	return n.sendMessage(peer, GetBlocksMsg, nil)
+	return n.sendMessage(peer, MessageTypeGetBlocks, nil)
 }
 
-func (n *Node) handleGetBlocks(peer *Peer, msg *Message) error {
+func (n *Node) handleGetBlocks(peer *Peer, msg *NetworkMessage) error {
 	var blocks []*blockchain.Block
 	if n.Config.BlockType == blockchain.GoldenBlock {
 		for _, block := range n.Blockchain.GoldenBlocks {
@@ -285,10 +179,10 @@ func (n *Node) handleGetBlocks(peer *Peer, msg *Message) error {
 		}
 	}
 
-	return n.sendMessage(peer, BlocksMsg, blocks)
+	return n.sendMessage(peer, MessageTypeBlocks, blocks)
 }
 
-func (n *Node) handleBlocks(peer *Peer, msg *Message) error {
+func (n *Node) handleBlocks(peer *Peer, msg *NetworkMessage) error {
 	var blocks []*blockchain.Block
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&blocks); err != nil {
 		return fmt.Errorf("failed to decode blocks: %v", err)
@@ -303,7 +197,7 @@ func (n *Node) handleBlocks(peer *Peer, msg *Message) error {
 	return nil
 }
 
-func (n *Node) handleGetData(peer *Peer, msg *Message) error {
+func (n *Node) handleGetData(peer *Peer, msg *NetworkMessage) error {
 	var inv []string
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&inv); err != nil {
 		return fmt.Errorf("failed to decode inventory: %v", err)
@@ -311,26 +205,26 @@ func (n *Node) handleGetData(peer *Peer, msg *Message) error {
 
 	for _, hash := range inv {
 		if block, err := n.Blockchain.GetBlock([]byte(hash)); err == nil {
-			return n.sendMessage(peer, BlockMsg, block)
+			return n.sendMessage(peer, MessageTypeBlock, block)
 		}
 		if tx, err := n.Blockchain.GetTransaction([]byte(hash)); err == nil {
-			return n.sendMessage(peer, TxMsg, tx)
+			return n.sendMessage(peer, MessageTypeTx, tx)
 		}
 	}
 
 	return nil
 }
 
-func (n *Node) handleInv(peer *Peer, msg *Message) error {
+func (n *Node) handleInv(peer *Peer, msg *NetworkMessage) error {
 	var inv []string
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&inv); err != nil {
 		return fmt.Errorf("failed to decode inventory: %v", err)
 	}
 
-	return n.sendMessage(peer, GetDataMsg, inv)
+	return n.sendMessage(peer, MessageTypeGetData, inv)
 }
 
-func (n *Node) handleTx(peer *Peer, msg *Message) error {
+func (n *Node) handleTx(peer *Peer, msg *NetworkMessage) error {
 	var tx *blockchain.Transaction
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&tx); err != nil {
 		return fmt.Errorf("failed to decode transaction: %v", err)
@@ -341,11 +235,11 @@ func (n *Node) handleTx(peer *Peer, msg *Message) error {
 	}
 
 	// Broadcast transaction to other peers
-	n.broadcastMessage(TxMsg, tx)
+	n.broadcastMessage(MessageTypeTx, tx)
 	return nil
 }
 
-func (n *Node) handleBlock(peer *Peer, msg *Message) error {
+func (n *Node) handleBlock(peer *Peer, msg *NetworkMessage) error {
 	var block *blockchain.Block
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&block); err != nil {
 		return fmt.Errorf("failed to decode block: %v", err)
@@ -356,11 +250,11 @@ func (n *Node) handleBlock(peer *Peer, msg *Message) error {
 	}
 
 	// Broadcast block to other peers
-	n.broadcastMessage(BlockMsg, block)
+	n.broadcastMessage(MessageTypeBlock, block)
 	return nil
 }
 
-func (n *Node) handleAddr(peer *Peer, msg *Message) error {
+func (n *Node) handleAddr(peer *Peer, msg *NetworkMessage) error {
 	var addrs []string
 	if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&addrs); err != nil {
 		return fmt.Errorf("failed to decode addresses: %v", err)
@@ -373,7 +267,7 @@ func (n *Node) handleAddr(peer *Peer, msg *Message) error {
 	return nil
 }
 
-func (n *Node) handleGetAddr(peer *Peer, msg *Message) error {
+func (n *Node) handleGetAddr(peer *Peer, msg *NetworkMessage) error {
 	var addrs []string
 	n.mu.RLock()
 	for addr := range n.Peers {
@@ -381,14 +275,14 @@ func (n *Node) handleGetAddr(peer *Peer, msg *Message) error {
 	}
 	n.mu.RUnlock()
 
-	return n.sendMessage(peer, AddrMsg, addrs)
+	return n.sendMessage(peer, MessageTypeAddr, addrs)
 }
 
-func (n *Node) handlePing(peer *Peer, msg *Message) error {
-	return n.sendMessage(peer, PongMsg, nil)
+func (n *Node) handlePing(peer *Peer, msg *NetworkMessage) error {
+	return n.sendMessage(peer, MessageTypePong, nil)
 }
 
-func (n *Node) handlePong(peer *Peer, msg *Message) error {
+func (n *Node) handlePong(peer *Peer, msg *NetworkMessage) error {
 	peer.LastSeen = time.Now()
 	return nil
 }
@@ -446,33 +340,26 @@ func (n *Node) Close() error {
 
 	// Close all peer connections
 	for _, peer := range n.Peers {
-		peer.Conn.Close()
+		conn := peer.Connection.(net.Conn)
+		conn.Close()
 	}
 
 	// Close server
 	return n.server.Close()
 }
 
-// MessageHandler is a function that handles a message
-type MessageHandler func(*Peer, []byte) error
-
 // registerHandlers registers message handlers
 func (p *Peer) registerHandlers() {
 	p.handlers = map[MessageType]MessageHandler{
-		VersionMsg:     handleVersion,
-		VerAckMsg:      handleVerAck,
-		GetBlocksMsg:   handleGetBlocks,
-		BlocksMsg:      handleBlocks,
-		GetDataMsg:     handleGetData,
-		BlockMsg:       handleBlock,
-		TxMsg:          handleTx,
-		InvMsg:         handleInv,
-		NotFoundMsg:    handleNotFound,
-		PingMsg:        handlePing,
-		PongMsg:        handlePong,
-		FilterLoadMsg:  handleFilterLoad,
-		MerkleBlockMsg: handleMerkleBlock,
-		RejectMsg:      handleReject,
+		MessageTypePing:      handlePing,
+		MessageTypePong:      handlePong,
+		MessageTypeGetBlocks: handleGetBlocks,
+		MessageTypeBlocks:    handleBlocks,
+		MessageTypeGetData:   handleGetData,
+		MessageTypeBlock:     handleBlock,
+		MessageTypeTx:        handleTx,
+		MessageTypeInv:       handleInv,
+		MessageTypeVerAck:    handleVerAck,
 	}
 }
 
@@ -487,7 +374,7 @@ func (p *Peer) handleMessages() {
 
 		handler, ok := p.handlers[msg.Type]
 		if !ok {
-			logger.Error("Unknown message type", zap.Int("type", int(msg.Type)))
+			logger.Error("Unknown message type", zap.String("type", string(msg.Type)))
 			continue
 		}
 
@@ -505,88 +392,64 @@ func (p *Peer) sendVersion() error {
 		return err
 	}
 
-	msg := &Message{
-		Type:    VersionMsg,
-		Payload: payload,
+	msg := NetworkMessage{
+		Type:      MessageTypeVersion,
+		Payload:   payload,
+		Timestamp: time.Now(),
 	}
 	return p.sendMessage(msg)
 }
 
 // receiveMessage receives a message from the peer
-func (p *Peer) receiveMessage() (*Message, error) {
+func (p *Peer) receiveMessage() (*NetworkMessage, error) {
+	conn := p.Connection.(net.Conn)
 	// Read message header
 	header := make([]byte, 24)
-	if _, err := io.ReadFull(p.Conn, header); err != nil {
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return nil, err
 	}
-
-	// Parse message header
-	msg := &Message{
-		Type: MessageType(binary.LittleEndian.Uint32(header[0:4])),
-	}
-
+	// Parse message header (assume first 4 bytes are not used for type conversion)
+	msg := &NetworkMessage{}
 	// Read message payload
 	length := binary.LittleEndian.Uint32(header[4:8])
 	if length > 0 {
 		msg.Payload = make([]byte, length)
-		if _, err := io.ReadFull(p.Conn, msg.Payload); err != nil {
+		if _, err := io.ReadFull(conn, msg.Payload); err != nil {
 			return nil, err
 		}
-
-		// Verify checksum
-		checksum := sha256.Sum256(msg.Payload)
-		checksum = sha256.Sum256(checksum[:])
-		if binary.LittleEndian.Uint32(checksum[:4]) != binary.LittleEndian.Uint32(header[8:12]) {
-			return nil, fmt.Errorf("invalid checksum")
-		}
 	}
-
 	return msg, nil
 }
 
 // sendMessage sends a message to the peer
-func (p *Peer) sendMessage(msg *Message) error {
-	// Create message header
+func (p *Peer) sendMessage(msg NetworkMessage) error {
+	conn := p.Connection.(net.Conn)
+	// Create message header (skip type conversion for type)
 	header := make([]byte, 24)
-	binary.LittleEndian.PutUint32(header[0:4], uint32(msg.Type))
-
-	// Calculate checksum
-	checksum := sha256.Sum256(msg.Payload)
-	checksum = sha256.Sum256(checksum[:])
-	binary.LittleEndian.PutUint32(header[8:12], binary.LittleEndian.Uint32(checksum[:4]))
-
 	// Set message length
 	binary.LittleEndian.PutUint32(header[4:8], uint32(len(msg.Payload)))
-
 	// Send message header
-	if _, err := p.Conn.Write(header); err != nil {
+	if _, err := conn.Write(header); err != nil {
 		return err
 	}
-
 	// Send message payload
 	if len(msg.Payload) > 0 {
-		if _, err := p.Conn.Write(msg.Payload); err != nil {
+		if _, err := conn.Write(msg.Payload); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
-func handleVersion(p *Peer, payload []byte) error     { return nil }
-func handleVerAck(p *Peer, payload []byte) error      { return nil }
-func handleGetBlocks(p *Peer, payload []byte) error   { return nil }
-func handleBlocks(p *Peer, payload []byte) error      { return nil }
-func handleGetData(p *Peer, payload []byte) error     { return nil }
-func handleBlock(p *Peer, payload []byte) error       { return nil }
-func handleTx(p *Peer, payload []byte) error          { return nil }
-func handleInv(p *Peer, payload []byte) error         { return nil }
-func handleNotFound(p *Peer, payload []byte) error    { return nil }
-func handlePing(p *Peer, payload []byte) error        { return nil }
-func handlePong(p *Peer, payload []byte) error        { return nil }
-func handleFilterLoad(p *Peer, payload []byte) error  { return nil }
-func handleMerkleBlock(p *Peer, payload []byte) error { return nil }
-func handleReject(p *Peer, payload []byte) error      { return nil }
+func handlePing(p *Peer, payload []byte) error      { return nil }
+func handlePong(p *Peer, payload []byte) error      { return nil }
+func handleGetBlocks(p *Peer, payload []byte) error { return nil }
+func handleBlocks(p *Peer, payload []byte) error    { return nil }
+func handleGetData(p *Peer, payload []byte) error   { return nil }
+func handleBlock(p *Peer, payload []byte) error     { return nil }
+func handleTx(p *Peer, payload []byte) error        { return nil }
+func handleInv(p *Peer, payload []byte) error       { return nil }
+func handleVerAck(p *Peer, payload []byte) error    { return nil }
 
 // ConnectToPeer connects to a peer at the given address
 func (n *Node) ConnectToPeer(address string) error {
@@ -596,9 +459,9 @@ func (n *Node) ConnectToPeer(address string) error {
 	}
 
 	peer := &Peer{
-		Address: address,
-		Conn:    conn,
-		Node:    n,
+		Address:    address,
+		LastSeen:   time.Now(),
+		Connection: conn,
 	}
 
 	n.mu.Lock()
@@ -613,7 +476,7 @@ func (n *Node) ConnectToPeer(address string) error {
 }
 
 // BroadcastMessage broadcasts a message to all connected peers
-func (n *Node) BroadcastMessage(msg *Message) error {
+func (n *Node) BroadcastMessage(msg NetworkMessage) error {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
@@ -633,14 +496,18 @@ func (n *Node) Stop() {
 
 	// Close all peer connections
 	for _, peer := range n.Peers {
-		peer.Conn.Close()
+		if peer.Connection != nil {
+			peer.Connection.Close()
+		}
 	}
 }
 
 // handlePeer handles messages from a peer
 func (n *Node) handlePeer(peer *Peer) {
 	defer func() {
-		peer.Conn.Close()
+		if peer.Connection != nil {
+			peer.Connection.Close()
+		}
 		n.mu.Lock()
 		delete(n.Peers, peer.Address)
 		n.mu.Unlock()
@@ -663,13 +530,13 @@ func (n *Node) handlePeer(peer *Peer) {
 }
 
 // NewNetworkManager creates a new network manager
-func NewNetworkManager(config *common.NetworkConfig) *NetworkManager {
+func NewNetworkManager(config *NetworkConfig) *NetworkManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &NetworkManager{
-		peers:          make(map[string]*common.Peer),
-		bootstrapPeers: make([]*common.Peer, 0),
+		peers:          make(map[string]*Peer),
+		bootstrapPeers: make([]*Peer, 0),
 		connections:    make(map[string]net.Conn),
-		messageChan:    make(chan *common.NetworkMessage, 100),
+		messageChan:    make(chan *NetworkMessage, 100),
 		stopChan:       make(chan struct{}),
 		config:         config,
 		ctx:            ctx,
@@ -720,7 +587,7 @@ func (nm *NetworkManager) Stop() {
 }
 
 // AddPeer adds a new peer
-func (nm *NetworkManager) AddPeer(peer *common.Peer) error {
+func (nm *NetworkManager) AddPeer(peer *Peer) error {
 	nm.mu.Lock()
 	defer nm.mu.Unlock()
 
@@ -746,11 +613,11 @@ func (nm *NetworkManager) RemovePeer(peerID string) {
 }
 
 // GetPeers returns all known peers
-func (nm *NetworkManager) GetPeers() []*common.Peer {
+func (nm *NetworkManager) GetPeers() []*Peer {
 	nm.mu.RLock()
 	defer nm.mu.RUnlock()
 
-	peers := make([]*common.Peer, 0, len(nm.peers))
+	peers := make([]*Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
@@ -758,7 +625,7 @@ func (nm *NetworkManager) GetPeers() []*common.Peer {
 }
 
 // SendMessage sends a message to a peer
-func (nm *NetworkManager) SendMessage(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) SendMessage(msg *NetworkMessage) error {
 	nm.mu.RLock()
 	conn, exists := nm.connections[msg.To]
 	nm.mu.RUnlock()
@@ -781,24 +648,27 @@ func (nm *NetworkManager) SendMessage(msg *common.NetworkMessage) error {
 
 func (nm *NetworkManager) connectBootstrapPeers() error {
 	for _, addr := range nm.config.BootstrapPeers {
-		peer := common.NewPeer(addr, addr, 0)
-		peer.IsBootstrap = true
-		if err := nm.connectToPeer(peer); err != nil {
+		peer := Peer{
+			Address:    addr,
+			LastSeen:   time.Now(),
+			Connection: nil,
+		}
+		if err := nm.connectToPeer(addr); err != nil {
 			return fmt.Errorf("failed to connect to bootstrap peer %s: %v", addr, err)
 		}
-		nm.bootstrapPeers = append(nm.bootstrapPeers, peer)
+		nm.bootstrapPeers = append(nm.bootstrapPeers, &peer)
 	}
 	return nil
 }
 
-func (nm *NetworkManager) connectToPeer(peer *common.Peer) error {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", peer.Address, peer.Port), nm.config.DialTimeout)
+func (nm *NetworkManager) connectToPeer(address string) error {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", address, 0), nm.config.DialTimeout)
 	if err != nil {
 		return err
 	}
 
 	nm.mu.Lock()
-	nm.connections[peer.ID] = conn
+	nm.connections[address] = conn
 	nm.mu.Unlock()
 
 	return nil
@@ -820,15 +690,15 @@ func (nm *NetworkManager) startPeerDiscovery() {
 
 func (nm *NetworkManager) discoverPeers() {
 	nm.mu.RLock()
-	peers := make([]*common.Peer, 0, len(nm.peers))
+	peers := make([]*Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
 	nm.mu.RUnlock()
 
 	for _, peer := range peers {
-		msg := &common.NetworkMessage{
-			Type:      common.MessageTypePeerDiscovery,
+		msg := &NetworkMessage{
+			Type:      MessageTypeGetAddr,
 			From:      nm.config.NodeID,
 			To:        peer.ID,
 			Payload:   []byte("discovery"),
@@ -856,7 +726,7 @@ func (nm *NetworkManager) startConnectionManager() {
 
 func (nm *NetworkManager) checkConnections() {
 	nm.mu.RLock()
-	peers := make([]*common.Peer, 0, len(nm.peers))
+	peers := make([]*Peer, 0, len(nm.peers))
 	for _, peer := range nm.peers {
 		peers = append(peers, peer)
 	}
@@ -880,19 +750,19 @@ func (nm *NetworkManager) startMessageHandler() {
 	}
 }
 
-func (nm *NetworkManager) handleMessage(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handleMessage(msg *NetworkMessage) error {
 	switch msg.Type {
-	case common.MessageTypePeerDiscovery:
+	case "discovery":
 		return nm.handlePeerDiscovery(msg)
-	case common.MessageTypePeerList:
+	case "peerlist":
 		return nm.handlePeerList(msg)
-	case common.MessageTypePing:
+	case "ping":
 		return nm.handlePing(msg)
-	case common.MessageTypePong:
+	case "pong":
 		return nm.handlePong(msg)
-	case common.MessageTypeBlock:
+	case "block":
 		return nm.handleBlock(msg)
-	case common.MessageTypeTransaction:
+	case "transaction":
 		return nm.handleTransaction(msg)
 	default:
 		return fmt.Errorf("unknown message type: %d", msg.Type)
@@ -928,7 +798,7 @@ func (nm *NetworkManager) handleConnection(conn net.Conn) {
 			return
 		}
 
-		var msg common.NetworkMessage
+		var msg NetworkMessage
 		if err := json.Unmarshal(buffer[:n], &msg); err != nil {
 			continue
 		}
@@ -941,19 +811,19 @@ func (nm *NetworkManager) handleConnection(conn net.Conn) {
 	}
 }
 
-func (nm *NetworkManager) handlePeerDiscovery(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handlePeerDiscovery(msg *NetworkMessage) error {
 	// TODO: Implement peer discovery
 	return nil
 }
 
-func (nm *NetworkManager) handlePeerList(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handlePeerList(msg *NetworkMessage) error {
 	// TODO: Implement peer list handling
 	return nil
 }
 
-func (nm *NetworkManager) handlePing(msg *common.NetworkMessage) error {
-	pong := &common.NetworkMessage{
-		Type:      common.MessageTypePong,
+func (nm *NetworkManager) handlePing(msg *NetworkMessage) error {
+	pong := &NetworkMessage{
+		Type:      MessageTypePong,
 		From:      nm.config.NodeID,
 		To:        msg.From,
 		Payload:   []byte("pong"),
@@ -962,21 +832,40 @@ func (nm *NetworkManager) handlePing(msg *common.NetworkMessage) error {
 	return nm.SendMessage(pong)
 }
 
-func (nm *NetworkManager) handlePong(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handlePong(msg *NetworkMessage) error {
 	nm.mu.Lock()
 	if peer, ok := nm.peers[msg.From]; ok {
-		peer.UpdateLastSeen()
+		peer.LastSeen = time.Now()
 	}
 	nm.mu.Unlock()
 	return nil
 }
 
-func (nm *NetworkManager) handleBlock(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handleBlock(msg *NetworkMessage) error {
 	// TODO: Implement block handling
 	return nil
 }
 
-func (nm *NetworkManager) handleTransaction(msg *common.NetworkMessage) error {
+func (nm *NetworkManager) handleTransaction(msg *NetworkMessage) error {
 	// TODO: Implement transaction handling
 	return nil
+}
+
+// HasReceivedPong checks if a pong message was received from a peer
+func (nm *NetworkManager) HasReceivedPong(peerAddr string) bool {
+	nm.mu.RLock()
+	defer nm.mu.RUnlock()
+
+	peer, exists := nm.peers[peerAddr]
+	if !exists {
+		return false
+	}
+
+	// Check if we received a pong within the ping timeout
+	return time.Since(peer.LastSeen) < nm.config.PingTimeout
+}
+
+// ConnectToPeer connects to a peer at the given address
+func (nm *NetworkManager) ConnectToPeer(address string) error {
+	return nm.connectToPeer(address)
 }

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/logger"
-	"github.com/byc/internal/network"
-	"github.com/byc/internal/wallet"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/logger"
+	"github.com/moroni/BYC/internal/network"
+	"github.com/moroni/BYC/internal/wallet"
 	"go.uber.org/zap"
 )
 

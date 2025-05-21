@@ -1,193 +1,126 @@
 package network
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/moroni/BYC/internal/blockchain"
 )
 
 // MessageType represents the type of network message
-type MessageType uint8
+type MessageType string
 
 const (
-	MessageTypePing MessageType = iota
-	MessageTypePong
-	MessageTypeBlock
-	MessageTypeTransaction
-	MessageTypePeerDiscovery
-	MessageTypePeerList
+	MessageTypePing      MessageType = "PING"
+	MessageTypePong      MessageType = "PONG"
+	MessageTypeBlock     MessageType = "BLOCK"
+	MessageTypeTx        MessageType = "TX"
+	MessageTypeGetBlocks MessageType = "GET_BLOCKS"
+	MessageTypeBlocks    MessageType = "BLOCKS"
+	MessageTypeGetData   MessageType = "GET_DATA"
+	MessageTypeInv       MessageType = "INV"
+	MessageTypeAddr      MessageType = "ADDR"
+	MessageTypeGetAddr   MessageType = "GET_ADDR"
+	MessageTypeVerAck    MessageType = "VERACK"
+	MessageTypeVersion   MessageType = "VERSION"
 )
 
-// NetworkMessage represents a message sent over the network
-type NetworkMessage struct {
+// Message represents a network message
+type Message struct {
 	Type    MessageType
-	From    string
-	To      string
 	Payload []byte
 }
 
-// NetworkConfig represents network configuration
+// NetworkMessage represents a message sent over the network
+type NetworkMessage struct {
+	Type      MessageType
+	From      string
+	To        string
+	Payload   []byte
+	Timestamp time.Time
+}
+
+// NetworkConfig holds configuration for the network
 type NetworkConfig struct {
 	NodeID         string
+	ListenAddr     string
 	ListenPort     int
 	MaxPeers       int
+	PingTimeout    time.Duration
+	PingInterval   time.Duration
+	DialTimeout    time.Duration
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
 	BootstrapPeers []string
 }
 
 // Peer represents a network peer
 type Peer struct {
-	ID          string
-	Address     string
-	Port        int
-	LastSeen    int64
-	Latency     int64
-	Version     string
-	IsActive    bool
-	IsBootstrap bool
-	Conn        net.Conn
+	ID         string
+	Address    string
+	LastSeen   time.Time
+	Connection net.Conn
+	Node       *Node
+	handlers   map[MessageType]MessageHandler
 }
 
-// NetworkManager manages network operations
+// NetworkManager manages the P2P network
 type NetworkManager struct {
-	config *NetworkConfig
-	peers  map[string]*Peer
-	mu     sync.RWMutex
-	server net.Listener
+	config         *NetworkConfig
+	peers          map[string]*Peer
+	bootstrapPeers []*Peer
+	connections    map[string]net.Conn
+	messageChan    chan *NetworkMessage
+	stopChan       chan struct{}
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.RWMutex
 }
 
-// NewNetworkManager creates a new network manager
-func NewNetworkManager(config *NetworkConfig) *NetworkManager {
-	return &NetworkManager{
-		config: config,
-		peers:  make(map[string]*Peer),
+// Node represents a P2P node
+type Node struct {
+	Config     *Config
+	Blockchain *blockchain.Blockchain
+	Peers      map[string]*Peer
+	server     net.Listener
+	mu         sync.RWMutex
+}
+
+// Config represents the node configuration
+type Config struct {
+	Address        string
+	BlockType      blockchain.BlockType
+	BootstrapPeers []string
+}
+
+// MessageHandler is a function that handles a message
+type MessageHandler func(*Peer, []byte) error
+
+// NewNetworkMessage creates a new network message
+func NewNetworkMessage(msgType MessageType, from, to string, payload []byte) *NetworkMessage {
+	return &NetworkMessage{
+		Type:      msgType,
+		From:      from,
+		To:        to,
+		Payload:   payload,
+		Timestamp: time.Now(),
 	}
 }
 
-// GetPeers returns the list of peers
-func (nm *NetworkManager) GetPeers() []*Peer {
-	nm.mu.RLock()
-	defer nm.mu.RUnlock()
-
-	peers := make([]*Peer, 0, len(nm.peers))
-	for _, peer := range nm.peers {
-		peers = append(peers, peer)
+// NewNetworkConfig creates a new network configuration
+func NewNetworkConfig(nodeID, listenAddr string, listenPort, maxPeers int) *NetworkConfig {
+	return &NetworkConfig{
+		NodeID:         nodeID,
+		ListenAddr:     listenAddr,
+		ListenPort:     listenPort,
+		MaxPeers:       maxPeers,
+		PingTimeout:    30 * time.Second,
+		PingInterval:   60 * time.Second,
+		DialTimeout:    10 * time.Second,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		BootstrapPeers: make([]string, 0),
 	}
-	return peers
-}
-
-// Ping sends a ping message to a peer
-func (nm *NetworkManager) Ping(peerID string) error {
-	msg := &NetworkMessage{
-		Type:    MessageTypePing,
-		From:    nm.config.NodeID,
-		To:      peerID,
-		Payload: []byte("ping"),
-	}
-	return nm.SendMessage(msg)
-}
-
-// SendMessage sends a message to a peer
-func (nm *NetworkManager) SendMessage(msg *NetworkMessage) error {
-	nm.mu.RLock()
-	peer, ok := nm.peers[msg.To]
-	nm.mu.RUnlock()
-
-	if !ok {
-		return fmt.Errorf("peer %s not found", msg.To)
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %v", err)
-	}
-
-	_, err = peer.Conn.Write(data)
-	return err
-}
-
-// ConnectToPeer establishes a connection to a peer
-func (nm *NetworkManager) ConnectToPeer(address string) error {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return fmt.Errorf("failed to connect to peer: %v", err)
-	}
-
-	peer := &Peer{
-		Address: address,
-		Conn:    conn,
-	}
-
-	nm.mu.Lock()
-	nm.peers[address] = peer
-	nm.mu.Unlock()
-
-	return nil
-}
-
-// handleMessage handles a received message
-func (nm *NetworkManager) handleMessage(msg *NetworkMessage) error {
-	switch msg.Type {
-	case MessageTypePing:
-		return nm.handlePing(msg)
-	case MessageTypePong:
-		return nm.handlePong(msg)
-	case MessageTypeBlock:
-		return nm.handleBlock(msg)
-	case MessageTypeTransaction:
-		return nm.handleTransaction(msg)
-	case MessageTypePeerDiscovery:
-		return nm.handlePeerDiscovery(msg)
-	case MessageTypePeerList:
-		return nm.handlePeerList(msg)
-	default:
-		return fmt.Errorf("unknown message type: %d", msg.Type)
-	}
-}
-
-// handlePing handles a ping message
-func (nm *NetworkManager) handlePing(msg *NetworkMessage) error {
-	pong := &NetworkMessage{
-		Type:    MessageTypePong,
-		From:    nm.config.NodeID,
-		To:      msg.From,
-		Payload: []byte("pong"),
-	}
-	return nm.SendMessage(pong)
-}
-
-// handlePong handles a pong message
-func (nm *NetworkManager) handlePong(msg *NetworkMessage) error {
-	// Update peer latency
-	nm.mu.Lock()
-	if peer, ok := nm.peers[msg.From]; ok {
-		peer.LastSeen = time.Now().UnixNano()
-	}
-	nm.mu.Unlock()
-	return nil
-}
-
-// handleBlock handles a block message
-func (nm *NetworkManager) handleBlock(msg *NetworkMessage) error {
-	// TODO: Implement block handling
-	return nil
-}
-
-// handleTransaction handles a transaction message
-func (nm *NetworkManager) handleTransaction(msg *NetworkMessage) error {
-	// TODO: Implement transaction handling
-	return nil
-}
-
-// handlePeerDiscovery handles a peer discovery message
-func (nm *NetworkManager) handlePeerDiscovery(msg *NetworkMessage) error {
-	// TODO: Implement peer discovery
-	return nil
-}
-
-// handlePeerList handles a peer list message
-func (nm *NetworkManager) handlePeerList(msg *NetworkMessage) error {
-	// TODO: Implement peer list handling
-	return nil
 }

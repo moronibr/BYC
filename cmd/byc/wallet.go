@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/wallet"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/wallet"
 )
 
 func handleWallet(cmd *flag.FlagSet) {

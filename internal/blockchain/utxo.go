@@ -3,17 +3,19 @@ package blockchain
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // UTXO represents an unspent transaction output
 type UTXO struct {
-	TxID      string
-	Index     int
-	Amount    float64
-	Address   string
-	CoinType  CoinType
-	Spent     bool
-	Timestamp int64
+	TxID          string
+	Index         int
+	Amount        float64
+	Address       string
+	CoinType      CoinType
+	Spent         bool
+	Timestamp     int64
+	PublicKeyHash []byte
 }
 
 // UTXOSet manages the set of unspent transaction outputs
@@ -49,14 +51,6 @@ func (us *UTXOSet) Get(txID string) (UTXO, bool) {
 	defer us.mu.RUnlock()
 	utxo, exists := us.utxos[txID]
 	return utxo, exists
-}
-
-// HasUTXO checks if a UTXO exists in the set
-func (us *UTXOSet) HasUTXO(txID string) bool {
-	us.mu.RLock()
-	defer us.mu.RUnlock()
-	_, exists := us.utxos[txID]
-	return exists
 }
 
 // Update updates a UTXO in the set
@@ -144,7 +138,7 @@ func (utxoSet *UTXOSet) GetUTXOs(address string) ([]UTXO, error) {
 }
 
 // Update updates the UTXO set with a new transaction
-func (utxoSet *UTXOSet) Update(tx *Transaction) error {
+func (utxoSet *UTXOSet) UpdateWithTransaction(tx *Transaction) error {
 	utxoSet.mu.Lock()
 	defer utxoSet.mu.Unlock()
 
@@ -157,12 +151,13 @@ func (utxoSet *UTXOSet) Update(tx *Transaction) error {
 	// Add new UTXOs
 	for i, output := range tx.Outputs {
 		utxo := UTXO{
-			TxID:          tx.ID,
-			OutputIndex:   i,
+			TxID:          string(tx.ID),
+			Index:         i,
 			Amount:        output.Value,
 			Address:       output.Address,
 			PublicKeyHash: output.PublicKeyHash,
 			CoinType:      output.CoinType,
+			Timestamp:     time.Now().Unix(),
 		}
 		key := fmt.Sprintf("%x:%d", tx.ID, i)
 		utxoSet.utxos[key] = utxo

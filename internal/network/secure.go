@@ -59,22 +59,22 @@ func NewSecureConfig() *SecureConfig {
 }
 
 // GenerateCertificate generates a self-signed certificate
-func GenerateCertificate(host string) (*tls.Certificate, error) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func GenerateCertificate(host string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %v", err)
+		return nil, nil, fmt.Errorf("failed to generate private key: %v", err)
 	}
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %v", err)
+		return nil, nil, fmt.Errorf("failed to generate serial number: %v", err)
 	}
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"BYC Blockchain"},
+			Organization: []string{"BYC Network"},
 			CommonName:   host,
 		},
 		NotBefore:             time.Now(),
@@ -86,18 +86,50 @@ func GenerateCertificate(host string) (*tls.Certificate, error) {
 		DNSNames:              []string{host},
 	}
 
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privKey.PublicKey, privKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create certificate: %v", err)
+		return nil, nil, fmt.Errorf("failed to create certificate: %v", err)
 	}
 
-	cert := &tls.Certificate{
-		Certificate: [][]byte{derBytes},
-		PrivateKey:  priv,
-		Leaf:        &template,
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse certificate: %v", err)
 	}
 
-	return cert, nil
+	return cert, privKey, nil
+}
+
+// SaveCertificate saves a certificate and private key to files
+func SaveCertificate(cert *x509.Certificate, privKey *ecdsa.PrivateKey, certFile, keyFile string) error {
+	// Save certificate
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return fmt.Errorf("failed to open cert.pem for writing: %v", err)
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+		return fmt.Errorf("failed to write data to cert.pem: %v", err)
+	}
+	if err := certOut.Close(); err != nil {
+		return fmt.Errorf("error closing cert.pem: %v", err)
+	}
+
+	// Save private key
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to open key.pem for writing: %v", err)
+	}
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
+	if err != nil {
+		return fmt.Errorf("unable to marshal private key: %v", err)
+	}
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return fmt.Errorf("failed to write data to key.pem: %v", err)
+	}
+	if err := keyOut.Close(); err != nil {
+		return fmt.Errorf("error closing key.pem: %v", err)
+	}
+
+	return nil
 }
 
 // NewSecurePeer creates a new secure peer
@@ -129,11 +161,24 @@ func (sp *SecurePeer) VerifyMessage(msg *common.NetworkMessage) bool {
 type SecureNetworkManager struct {
 	*NetworkManager
 	config *SecureConfig
+	server net.Listener
 }
 
 // NewSecureNetworkManager creates a new secure network manager
 func NewSecureNetworkManager(netConfig *common.NetworkConfig, secureConfig *SecureConfig) (*SecureNetworkManager, error) {
-	nm := NewNetworkManager(netConfig)
+	// Convert common.NetworkConfig to NetworkConfig
+	config := &NetworkConfig{
+		NodeID:         netConfig.NodeID,
+		ListenPort:     netConfig.ListenPort,
+		MaxPeers:       netConfig.MaxPeers,
+		BootstrapPeers: netConfig.BootstrapPeers,
+		PingInterval:   netConfig.PingInterval,
+		DialTimeout:    netConfig.DialTimeout,
+		ReadTimeout:    netConfig.ReadTimeout,
+		WriteTimeout:   netConfig.WriteTimeout,
+	}
+
+	nm := NewNetworkManager(config)
 	return &SecureNetworkManager{
 		NetworkManager: nm,
 		config:         secureConfig,
@@ -265,13 +310,18 @@ func (snm *SecureNetworkManager) handleConnection(conn *tls.Conn) {
 		return
 	}
 
-	// Create secure peer
+	// Create peer
 	peer := common.NewPeer(state.PeerCertificates[0].Subject.CommonName, conn.RemoteAddr().String(), 0)
 	peer.SetConnection(conn)
 
 	// Add peer
 	snm.mu.Lock()
-	snm.peers[peer.Address] = peer
+	snm.peers[peer.Address] = &Peer{
+		ID:         peer.ID,
+		Address:    peer.Address,
+		LastSeen:   peer.LastSeen,
+		Connection: peer.GetConnection(),
+	}
 	snm.mu.Unlock()
 
 	// Handle messages
@@ -281,7 +331,16 @@ func (snm *SecureNetworkManager) handleConnection(conn *tls.Conn) {
 			break
 		}
 
-		if err := snm.handleMessage(&msg); err != nil {
+		// Convert common.NetworkMessage to NetworkMessage
+		networkMsg := &NetworkMessage{
+			Type:      MessageType(msg.Type),
+			From:      msg.From,
+			To:        msg.To,
+			Payload:   msg.Payload,
+			Timestamp: msg.Timestamp,
+		}
+
+		if err := snm.handleMessage(networkMsg); err != nil {
 			// TODO: Handle error
 			continue
 		}
@@ -295,7 +354,11 @@ func (snm *SecureNetworkManager) SendSecureMessage(msg *common.NetworkMessage) e
 		return fmt.Errorf("peer %s not found", msg.To)
 	}
 
-	securePeer, err := NewSecurePeer(peer)
+	// Convert Peer to common.Peer
+	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
+	commonPeer.SetConnection(peer.Connection)
+
+	securePeer, err := NewSecurePeer(commonPeer)
 	if err != nil {
 		return fmt.Errorf("failed to create secure peer: %v", err)
 	}
@@ -305,7 +368,16 @@ func (snm *SecureNetworkManager) SendSecureMessage(msg *common.NetworkMessage) e
 		return fmt.Errorf("failed to sign message: %v", err)
 	}
 
-	return snm.SendMessage(signedMsg)
+	// Convert common.NetworkMessage to NetworkMessage
+	networkMsg := &NetworkMessage{
+		Type:      MessageType(signedMsg.Type),
+		From:      signedMsg.From,
+		To:        signedMsg.To,
+		Payload:   signedMsg.Payload,
+		Timestamp: signedMsg.Timestamp,
+	}
+
+	return snm.SendMessage(networkMsg)
 }
 
 // HandleSecureMessage handles a received secure message
@@ -315,14 +387,41 @@ func (snm *SecureNetworkManager) HandleSecureMessage(data []byte) error {
 		return fmt.Errorf("failed to unmarshal secure message: %v", err)
 	}
 
-	securePeer, err := NewSecurePeer(snm.peers[smsg.From])
+	peer, ok := snm.peers[smsg.From]
+	if !ok {
+		return fmt.Errorf("peer %s not found", smsg.From)
+	}
+
+	// Convert Peer to common.Peer
+	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
+	commonPeer.SetConnection(peer.Connection)
+
+	securePeer, err := NewSecurePeer(commonPeer)
 	if err != nil {
 		return fmt.Errorf("failed to create secure peer: %v", err)
 	}
 
-	if !securePeer.VerifyMessage(&smsg) {
+	// Convert NetworkMessage to common.NetworkMessage
+	commonMsg := &common.NetworkMessage{
+		Type:      common.MessageType(smsg.Type),
+		From:      smsg.From,
+		To:        smsg.To,
+		Payload:   smsg.Payload,
+		Timestamp: smsg.Timestamp,
+	}
+
+	if !securePeer.VerifyMessage(commonMsg) {
 		return fmt.Errorf("invalid message signature")
 	}
 
-	return snm.HandleMessage(smsg.NetworkMessage)
+	// Convert common.NetworkMessage to NetworkMessage
+	networkMsg := &NetworkMessage{
+		Type:      MessageType(smsg.Type),
+		From:      smsg.From,
+		To:        smsg.To,
+		Payload:   smsg.Payload,
+		Timestamp: smsg.Timestamp,
+	}
+
+	return snm.handleMessage(networkMsg)
 }

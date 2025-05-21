@@ -16,10 +16,11 @@ type Blockchain struct {
 	GoldenBlocks []Block
 	SilverBlocks []Block
 	PendingTxs   []Transaction
-	UTXOSet      map[string]UTXO
+	UTXOSet      *UTXOSet
 	Difficulty   int
 	MiningConfig *MiningConfig
 	MiningPool   *MiningPool
+	Blocks       []*Block
 	mu           sync.RWMutex
 }
 
@@ -29,7 +30,7 @@ func NewBlockchain() *Blockchain {
 		GoldenBlocks: make([]Block, 0),
 		SilverBlocks: make([]Block, 0),
 		PendingTxs:   make([]Transaction, 0),
-		UTXOSet:      make(map[string]UTXO),
+		UTXOSet:      NewUTXOSet(),
 		Difficulty:   1,
 		MiningConfig: NewMiningConfig(),
 		MiningPool:   NewMiningPool("main", "pool.byc"),
@@ -52,38 +53,41 @@ func createGenesisBlock(blockType BlockType) Block {
 }
 
 // AddBlock adds a block to the blockchain
-func (bc *Blockchain) AddBlock(block Block) error {
+func (bc *Blockchain) AddBlock(block interface{}) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	var b Block
+	switch v := block.(type) {
+	case Block:
+		b = v
+	case *Block:
+		b = *v
+	default:
+		return fmt.Errorf("invalid block type: %T", block)
+	}
+
 	// Validate block
-	if err := bc.validateBlock(block); err != nil {
+	if err := bc.validateBlock(b); err != nil {
 		return err
 	}
 
 	// Update UTXO set
-	for _, tx := range block.Transactions {
-		// Remove spent UTXOs
-		for _, input := range tx.Inputs {
-			bc.UTXOSet.Remove(string(input.TxID), input.OutputIndex)
-		}
-		// Add new UTXOs
-		for i, output := range tx.Outputs {
-			utxo := UTXO{
-				TxID:          tx.ID,
-				OutputIndex:   i,
-				Amount:        output.Value,
-				Address:       output.Address,
-				PublicKeyHash: output.PublicKeyHash,
-				CoinType:      output.CoinType,
-			}
-			bc.UTXOSet.Add(utxo)
+	for _, tx := range b.Transactions {
+		if err := bc.UTXOSet.UpdateWithTransaction(&tx); err != nil {
+			return err
 		}
 	}
 
 	// Add block to the appropriate chain
-	if block.BlockType == GoldenBlock {
-		bc.GoldenBlocks = append(bc.GoldenBlocks, block)
+	if b.BlockType == GoldenBlock {
+		bc.GoldenBlocks = append(bc.GoldenBlocks, b)
 	} else {
-		bc.SilverBlocks = append(bc.SilverBlocks, block)
+		bc.SilverBlocks = append(bc.SilverBlocks, b)
 	}
+
+	// Also add to the Blocks slice for backward compatibility
+	bc.Blocks = append(bc.Blocks, &b)
 	return nil
 }
 
@@ -345,27 +349,25 @@ func (bc *Blockchain) CreateTransaction(from, to string, amount float64, coinTyp
 	return tx, nil
 }
 
-// AddTransaction adds a new transaction to the blockchain
+// AddTransaction adds a transaction to the pending transactions
 func (bc *Blockchain) AddTransaction(tx *Transaction) error {
-	// Verify the transaction
+	// Validate transaction
 	if !tx.Verify() {
-		return fmt.Errorf("invalid transaction: verification failed")
+		return errors.New("invalid transaction signature")
 	}
 
-	// Validate the transaction against the UTXO set
+	// Validate transaction against UTXO set
 	if !tx.Validate(bc.UTXOSet) {
-		return fmt.Errorf("transaction validation failed")
+		return errors.New("invalid transaction")
 	}
 
-	// Add transaction to the pending transactions
+	// Add transaction to pending transactions
+	bc.mu.Lock()
 	bc.PendingTxs = append(bc.PendingTxs, *tx)
+	bc.mu.Unlock()
 
 	// Update UTXO set
-	if err := bc.UTXOSet.Update(tx); err != nil {
-		return fmt.Errorf("failed to update UTXO set: %v", err)
-	}
-
-	return nil
+	return bc.UTXOSet.UpdateWithTransaction(tx)
 }
 
 // GetBlock retrieves a block by its hash
@@ -509,4 +511,34 @@ func (bc *Blockchain) GetTotalSupply(coinType CoinType) float64 {
 	}
 
 	return total
+}
+
+// GetCurrentHeight returns the current height of the blockchain
+func (bc *Blockchain) GetCurrentHeight() int64 {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return int64(len(bc.Blocks))
+}
+
+// GetLatestBlock returns the latest block in the blockchain
+func (bc *Blockchain) GetLatestBlock() *Block {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	if len(bc.Blocks) == 0 {
+		return nil
+	}
+	return bc.Blocks[len(bc.Blocks)-1]
+}
+
+// RevertToHeight reverts the blockchain to a specific height
+func (bc *Blockchain) RevertToHeight(height int64) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	if height < 0 || int64(len(bc.Blocks)) <= height {
+		return fmt.Errorf("invalid height: %d", height)
+	}
+
+	bc.Blocks = bc.Blocks[:height+1]
+	return nil
 }

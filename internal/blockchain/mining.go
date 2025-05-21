@@ -26,6 +26,9 @@ type MiningPool struct {
 	Miners        map[string]*Miner
 	Shares        map[string]float64
 	LastPayout    time.Time
+	PoolShare     float64
+	PoolFee       float64
+	PoolMinPayout float64
 	mu            sync.RWMutex
 }
 
@@ -62,6 +65,9 @@ func NewMiningPool(id, address string) *MiningPool {
 		Miners:        make(map[string]*Miner),
 		Shares:        make(map[string]float64),
 		LastPayout:    time.Now(),
+		PoolShare:     0.95, // 95% to miners, 5% to pool
+		PoolFee:       0.05, // 5% pool fee
+		PoolMinPayout: 0.1,  // Minimum payout in base coin
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/byc/internal/security"
+	"github.com/moroni/BYC/internal/security"
 )
 
 // SecurityMiddleware provides security features for the API

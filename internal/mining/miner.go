@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/wallet"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/wallet"
 )
 
 // WalletInfo stores wallet information for persistence

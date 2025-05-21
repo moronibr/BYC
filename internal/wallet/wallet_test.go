@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/crypto"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

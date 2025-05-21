@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/logger"
-	"github.com/byc/internal/network"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/logger"
+	"github.com/moroni/BYC/internal/network"
 	"go.uber.org/zap"
 )
 

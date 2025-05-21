@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/mining"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/mining"
 )
 
 func handleMining(cmd *flag.FlagSet) {

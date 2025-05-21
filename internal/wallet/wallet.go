@@ -17,10 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/byc/internal/blockchain"
-	"github.com/byc/internal/crypto"
-	"github.com/byc/internal/logger"
-	"github.com/byc/internal/network"
+	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/crypto"
+	"github.com/moroni/BYC/internal/network"
 	"github.com/tyler-smith/go-bip39"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/scrypt"
@@ -141,7 +140,7 @@ func NewWallet() (*Wallet, error) {
 		Transactions:    make([]TransactionRecord, 0),
 		MultiSigWallets: make(map[string]*MultiSigWallet),
 		AddressBook:     make(map[string]*AddressBookEntry),
-		logger:          logger.NewLogger("wallet"),
+		logger:          zap.NewNop(),
 		rateLimiter:     NewRateLimiter(),
 	}, nil
 }
@@ -190,7 +189,7 @@ func NewWatchOnlyWallet(publicKey *ecdsa.PublicKey) *Wallet {
 		balances:    make(map[blockchain.CoinType]float64),
 		WatchOnly:   true,
 		AddressBook: make(map[string]*AddressBookEntry),
-		logger:      logger.NewLogger("wallet"),
+		logger:      zap.NewNop(),
 	}
 }
 
@@ -325,11 +324,14 @@ func (w *Wallet) BroadcastTransaction(tx *blockchain.Transaction, node *network.
 	}
 
 	// Create and broadcast message
-	msg := &network.Message{
-		Type:    network.TxMsg,
-		Payload: txBytes,
+	msg := &network.NetworkMessage{
+		Type:      network.MessageTypeTx,
+		From:      w.Address,
+		To:        "", // Broadcast to all peers
+		Payload:   txBytes,
+		Timestamp: time.Now(),
 	}
-	if err := node.BroadcastMessage(msg); err != nil {
+	if err := node.BroadcastMessage(*msg); err != nil {
 		w.AddTransactionToHistory(tx, "failed")
 		return fmt.Errorf("failed to broadcast transaction: %v", err)
 	}
@@ -578,7 +580,7 @@ func (w *Wallet) CreateTransaction(to string, amount float64, coinType blockchai
 		if utxo.CoinType == coinType {
 			input := blockchain.TxInput{
 				TxID:        []byte(utxo.TxID),
-				OutputIndex: utxo.OutputIndex,
+				OutputIndex: utxo.Index,
 				Amount:      utxo.Amount,
 				PublicKey:   []byte(w.Address),
 			}
@@ -753,7 +755,7 @@ func Restore(path string) (*Wallet, error) {
 		AddressBook:     backup.AddressBook,
 		Salt:            backup.Salt,
 		IV:              backup.IV,
-		logger:          logger.NewLogger("wallet"),
+		logger:          zap.NewNop(),
 	}
 
 	// Verify address
