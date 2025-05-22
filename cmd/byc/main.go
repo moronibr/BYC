@@ -385,11 +385,11 @@ func handleMiningMenu() {
 	}
 
 	// Get node address
-	fmt.Print("\nEnter node address (default: localhost:3000): ")
+	fmt.Print("\nEnter node address (default: localhost:3001): ")
 	var nodeAddress string
 	fmt.Scan(&nodeAddress)
 	if nodeAddress == "" {
-		nodeAddress = "localhost:3000"
+		nodeAddress = "localhost:3001"
 	}
 
 	// Create context for cancellation
