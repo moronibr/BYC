@@ -174,82 +174,108 @@ func (m *Miner) mine(ctx context.Context) {
 	fmt.Printf("Wallet file location: %s\n", m.walletFile)
 	fmt.Println("--------------------------------------------------------")
 
+	// Create a channel for graceful shutdown
+	done := make(chan struct{})
+
+	// Start mining loop
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				close(done)
+				return
+			case <-m.stopChan:
+				close(done)
+				return
+			default:
+				// Calculate time since last block
+				timeSinceLastBlock := time.Since(lastBlockTime)
+
+				// Only attempt to mine if enough time has passed (target 10 minutes per block)
+				if timeSinceLastBlock < 600*time.Second { // 600 seconds = 10 minutes
+					time.Sleep(100 * time.Millisecond) // Small delay to prevent CPU overload
+					continue
+				}
+
+				// Calculate reward based on coin type
+				var reward float64
+				switch m.CoinType {
+				case blockchain.Leah:
+					reward = 50 // 50 Leah per block
+				case blockchain.Shiblum:
+					reward = 25 // 25 Shiblum per block
+				case blockchain.Shiblon:
+					reward = 12.5 // 12.5 Shiblon per block
+				default:
+					reward = 1 // 1 coin for other types
+				}
+
+				// Create coinbase transaction
+				coinbaseTx := blockchain.Transaction{
+					ID:        []byte("coinbase"),
+					Timestamp: time.Now(),
+					BlockType: m.BlockType,
+					Outputs: []blockchain.TxOutput{
+						{
+							Value:         reward,
+							CoinType:      m.CoinType,
+							PublicKeyHash: []byte(m.status.MiningWallet.Address),
+							Address:       m.status.MiningWallet.Address,
+						},
+					},
+				}
+
+				// Attempt to mine a block
+				block, err := m.Blockchain.MineBlock([]blockchain.Transaction{coinbaseTx}, m.BlockType, m.CoinType)
+				if err != nil {
+					fmt.Printf("Error mining block: %v\n", err)
+					continue
+				}
+
+				// Update hash count
+				hashCount++
+
+				// Update mining stats
+				m.mu.Lock()
+				m.status.Shares++
+				m.mu.Unlock()
+
+				// Add the block to the blockchain
+				if err := m.Blockchain.AddBlock(block); err != nil {
+					fmt.Printf("Error adding block: %v\n", err)
+					continue
+				}
+
+				// Update mining stats and rewards
+				m.mu.Lock()
+				m.status.BlocksFound++
+				m.status.Rewards[m.CoinType] += reward
+				m.mu.Unlock()
+
+				// Update last block time
+				lastBlockTime = time.Now()
+
+				// Save wallet after each successful block
+				if err := m.saveWallet(); err != nil {
+					fmt.Printf("Warning: Failed to save wallet: %v\n", err)
+				}
+
+				fmt.Printf("\nMined new block: %x\n", block.Hash)
+				fmt.Printf("Reward: %.2f %s\n", reward, m.CoinType)
+				fmt.Printf("Total rewards: %.2f %s\n", m.status.Rewards[m.CoinType], m.CoinType)
+				fmt.Printf("Wallet balance: %.2f %s\n", m.Blockchain.GetBalance(m.status.MiningWallet.Address, m.CoinType), m.CoinType)
+				fmt.Println("--------------------------------------------------------")
+				fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
+			}
+		}
+	}()
+
+	// Update hash rate
 	for {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			fmt.Println("\nMining stopped by user.")
 			return
-		case <-m.stopChan:
-			fmt.Println("\nMining stopped by user.")
-			return
-		default:
-			// Calculate time since last block
-			timeSinceLastBlock := time.Since(lastBlockTime)
-
-			// Only attempt to mine if enough time has passed (target 10 minutes per block)
-			if timeSinceLastBlock < 600*time.Second { // 600 seconds = 10 minutes
-				time.Sleep(100 * time.Millisecond) // Small delay to prevent CPU overload
-				continue
-			}
-
-			// Calculate reward based on coin type
-			var reward float64
-			switch m.CoinType {
-			case blockchain.Leah:
-				reward = 50 // 50 Leah per block
-			case blockchain.Shiblum:
-				reward = 25 // 25 Shiblum per block
-			case blockchain.Shiblon:
-				reward = 12.5 // 12.5 Shiblon per block
-			default:
-				reward = 1 // 1 coin for other types
-			}
-
-			// Attempt to mine a block
-			block, err := m.Blockchain.MineBlock([]blockchain.Transaction{}, m.BlockType, m.CoinType)
-			if err != nil {
-				fmt.Printf("Error mining block: %v\n", err)
-				continue
-			}
-
-			// Update hash count
-			hashCount++
-
-			// Update mining stats
-			m.mu.Lock()
-			m.status.Shares++
-			m.mu.Unlock()
-
-			// Add the block to the blockchain
-			if err := m.Blockchain.AddBlock(block); err != nil {
-				fmt.Printf("Error adding block: %v\n", err)
-				continue
-			}
-
-			// Update mining stats and rewards
-			m.mu.Lock()
-			m.status.BlocksFound++
-			m.status.Rewards[m.CoinType] += reward
-			m.mu.Unlock()
-
-			// Update last block time
-			lastBlockTime = time.Now()
-
-			// Save wallet after each successful block
-			if err := m.saveWallet(); err != nil {
-				fmt.Printf("Warning: Failed to save wallet: %v\n", err)
-			}
-
-			fmt.Printf("\nMined new block: %x\n", block.Hash)
-			fmt.Printf("Reward: %.2f %s\n", reward, m.CoinType)
-			fmt.Printf("Total rewards: %.2f %s\n", m.status.Rewards[m.CoinType], m.CoinType)
-			fmt.Printf("Wallet balance: %.2f %s\n", m.Blockchain.GetBalance(m.status.MiningWallet.Address, m.CoinType), m.CoinType)
-			fmt.Println("--------------------------------------------------------")
-			fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
-		}
-
-		// Update hash rate every second
-		select {
 		case <-ticker.C:
 			now := time.Now()
 			elapsed := now.Sub(lastUpdate).Seconds()
@@ -262,8 +288,6 @@ func (m *Miner) mine(ctx context.Context) {
 				lastHashCount = hashCount
 				lastUpdate = now
 			}
-		default:
-			// Continue mining
 		}
 	}
 }

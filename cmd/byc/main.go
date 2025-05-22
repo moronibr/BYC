@@ -339,159 +339,117 @@ func handleDashboardMenu(bc *blockchain.Blockchain) {
 }
 
 func handleMiningMenu() {
-	// Create a new blockchain instance
-	bc := blockchain.NewBlockchain()
+	// Start mining
+	fmt.Println("Starting mining...")
+	fmt.Println("Please enter the following information:")
 
-	fmt.Println("\n=== Mining Operations ===")
-	fmt.Println("1. Start Mining")
-	fmt.Println("2. Back to Main Menu")
-	fmt.Print("\nEnter your choice (1-2): ")
+	// Get block type
+	fmt.Println("\nSelect block type:")
+	fmt.Println("1. Golden")
+	fmt.Println("2. Silver")
+	fmt.Print("Enter choice (1-2): ")
+	var blockChoice int
+	fmt.Scan(&blockChoice)
 
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	choice, err := strconv.Atoi(input)
-	if err != nil {
-		fmt.Println("Invalid choice")
-		return
-	}
-
-	switch choice {
+	var block string
+	switch blockChoice {
 	case 1:
-		fmt.Println("\nSelect coin type:")
-		fmt.Println("1. Leah")
-		fmt.Println("2. Shiblum")
-		fmt.Println("3. Shiblon")
-		fmt.Print("\nEnter your choice (1-3): ")
-
-		coinInput, _ := reader.ReadString('\n')
-		coinInput = strings.TrimSpace(coinInput)
-		coinChoice, err := strconv.Atoi(coinInput)
-		if err != nil {
-			fmt.Println("Invalid coin choice")
-			return
-		}
-
-		var coin string
-		switch coinChoice {
-		case 1:
-			coin = "leah"
-		case 2:
-			coin = "shiblum"
-		case 3:
-			coin = "shiblon"
-		default:
-			fmt.Println("Invalid coin choice")
-			return
-		}
-
-		fmt.Println("\nSelect block type:")
-		fmt.Println("1. Golden")
-		fmt.Println("2. Silver")
-		fmt.Print("\nEnter your choice (1-2): ")
-
-		blockInput, _ := reader.ReadString('\n')
-		blockInput = strings.TrimSpace(blockInput)
-		blockChoice, err := strconv.Atoi(blockInput)
-		if err != nil {
-			fmt.Println("Invalid block choice")
-			return
-		}
-
-		var block string
-		switch blockChoice {
-		case 1:
-			block = "golden"
-		case 2:
-			block = "silver"
-		default:
-			fmt.Println("Invalid block choice")
-			return
-		}
-
-		fmt.Print("\nEnter node address (default: localhost:3000): ")
-		address, _ := reader.ReadString('\n')
-		address = strings.TrimSpace(address)
-		if address != "" {
-			// Validate address format
-			if !strings.Contains(address, ":") {
-				address = "localhost:" + address
-			}
-		} else {
-			address = "localhost:3000"
-		}
-
-		fmt.Println("Press Esc or 'q' to stop mining and return to the main menu")
-
-		// Set up context and signal handling
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		// Listen for Ctrl+C
-		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-		go func() {
-			<-c
-			fmt.Println("\nStopping miner...")
-			cancel()
-		}()
-
-		// Listen for Esc or 'q' key
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err == nil {
-			defer term.Restore(int(os.Stdin.Fd()), oldState)
-			go func() {
-				buf := make([]byte, 1)
-				for {
-					os.Stdin.Read(buf)
-					if buf[0] == 27 || buf[0] == 'q' || buf[0] == 'Q' { // 27 is Esc
-						fmt.Println("\nStopping miner...")
-						cancel()
-						return
-					}
-				}
-			}()
-		}
-
-		// Convert block and coin to correct types
-		var blockType blockchain.BlockType
-		var coinType blockchain.CoinType
-		switch block {
-		case "golden":
-			blockType = blockchain.GoldenBlock
-		case "silver":
-			blockType = blockchain.SilverBlock
-		default:
-			fmt.Println("Invalid block type")
-			return
-		}
-		switch coin {
-		case "leah":
-			coinType = blockchain.Leah
-		case "shiblum":
-			coinType = blockchain.Shiblum
-		case "shiblon":
-			coinType = blockchain.Shiblon
-		default:
-			fmt.Println("Invalid coin type")
-			return
-		}
-
-		// Use the blockchain instance bc
-		miner, err := mining.NewMiner(bc, blockType, coinType, "localhost:3000")
-		if err != nil {
-			log.Fatalf("Failed to create miner: %v", err)
-		}
-		miner.Start(ctx)
-		fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
-		<-ctx.Done() // Wait until user cancels (Esc, 'q', or Ctrl+C)
-		miner.Stop()
-		return
+		block = "golden"
 	case 2:
-		return
+		block = "silver"
 	default:
 		fmt.Println("Invalid choice")
+		return
 	}
+
+	// Get coin type
+	fmt.Println("\nSelect coin type:")
+	fmt.Println("1. Leah")
+	fmt.Println("2. Shiblum")
+	fmt.Println("3. Shiblon")
+	fmt.Print("Enter choice (1-3): ")
+	var coinChoice int
+	fmt.Scan(&coinChoice)
+
+	var coin string
+	switch coinChoice {
+	case 1:
+		coin = "leah"
+	case 2:
+		coin = "shiblum"
+	case 3:
+		coin = "shiblon"
+	default:
+		fmt.Println("Invalid choice")
+		return
+	}
+
+	// Get node address
+	fmt.Print("\nEnter node address (default: localhost:3000): ")
+	var nodeAddress string
+	fmt.Scan(&nodeAddress)
+	if nodeAddress == "" {
+		nodeAddress = "localhost:3000"
+	}
+
+	// Create context for cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Set up terminal for reading keypresses
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err == nil {
+		defer term.Restore(int(os.Stdin.Fd()), oldState)
+		go func() {
+			buf := make([]byte, 1)
+			for {
+				os.Stdin.Read(buf)
+				if buf[0] == 27 || buf[0] == 'q' || buf[0] == 'Q' { // 27 is Esc
+					fmt.Println("\nStopping miner...")
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+
+	// Convert block and coin to correct types
+	var blockType blockchain.BlockType
+	var coinType blockchain.CoinType
+	switch block {
+	case "golden":
+		blockType = blockchain.GoldenBlock
+	case "silver":
+		blockType = blockchain.SilverBlock
+	default:
+		fmt.Println("Invalid block type")
+		return
+	}
+	switch coin {
+	case "leah":
+		coinType = blockchain.Leah
+	case "shiblum":
+		coinType = blockchain.Shiblum
+	case "shiblon":
+		coinType = blockchain.Shiblon
+	default:
+		fmt.Println("Invalid coin type")
+		return
+	}
+
+	// Create blockchain instance
+	bc := blockchain.NewBlockchain()
+
+	// Create miner
+	miner, err := mining.NewMiner(bc, blockType, coinType, nodeAddress)
+	if err != nil {
+		log.Fatalf("Failed to create miner: %v", err)
+	}
+
+	// Start mining
+	miner.Start(ctx)
+	fmt.Println("Mining in progress. Press Esc or 'q' to stop.")
+	<-ctx.Done() // Wait until user cancels (Esc, 'q', or Ctrl+C)
+	miner.Stop()
 }
 
 func runNode(bc *blockchain.Blockchain, address, peerAddress string) {
