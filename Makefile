@@ -1,68 +1,89 @@
-.PHONY: all build test clean lint run
+# BYC Makefile
 
 # Variables
 BINARY_NAME=byc
+NODE_NAME=byc-node
 BUILD_DIR=bin
-VERSION=1.0.0
+VERSION=$(shell git describe --tags --always --dirty)
 LDFLAGS=-ldflags "-X main.Version=${VERSION}"
 
+# Default target
 all: clean build
 
+# Build the CLI application
 build:
 	@echo "Building ${BINARY_NAME}..."
 	@mkdir -p ${BUILD_DIR}
 	@go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME} cmd/byc/main.go
 
-test:
-	@echo "Running tests..."
-	@go test -v ./...
+# Build the node
+build-node:
+	@echo "Building ${NODE_NAME}..."
+	@mkdir -p ${BUILD_DIR}
+	@go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME} cmd/byc-node/main.go
 
-test-coverage:
-	@echo "Running tests with coverage..."
-	@go test -v -coverprofile=coverage.out ./...
-	@go tool cover -html=coverage.out
+# Build both CLI and node
+build-all: clean build build-node
 
-lint:
-	@echo "Running linter..."
-	@golangci-lint run
+# Build for multiple platforms
+release: clean
+	@echo "Building for multiple platforms..."
+	@mkdir -p ${BUILD_DIR}
+	# Build CLI
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-linux-amd64 cmd/byc/main.go
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-windows-amd64.exe cmd/byc/main.go
+	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-darwin-amd64 cmd/byc/main.go
+	# Build Node
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-linux-amd64 cmd/byc-node/main.go
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-windows-amd64.exe cmd/byc-node/main.go
+	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-darwin-amd64 cmd/byc-node/main.go
 
+# Clean build directory
 clean:
 	@echo "Cleaning..."
 	@rm -rf ${BUILD_DIR}
-	@go clean
 
+# Run the CLI application
 run: build
 	@echo "Running ${BINARY_NAME}..."
 	@./${BUILD_DIR}/${BINARY_NAME}
 
-deps:
-	@echo "Installing dependencies..."
-	@go mod download
-	@go mod tidy
+# Run the node
+run-node: build-node
+	@echo "Running ${NODE_NAME}..."
+	@./${BUILD_DIR}/${NODE_NAME}
 
-# Development tools
-install-tools:
-	@echo "Installing development tools..."
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# Install both CLI and node
+install: build build-node
+	@echo "Installing ${BINARY_NAME} and ${NODE_NAME}..."
+	@cp ${BUILD_DIR}/${BINARY_NAME} /usr/local/bin/
+	@cp ${BUILD_DIR}/${NODE_NAME} /usr/local/bin/
 
-# Release
-release: clean build
-	@echo "Creating release..."
-	@mkdir -p release
-	@tar -czf release/${BINARY_NAME}-${VERSION}-linux-amd64.tar.gz -C ${BUILD_DIR} ${BINARY_NAME}
-	@tar -czf release/${BINARY_NAME}-${VERSION}-darwin-amd64.tar.gz -C ${BUILD_DIR} ${BINARY_NAME}
-	@tar -czf release/${BINARY_NAME}-${VERSION}-windows-amd64.tar.gz -C ${BUILD_DIR} ${BINARY_NAME}.exe
+# Uninstall both CLI and node
+uninstall:
+	@echo "Uninstalling ${BINARY_NAME} and ${NODE_NAME}..."
+	@rm -f /usr/local/bin/${BINARY_NAME}
+	@rm -f /usr/local/bin/${NODE_NAME}
 
+# Run tests
+test:
+	@echo "Running tests..."
+	@go test -v ./...
+
+# Help
 help:
 	@echo "Available targets:"
-	@echo "  all            - Clean and build the project"
-	@echo "  build          - Build the project"
-	@echo "  test           - Run tests"
-	@echo "  test-coverage  - Run tests with coverage report"
-	@echo "  lint           - Run linter"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  run            - Build and run the project"
-	@echo "  deps           - Install dependencies"
-	@echo "  install-tools  - Install development tools"
-	@echo "  release        - Create release packages"
-	@echo "  help           - Show this help message" 
+	@echo "  all        - Clean and build both applications"
+	@echo "  build      - Build the CLI application"
+	@echo "  build-node - Build the node application"
+	@echo "  build-all  - Build both CLI and node"
+	@echo "  release    - Build for multiple platforms"
+	@echo "  clean      - Clean build directory"
+	@echo "  run        - Run the CLI application"
+	@echo "  run-node   - Run the node application"
+	@echo "  install    - Install both applications"
+	@echo "  uninstall  - Uninstall both applications"
+	@echo "  test       - Run tests"
+	@echo "  help       - Show this help message"
+
+.PHONY: all build build-node build-all release clean run run-node install uninstall test help 

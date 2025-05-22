@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,17 @@ import (
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/mining"
 )
+
+func displayMenu() {
+	fmt.Println("\n=== BYC CLI Menu ===")
+	fmt.Println("1. Network Operations")
+	fmt.Println("2. Wallet Operations")
+	fmt.Println("3. Dashboard")
+	fmt.Println("4. Mining")
+	fmt.Println("5. View Genesis Block")
+	fmt.Println("6. Exit")
+	fmt.Print("\nEnter your choice (1-6): ")
+}
 
 func main() {
 	// Parse command line flags
@@ -42,6 +54,41 @@ func main() {
 		return
 	}
 
+	// Interactive menu loop
+	for {
+		displayMenu()
+		var choice int
+		fmt.Scan(&choice)
+
+		switch choice {
+		case 1:
+			// Network Operations
+			fmt.Println("Network Operations selected")
+		case 2:
+			// Wallet Operations
+			fmt.Println("Wallet Operations selected")
+		case 3:
+			// Dashboard
+			fmt.Println("Dashboard selected")
+		case 4:
+			// Mining
+			startMining(bc, blockType, coinType, address)
+		case 5:
+			// View Genesis Block
+			bc.DisplayGenesisBlock()
+			fmt.Print("\nPress Enter to continue...")
+			fmt.Scanln()
+		case 6:
+			// Exit
+			fmt.Println("Exiting...")
+			return
+		default:
+			fmt.Println("Invalid choice. Please try again.")
+		}
+	}
+}
+
+func startMining(bc *blockchain.Blockchain, blockType, coinType, address *string) {
 	// Validate block type
 	var bt blockchain.BlockType
 	switch *blockType {
@@ -51,7 +98,7 @@ func main() {
 		bt = blockchain.SilverBlock
 	default:
 		fmt.Printf("Invalid block type: %s\n", *blockType)
-		os.Exit(1)
+		return
 	}
 
 	// Validate coin type
@@ -63,28 +110,32 @@ func main() {
 		ct = blockchain.Shiblum
 	case "shiblon":
 		ct = blockchain.Shiblon
-	// Add other coin types as needed
 	default:
 		fmt.Printf("Invalid coin type: %s\n", *coinType)
-		os.Exit(1)
+		return
 	}
 
 	// Create miner
 	miner, err := mining.NewMiner(bc, bt, ct, *address)
 	if err != nil {
 		fmt.Printf("Error creating miner: %v\n", err)
-		os.Exit(1)
+		return
 	}
+
+	// Create context for mining
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start mining
-	go miner.Start()
+	go miner.Start(ctx)
 
-	// Wait for shutdown signal
+	fmt.Println("Mining started. Press Ctrl+C to stop.")
 	<-sigChan
-	fmt.Println("\nShutting down...")
+	fmt.Println("\nShutting down mining...")
+	cancel()
 	miner.Stop()
 }

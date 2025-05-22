@@ -19,27 +19,132 @@ import (
 	"golang.org/x/term"
 )
 
+func displayMenu() {
+	fmt.Println("\n=== BYC CLI Menu ===")
+	fmt.Println("1. Network Operations")
+	fmt.Println("2. Wallet Operations")
+	fmt.Println("3. Dashboard")
+	fmt.Println("4. Mining")
+	fmt.Println("5. View Genesis Block")
+	fmt.Println("6. Exit")
+	fmt.Print("\nEnter your choice (1-6): ")
+}
+
 func main() {
+	// Parse command line flags
+	blockType := flag.String("block", "golden", "Block type to mine (golden/silver)")
+	coinType := flag.String("coin", "leah", "Coin type to mine")
+	address := flag.String("address", "", "Mining address")
+	viewGenesis := flag.Bool("view-genesis", false, "View Genesis block information")
+	saveGenesis := flag.String("save-genesis", "", "Save Genesis block information to file")
+	flag.Parse()
+
+	// Create new blockchain instance
+	bc := blockchain.NewBlockchain()
+
+	// If view-genesis flag is set, display Genesis block
+	if *viewGenesis {
+		bc.DisplayGenesisBlock()
+	}
+
+	// If save-genesis flag is set, save Genesis block info to file
+	if *saveGenesis != "" {
+		if err := bc.SaveGenesisBlockInfo(*saveGenesis); err != nil {
+			fmt.Printf("Error saving Genesis block info: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Genesis block information saved to %s\n", *saveGenesis)
+	}
+
+	// Exit if only viewing or saving Genesis block
+	if *viewGenesis || *saveGenesis != "" {
+		return
+	}
+
+	// Interactive menu loop
 	for {
-		showMenu()
-		choice := getUserChoice()
+		displayMenu()
+		var choice int
+		fmt.Scan(&choice)
 
 		switch choice {
 		case 1:
-			handleNetworkMenu()
+			// Network Operations
+			handleNetworkMenu(bc)
 		case 2:
-			handleWalletMenu()
+			// Wallet Operations
+			handleWalletMenu(bc)
 		case 3:
-			handleDashboardMenu()
+			// Dashboard
+			handleDashboardMenu(bc)
 		case 4:
-			handleMiningMenu()
+			// Mining
+			startMining(bc, blockType, coinType, address)
 		case 5:
-			fmt.Println("Goodbye!")
+			// View Genesis Block
+			bc.DisplayGenesisBlock()
+			fmt.Print("\nPress Enter to continue...")
+			fmt.Scanln()
+		case 6:
+			// Exit
+			fmt.Println("Exiting...")
 			return
 		default:
 			fmt.Println("Invalid choice. Please try again.")
 		}
 	}
+}
+
+func startMining(bc *blockchain.Blockchain, blockType, coinType, address *string) {
+	// Validate block type
+	var bt blockchain.BlockType
+	switch *blockType {
+	case "golden":
+		bt = blockchain.GoldenBlock
+	case "silver":
+		bt = blockchain.SilverBlock
+	default:
+		fmt.Printf("Invalid block type: %s\n", *blockType)
+		return
+	}
+
+	// Validate coin type
+	var ct blockchain.CoinType
+	switch *coinType {
+	case "leah":
+		ct = blockchain.Leah
+	case "shiblum":
+		ct = blockchain.Shiblum
+	case "shiblon":
+		ct = blockchain.Shiblon
+	default:
+		fmt.Printf("Invalid coin type: %s\n", *coinType)
+		return
+	}
+
+	// Create miner
+	miner, err := mining.NewMiner(bc, bt, ct, *address)
+	if err != nil {
+		fmt.Printf("Error creating miner: %v\n", err)
+		return
+	}
+
+	// Create context for mining
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start mining
+	go miner.Start(ctx)
+
+	fmt.Println("Mining started. Press Ctrl+C to stop.")
+	<-sigChan
+	fmt.Println("\nShutting down mining...")
+	cancel()
+	miner.Stop()
 }
 
 func showMenu() {
@@ -72,7 +177,7 @@ func getUserChoice() int {
 	}
 }
 
-func handleNetworkMenu() {
+func handleNetworkMenu(bc *blockchain.Blockchain) {
 	fmt.Println("\n=== Network Operations ===")
 	fmt.Println("1. Start Node")
 	fmt.Println("2. Monitor Network")
@@ -119,7 +224,7 @@ func handleNetworkMenu() {
 			cmd.Set("peer", peer)
 		}
 
-		handleNetwork(cmd)
+		runNode(bc, cmd.Lookup("address").Value.String(), cmd.Lookup("peer").Value.String())
 
 	case 2:
 		fmt.Print("Enter monitoring interval in seconds (default: 5): ")
@@ -134,14 +239,14 @@ func handleNetworkMenu() {
 			}
 		}
 		cmd.Set("monitor", "true")
-		handleNetwork(cmd)
+		runNode(bc, cmd.Lookup("address").Value.String(), "")
 
 	case 3:
 		return
 	}
 }
 
-func handleWalletMenu() {
+func handleWalletMenu(bc *blockchain.Blockchain) {
 	fmt.Println("\n=== Wallet Operations ===")
 	fmt.Println("1. Create New Wallet")
 	fmt.Println("2. Check Balance")
@@ -158,27 +263,23 @@ func handleWalletMenu() {
 		return
 	}
 
-	cmd := flag.NewFlagSet("wallet", flag.ExitOnError)
 	switch choice {
 	case 1:
-		cmd.String("action", "create", "")
-		handleWallet(cmd)
+		runWallet(bc, "create")
 	case 2:
-		cmd.String("action", "balance", "")
-		handleWallet(cmd)
+		runWallet(bc, "balance")
 	case 3:
-		cmd.String("action", "send", "")
-		handleWallet(cmd)
+		runWallet(bc, "send")
 	case 4:
 		return
 	}
 }
 
-func handleDashboardMenu() {
+func handleDashboardMenu(bc *blockchain.Blockchain) {
 	fmt.Println("\n=== Dashboard ===")
 	fmt.Println("Loading dashboard...")
-	cmd := flag.NewFlagSet("dashboard", flag.ExitOnError)
-	handleDashboard(cmd)
+	// TODO: Implement dashboard functionality
+	fmt.Println("Dashboard not implemented yet")
 }
 
 func handleMiningMenu() {
