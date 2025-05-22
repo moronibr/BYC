@@ -542,3 +542,28 @@ func (bc *Blockchain) RevertToHeight(height int64) error {
 	bc.Blocks = bc.Blocks[:height+1]
 	return nil
 }
+
+// DisplayGenesisBlock displays information about the Genesis block
+func (bc *Blockchain) DisplayGenesisBlock() {
+	fmt.Println("\n=== Golden Chain Genesis Block ===")
+	if len(bc.GoldenBlocks) > 0 {
+		genesis := bc.GoldenBlocks[0]
+		fmt.Printf("Timestamp: %s\n", time.Unix(genesis.Timestamp, 0).Format(time.RFC3339))
+		fmt.Printf("Hash: %x\n", genesis.Hash)
+		fmt.Printf("Previous Hash: %x\n", genesis.PrevHash)
+		fmt.Printf("Difficulty: %d\n", genesis.Difficulty)
+		fmt.Printf("Block Type: %s\n", genesis.BlockType)
+		fmt.Printf("Number of Transactions: %d\n", len(genesis.Transactions))
+	}
+
+	fmt.Println("\n=== Silver Chain Genesis Block ===")
+	if len(bc.SilverBlocks) > 0 {
+		genesis := bc.SilverBlocks[0]
+		fmt.Printf("Timestamp: %s\n", time.Unix(genesis.Timestamp, 0).Format(time.RFC3339))
+		fmt.Printf("Hash: %x\n", genesis.Hash)
+		fmt.Printf("Previous Hash: %x\n", genesis.PrevHash)
+		fmt.Printf("Difficulty: %d\n", genesis.Difficulty)
+		fmt.Printf("Block Type: %s\n", genesis.BlockType)
+		fmt.Printf("Number of Transactions: %d\n", len(genesis.Transactions))
+	}
+}
