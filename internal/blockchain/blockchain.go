@@ -35,7 +35,17 @@ func NewBlockchain() *Blockchain {
 		Difficulty:   1,
 		MiningConfig: NewMiningConfig(),
 		MiningPool:   NewMiningPool("main", "pool.byc"),
+		Blocks:       make([]*Block, 0),
 	}
+
+	// Create and add Genesis blocks
+	goldenGenesis := createGenesisBlock(GoldenBlock)
+	silverGenesis := createGenesisBlock(SilverBlock)
+
+	bc.GoldenBlocks = append(bc.GoldenBlocks, goldenGenesis)
+	bc.SilverBlocks = append(bc.SilverBlocks, silverGenesis)
+	bc.Blocks = append(bc.Blocks, &goldenGenesis, &silverGenesis)
+
 	return bc
 }
 
@@ -44,10 +54,10 @@ func createGenesisBlock(blockType BlockType) Block {
 	block := Block{
 		Timestamp:    time.Now().Unix(),
 		Transactions: []Transaction{},
-		PrevHash:     []byte{},
+		PrevHash:     make([]byte, 32), // Empty previous hash
 		Nonce:        0,
 		BlockType:    blockType,
-		Difficulty:   1, // Set to 1 to match base difficulty
+		Difficulty:   1,
 	}
 	block.Hash = calculateHash(block)
 	return block

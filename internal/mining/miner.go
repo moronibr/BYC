@@ -157,7 +157,7 @@ func (m *Miner) GetStatus() Status {
 	return m.status
 }
 
-// mine performs the mining process
+// mine performs the mining operation
 func (m *Miner) mine(ctx context.Context) {
 	defer m.wg.Done()
 
@@ -192,31 +192,17 @@ func (m *Miner) mine(ctx context.Context) {
 				continue
 			}
 
-			// Calculate reward based on coin type (mirroring Bitcoin's original 50 BTC reward)
+			// Calculate reward based on coin type
 			var reward float64
 			switch m.CoinType {
 			case blockchain.Leah:
-				reward = 50 // 50 Leah per block (every 10 minutes)
+				reward = 50 // 50 Leah per block
 			case blockchain.Shiblum:
-				reward = 25 // 25 Shiblum per block (every 10 minutes)
+				reward = 25 // 25 Shiblum per block
 			case blockchain.Shiblon:
-				reward = 12.5 // 12.5 Shiblon per block (every 10 minutes)
-			case blockchain.Ephraim:
-				// Check if we've reached the maximum Ephraim supply
-				if m.Blockchain.GetTotalSupply(blockchain.Ephraim) >= blockchain.MaxEphraimSupply {
-					fmt.Printf("Maximum Ephraim supply reached\n")
-					continue
-				}
-				reward = 0.5 // 0.5 Ephraim per block (every 10 minutes)
-			case blockchain.Manasseh:
-				// Check if we've reached the maximum Manasseh supply
-				if m.Blockchain.GetTotalSupply(blockchain.Manasseh) >= blockchain.MaxManassehSupply {
-					fmt.Printf("Maximum Manasseh supply reached\n")
-					continue
-				}
-				reward = 0.5 // 0.5 Manasseh per block (every 10 minutes)
+				reward = 12.5 // 12.5 Shiblon per block
 			default:
-				reward = 1 // 1 coin for other types (every 10 minutes)
+				reward = 1 // 1 coin for other types
 			}
 
 			// Attempt to mine a block
