@@ -576,3 +576,79 @@ func (utxoSet *UTXOSet) HasUTXO(txID string, outputIndex int) bool {
 	_, exists := utxoSet.utxos[key]
 	return exists
 }
+
+// ProgressTracker tracks progress towards special coin creation
+type ProgressTracker struct {
+	Required map[CoinType]float64
+	Current  map[CoinType]float64
+	Progress map[CoinType]float64 // Percentage complete for each coin
+}
+
+// NewProgressTracker creates a new progress tracker
+func NewProgressTracker(coinType CoinType) *ProgressTracker {
+	pt := &ProgressTracker{
+		Required: make(map[CoinType]float64),
+		Current:  make(map[CoinType]float64),
+		Progress: make(map[CoinType]float64),
+	}
+
+	if coinType == Ephraim {
+		pt.Required = map[CoinType]float64{
+			Leah:    RequiredLeah,
+			Shiblum: RequiredShiblum,
+			Shiblon: RequiredShiblon,
+			Senine:  RequiredSenine,
+			Seon:    RequiredSeon,
+			Shum:    RequiredShum,
+			Limnah:  RequiredLimnah,
+			Antion:  RequiredAntion,
+		}
+	} else if coinType == Manasseh {
+		pt.Required = map[CoinType]float64{
+			Senum:  RequiredSenum,
+			Amnor:  RequiredAmnor,
+			Ezrom:  RequiredEzrom,
+			Onti:   RequiredOnti,
+			Antion: 1, // Special requirement for Manasseh
+		}
+	}
+
+	return pt
+}
+
+// UpdateProgress updates the progress based on current balances
+func (pt *ProgressTracker) UpdateProgress(balances map[CoinType]float64) {
+	for coinType, required := range pt.Required {
+		current := balances[coinType]
+		pt.Current[coinType] = current
+		pt.Progress[coinType] = (current / required) * 100
+	}
+}
+
+// GetOverallProgress returns the overall progress percentage
+func (pt *ProgressTracker) GetOverallProgress() float64 {
+	var totalProgress float64
+	var count float64
+
+	for _, progress := range pt.Progress {
+		totalProgress += progress
+		count++
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	return totalProgress / count
+}
+
+// GetMissingCoins returns a list of coins that are still needed
+func (pt *ProgressTracker) GetMissingCoins() map[CoinType]float64 {
+	missing := make(map[CoinType]float64)
+	for coinType, required := range pt.Required {
+		if pt.Current[coinType] < required {
+			missing[coinType] = required - pt.Current[coinType]
+		}
+	}
+	return missing
+}

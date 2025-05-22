@@ -18,11 +18,13 @@ import {
   Dashboard as DashboardIcon,
   AccountBalance as WalletIcon,
   NetworkCheck as NetworkIcon,
-  Menu as MenuIcon
+  Menu as MenuIcon,
+  Description as WhitepaperIcon
 } from '@mui/icons-material';
 import { Dashboard } from './components/Dashboard';
 import { Wallet } from './components/Wallet';
 import { Network } from './components/Network';
+import Whitepaper from './components/Whitepaper';
 
 const drawerWidth = 240;
 
@@ -60,6 +62,12 @@ export const App: React.FC = () => {
             <NetworkIcon />
           </ListItemIcon>
           <ListItemText primary="Network" />
+        </ListItem>
+        <ListItem button component={Link} to="/whitepaper">
+          <ListItemIcon>
+            <WhitepaperIcon />
+          </ListItemIcon>
+          <ListItemText primary="Whitepaper" />
         </ListItem>
       </List>
     </div>
@@ -118,6 +126,7 @@ export const App: React.FC = () => {
             <Route path="/" element={<Dashboard />} />
             <Route path="/wallet" element={<Wallet address="your-wallet-address" />} />
             <Route path="/network" element={<Network />} />
+            <Route path="/whitepaper" element={<Whitepaper />} />
           </Routes>
         </Container>
       </div>
