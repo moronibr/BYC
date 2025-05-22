@@ -32,9 +32,6 @@ func displayMenu() {
 
 func main() {
 	// Parse command line flags
-	blockType := flag.String("block", "golden", "Block type to mine (golden/silver)")
-	coinType := flag.String("coin", "leah", "Coin type to mine")
-	address := flag.String("address", "", "Mining address")
 	viewGenesis := flag.Bool("view-genesis", false, "View Genesis block information")
 	saveGenesis := flag.String("save-genesis", "", "Save Genesis block information to file")
 	flag.Parse()
@@ -64,8 +61,14 @@ func main() {
 	// Interactive menu loop
 	for {
 		displayMenu()
-		var choice int
-		fmt.Scan(&choice)
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		choice, err := strconv.Atoi(input)
+		if err != nil {
+			fmt.Println("Invalid choice. Please try again.")
+			continue
+		}
 
 		switch choice {
 		case 1:
@@ -79,12 +82,12 @@ func main() {
 			handleDashboardMenu(bc)
 		case 4:
 			// Mining
-			startMining(bc, blockType, coinType, address)
+			handleMiningMenu()
 		case 5:
 			// View Genesis Block
 			bc.DisplayGenesisBlock()
 			fmt.Print("\nPress Enter to continue...")
-			fmt.Scanln()
+			reader.ReadString('\n')
 		case 6:
 			// Exit
 			fmt.Println("Exiting...")
@@ -193,56 +196,35 @@ func handleNetworkMenu(bc *blockchain.Blockchain) {
 		return
 	}
 
-	cmd := flag.NewFlagSet("network", flag.ExitOnError)
-	cmd.String("address", "localhost:3000", "Node address")
-	cmd.String("peer", "", "Peer address to connect to")
-	cmd.Bool("monitor", false, "Monitor network continuously")
-	cmd.Int("interval", 5, "Monitoring interval in seconds")
-
 	switch choice {
 	case 1:
 		fmt.Print("Enter node address (default: localhost:3000): ")
 		address, _ := reader.ReadString('\n')
 		address = strings.TrimSpace(address)
-		if address != "" {
-			// Validate address format
-			if !strings.Contains(address, ":") {
-				address = "localhost:" + address
-			}
-			cmd.Set("address", address)
+		if address == "" {
+			address = "localhost:3000"
 		}
 
 		fmt.Print("Enter peer address (optional, format: host:port): ")
 		peer, _ := reader.ReadString('\n')
 		peer = strings.TrimSpace(peer)
-		if peer != "" {
-			// Validate peer address format
-			if !strings.Contains(peer, ":") {
-				fmt.Println("Invalid peer address format. Please use host:port format.")
-				return
-			}
-			cmd.Set("peer", peer)
-		}
 
-		runNode(bc, cmd.Lookup("address").Value.String(), cmd.Lookup("peer").Value.String())
+		runNode(bc, address, peer)
 
 	case 2:
 		fmt.Print("Enter monitoring interval in seconds (default: 5): ")
 		interval, _ := reader.ReadString('\n')
 		interval = strings.TrimSpace(interval)
-		if interval != "" {
-			intervalNum, err := strconv.Atoi(interval)
-			if err != nil || intervalNum <= 0 {
-				fmt.Println("Invalid interval. Using default value of 5 seconds.")
-			} else {
-				cmd.Set("interval", interval)
-			}
+		if interval == "" {
+			interval = "5"
 		}
-		cmd.Set("monitor", "true")
-		runNode(bc, cmd.Lookup("address").Value.String(), "")
+
+		runNode(bc, "localhost:3000", "")
 
 	case 3:
 		return
+	default:
+		fmt.Println("Invalid choice")
 	}
 }
 
@@ -272,6 +254,8 @@ func handleWalletMenu(bc *blockchain.Blockchain) {
 		runWallet(bc, "send")
 	case 4:
 		return
+	default:
+		fmt.Println("Invalid choice")
 	}
 }
 
