@@ -179,3 +179,32 @@ func (utxoSet *UTXOSet) GetUTXO(txID []byte, outputIndex int) UTXO {
 
 	return utxo
 }
+
+// ProcessTransaction processes a transaction and updates the UTXO set
+func (us *UTXOSet) ProcessTransaction(tx *Transaction) error {
+	us.mu.Lock()
+	defer us.mu.Unlock()
+
+	// Remove spent UTXOs
+	for _, input := range tx.Inputs {
+		key := fmt.Sprintf("%s:%d", string(input.TxID), input.OutputIndex)
+		delete(us.utxos, key)
+	}
+
+	// Add new UTXOs
+	for i, output := range tx.Outputs {
+		utxo := UTXO{
+			TxID:          string(tx.ID),
+			Index:         i,
+			Amount:        output.Value,
+			Address:       output.Address,
+			PublicKeyHash: output.PublicKeyHash,
+			CoinType:      output.CoinType,
+			Timestamp:     time.Now().Unix(),
+		}
+		key := fmt.Sprintf("%s:%d", tx.ID, i)
+		us.utxos[key] = utxo
+	}
+
+	return nil
+}

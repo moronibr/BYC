@@ -35,15 +35,6 @@ type UTXOCache struct {
 	mu      sync.RWMutex
 }
 
-// TransactionBatch implements transaction batching
-type TransactionBatch struct {
-	txs       []Transaction
-	maxSize   int
-	maxDelay  time.Duration
-	lastFlush time.Time
-	mu        sync.Mutex
-}
-
 // NewPruningManager creates a new pruning manager
 func NewPruningManager(config PruningConfig, storage *storage.Storage, blockchain *Blockchain) *PruningManager {
 	return &PruningManager{
@@ -248,55 +239,6 @@ func (c *UTXOCache) Clear() {
 	defer c.mu.Unlock()
 
 	c.cache = make(map[string]*UTXO)
-}
-
-// NewTransactionBatch creates a new transaction batch
-func NewTransactionBatch(maxSize int, maxDelay time.Duration) *TransactionBatch {
-	return &TransactionBatch{
-		txs:       make([]Transaction, 0, maxSize),
-		maxSize:   maxSize,
-		maxDelay:  maxDelay,
-		lastFlush: time.Now(),
-	}
-}
-
-// Add adds a transaction to the batch
-func (b *TransactionBatch) Add(tx Transaction) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	// Add transaction
-	b.txs = append(b.txs, tx)
-
-	// Check if batch is full
-	if len(b.txs) >= b.maxSize {
-		return b.flush()
-	}
-
-	// Check if max delay has passed
-	if time.Since(b.lastFlush) >= b.maxDelay {
-		return b.flush()
-	}
-
-	return nil
-}
-
-// flush flushes the batch
-func (b *TransactionBatch) flush() error {
-	if len(b.txs) == 0 {
-		return nil
-	}
-
-	// Process transactions
-	for range b.txs {
-		// TODO: Implement transaction processing
-	}
-
-	// Clear batch
-	b.txs = make([]Transaction, 0, b.maxSize)
-	b.lastFlush = time.Now()
-
-	return nil
 }
 
 // CompressBlock compresses a block for storage

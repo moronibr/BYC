@@ -1,7 +1,6 @@
 package blockchain
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/json"
@@ -51,7 +50,7 @@ type Block struct {
 	Transactions []Transaction
 	PrevHash     []byte
 	Hash         []byte
-	Nonce        int64
+	Nonce        uint64
 	BlockType    BlockType
 	Difficulty   int
 }
@@ -162,26 +161,6 @@ func (tx *Transaction) Sign(privateKey []byte) error {
 	return nil
 }
 
-// Verify verifies the signature of a transaction
-func (tx *Transaction) Verify() bool {
-	txCopy := tx.TrimmedCopy()
-
-	for i, input := range tx.Inputs {
-		// Set the public key for this input
-		txCopy.Inputs[i].PublicKey = input.PublicKey
-
-		// Calculate the hash of the transaction
-		hash := txCopy.CalculateHash()
-
-		// Verify the signature
-		if !crypto.Verify(hash, input.Signature, input.PublicKey) {
-			return false
-		}
-	}
-
-	return true
-}
-
 // IsCoinbase checks if a transaction is a coinbase transaction
 func (tx *Transaction) IsCoinbase() bool {
 	return len(tx.Inputs) == 1 && len(tx.Inputs[0].TxID) == 0 && tx.Inputs[0].OutputIndex == -1
@@ -208,45 +187,6 @@ func (tx *Transaction) GetTotalOutput() float64 {
 // GetFee returns the transaction fee
 func (tx *Transaction) GetFee() float64 {
 	return tx.GetTotalInput() - tx.GetTotalOutput()
-}
-
-// Validate validates a transaction against the UTXO set
-func (tx *Transaction) Validate(utxoSet *UTXOSet) bool {
-	// Verify the transaction signature
-	if !tx.Verify() {
-		return false
-	}
-
-	// Check if the transaction is a coinbase transaction
-	if tx.IsCoinbase() {
-		return true
-	}
-
-	// Get the total input amount
-	totalInput := tx.GetTotalInput()
-
-	// Get the total output amount
-	totalOutput := tx.GetTotalOutput()
-
-	// Check if the input amount is sufficient
-	if totalInput < totalOutput {
-		return false
-	}
-
-	// Check if all inputs are valid UTXOs
-	for _, input := range tx.Inputs {
-		utxo := utxoSet.GetUTXO(input.TxID, input.OutputIndex)
-		if len(utxo.TxID) == 0 {
-			return false
-		}
-
-		// Check if the input belongs to the sender
-		if !bytes.Equal(utxo.PublicKeyHash, crypto.HashPublicKey(input.PublicKey)) {
-			return false
-		}
-	}
-
-	return true
 }
 
 // MiningDifficulty returns the difficulty multiplier for a given coin type

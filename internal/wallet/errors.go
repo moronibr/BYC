@@ -42,9 +42,9 @@ type (
 
 	// BackupError occurs during wallet backup/restore
 	BackupError struct {
-		Operation string
-		Path      string
-		Reason    string
+		Path    string
+		Reason  string
+		Details map[string]interface{}
 	}
 
 	// RateLimitError occurs when operation rate limit is exceeded
@@ -100,6 +100,20 @@ type (
 		Operation string
 		Data      interface{}
 		Reason    string
+	}
+
+	// WalletError represents a wallet-related error
+	WalletError struct {
+		Operation string
+		Reason    string
+		Details   map[string]interface{}
+	}
+
+	// RestoreError represents a wallet restore error
+	RestoreError struct {
+		Path    string
+		Reason  string
+		Details map[string]interface{}
 	}
 )
 
@@ -190,7 +204,7 @@ func (e *TransactionError) Recovery() string {
 }
 
 func (e *BackupError) Error() string {
-	return fmt.Sprintf(ErrBackupMsg, e.Operation, e.Path, e.Reason)
+	return e.Reason
 }
 
 func (e *BackupError) Recovery() string {
@@ -415,4 +429,12 @@ func (em *ErrorMonitor) ResetErrors(errorType string) {
 // GetAlerts returns the alerts channel
 func (em *ErrorMonitor) GetAlerts() <-chan error {
 	return em.alerts
+}
+
+func (e *WalletError) Error() string {
+	return e.Reason
+}
+
+func (e *RestoreError) Error() string {
+	return e.Reason
 }

@@ -248,7 +248,7 @@ func calculateHash(block Block) []byte {
 		block.PrevHash,
 		[]byte(string(block.BlockType)),
 		[]byte(strconv.Itoa(block.Difficulty)),
-		[]byte(strconv.FormatInt(block.Nonce, 10)),
+		[]byte(strconv.FormatUint(block.Nonce, 10)),
 		[]byte(strconv.FormatInt(block.Timestamp, 10)),
 	}, []byte{})
 

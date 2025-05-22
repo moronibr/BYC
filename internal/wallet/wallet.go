@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -104,6 +103,10 @@ type Wallet struct {
 	IV              []byte
 	EncryptedKey    []byte
 	rateLimiter     *RateLimiter
+
+	// Wallet metadata
+	BackupTime    int64
+	BackupVersion int
 }
 
 // WalletBackup represents the backup data for a wallet
@@ -656,91 +659,154 @@ func isValidAddress(address string) bool {
 	return len(address) == 64
 }
 
-// Backup creates a backup of the wallet
-func (w *Wallet) Backup(path string) error {
-	// Check rate limit
-	if err := w.rateLimiter.CheckRateLimit("backup_wallet"); err != nil {
-		return err
+// BackupWallet creates a backup of the wallet with improved error handling
+func (w *Wallet) BackupWallet(path string) error {
+	// Validate path
+	if path == "" {
+		return &BackupError{
+			Path:   path,
+			Reason: "empty backup path",
+		}
 	}
 
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	// Create backup data
-	backup := WalletBackup{
-		PrivateKey:      crypto.PrivateKeyToBytes(w.PrivateKey),
-		PublicKey:       crypto.PublicKeyToBytes(w.PublicKey),
-		Address:         w.Address,
-		Transactions:    w.Transactions,
-		MultiSigWallets: w.MultiSigWallets,
-		HDWallet:        w.HDWallet,
-		AddressBook:     w.AddressBook,
-		Salt:            w.Salt,
-		IV:              w.IV,
+	// Create backup directory if it doesn't exist
+	backupDir := filepath.Dir(path)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return &BackupError{
+			Path:   path,
+			Reason: fmt.Sprintf("failed to create backup directory: %v", err),
+			Details: map[string]interface{}{
+				"directory": backupDir,
+				"error":     err.Error(),
+			},
+		}
 	}
 
-	// Marshal backup data
-	data, err := json.Marshal(backup)
+	// Create temporary file for atomic write
+	tempPath := path + ".tmp"
+	tempFile, err := os.Create(tempPath)
 	if err != nil {
 		return &BackupError{
-			Operation: "marshal_backup",
-			Path:      path,
-			Reason:    err.Error(),
+			Path:   path,
+			Reason: fmt.Sprintf("failed to create temporary file: %v", err),
+			Details: map[string]interface{}{
+				"temp_path": tempPath,
+				"error":     err.Error(),
+			},
 		}
 	}
+	defer os.Remove(tempPath)
 
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// Encrypt wallet data
+	encryptedData, err := w.encryptWalletData()
+	if err != nil {
 		return &BackupError{
-			Operation: "create_directory",
-			Path:      path,
-			Reason:    err.Error(),
+			Path:   path,
+			Reason: fmt.Sprintf("failed to encrypt wallet data: %v", err),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
 		}
 	}
 
-	// Write backup file
-	if err := ioutil.WriteFile(path, data, 0600); err != nil {
+	// Write encrypted data to temporary file
+	if _, err := tempFile.Write(encryptedData); err != nil {
 		return &BackupError{
-			Operation: "write_backup",
-			Path:      path,
-			Reason:    err.Error(),
+			Path:   path,
+			Reason: fmt.Sprintf("failed to write wallet data: %v", err),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
 		}
 	}
 
-	// Log backup
-	w.logger.Info("Wallet backup created",
-		zap.String("path", path),
-		zap.String("address", w.Address),
-	)
+	// Close temporary file
+	if err := tempFile.Close(); err != nil {
+		return &BackupError{
+			Path:   path,
+			Reason: fmt.Sprintf("failed to close temporary file: %v", err),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+
+	// Atomically rename temporary file to final path
+	if err := os.Rename(tempPath, path); err != nil {
+		return &BackupError{
+			Path:   path,
+			Reason: fmt.Sprintf("failed to finalize backup: %v", err),
+			Details: map[string]interface{}{
+				"temp_path": tempPath,
+				"error":     err.Error(),
+			},
+		}
+	}
 
 	return nil
 }
 
-// Restore restores a wallet from backup
-func Restore(path string) (*Wallet, error) {
+// RestoreWallet restores a wallet from backup with improved error handling
+func (w *Wallet) RestoreWallet(path string) error {
+	// Validate path
+	if path == "" {
+		return &RestoreError{
+			Path:   path,
+			Reason: "empty restore path",
+		}
+	}
+
+	// Check if backup file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return &RestoreError{
+			Path:   path,
+			Reason: "backup file does not exist",
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+
 	// Read backup file
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read backup file: %v", err)
+		return &RestoreError{
+			Path:   path,
+			Reason: fmt.Sprintf("failed to read backup file: %v", err),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+
+	// Decrypt wallet data
+	decryptedData, err := w.decryptWalletData(data)
+	if err != nil {
+		return &RestoreError{
+			Path:   path,
+			Reason: fmt.Sprintf("failed to decrypt wallet data: %v", err),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
 	}
 
 	// Unmarshal backup data
 	var backup WalletBackup
-	if err := json.Unmarshal(data, &backup); err != nil {
-		return nil, ErrInvalidBackup
+	if err := json.Unmarshal(decryptedData, &backup); err != nil {
+		return ErrInvalidBackup
 	}
 
 	// Restore private key
 	privateKey, err := crypto.BytesToPrivateKey(backup.PrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to restore private key: %v", err)
+		return fmt.Errorf("failed to restore private key: %v", err)
 	}
 
 	// Restore public key
 	publicKey, err := crypto.BytesToPublicKey(backup.PublicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to restore public key: %v", err)
+		return fmt.Errorf("failed to restore public key: %v", err)
 	}
 
 	// Create wallet
@@ -760,10 +826,10 @@ func Restore(path string) (*Wallet, error) {
 
 	// Verify address
 	if wallet.Address != generateAddress(publicKey) {
-		return nil, ErrInvalidBackup
+		return ErrInvalidBackup
 	}
 
-	return wallet, nil
+	return nil
 }
 
 // ExportPublicKey returns the wallet's public key in bytes
@@ -854,4 +920,108 @@ func (w *Wallet) CreateJosephCoin(bc *blockchain.Blockchain) error {
 	}
 
 	return nil
+}
+
+// Serialize converts the wallet to a byte array
+func (w *Wallet) Serialize() ([]byte, error) {
+	return json.Marshal(w)
+}
+
+// Deserialize loads the wallet from a byte array
+func (w *Wallet) Deserialize(data []byte) error {
+	return json.Unmarshal(data, w)
+}
+
+// Add the missing encryption methods to the Wallet struct
+func (w *Wallet) encryptWalletData() ([]byte, error) {
+	// Serialize wallet data
+	data, err := w.Serialize()
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "serialize_wallet",
+			Reason:    err.Error(),
+		}
+	}
+
+	// Generate salt if not exists
+	if w.Salt == nil {
+		w.Salt = make([]byte, 32)
+		if _, err := rand.Read(w.Salt); err != nil {
+			return nil, &EncryptionError{
+				Operation: "generate_salt",
+				Reason:    err.Error(),
+			}
+		}
+	}
+
+	// Generate IV if not exists
+	if w.IV == nil {
+		w.IV = make([]byte, aes.BlockSize)
+		if _, err := rand.Read(w.IV); err != nil {
+			return nil, &EncryptionError{
+				Operation: "generate_iv",
+				Reason:    err.Error(),
+			}
+		}
+	}
+
+	// Create cipher
+	block, err := aes.NewCipher(w.EncryptedKey)
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "create_cipher",
+			Reason:    err.Error(),
+		}
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "create_gcm",
+			Reason:    err.Error(),
+		}
+	}
+
+	// Encrypt data
+	encryptedData := gcm.Seal(nil, w.IV, data, nil)
+	return encryptedData, nil
+}
+
+func (w *Wallet) decryptWalletData(data []byte) ([]byte, error) {
+	if w.EncryptedKey == nil || w.IV == nil {
+		return nil, &EncryptionError{
+			Operation: "decrypt_data",
+			Reason:    "missing encryption key or IV",
+		}
+	}
+
+	// Create cipher
+	block, err := aes.NewCipher(w.EncryptedKey)
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "create_cipher",
+			Reason:    err.Error(),
+		}
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "create_gcm",
+			Reason:    err.Error(),
+		}
+	}
+
+	// Decrypt data
+	decryptedData, err := gcm.Open(nil, w.IV, data, nil)
+	if err != nil {
+		return nil, &EncryptionError{
+			Operation: "decrypt_data",
+			Reason:    err.Error(),
+		}
+	}
+
+	return decryptedData, nil
 }

@@ -1,21 +1,48 @@
 package blockchain
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"math"
+	"math/big"
 	"sync"
 	"time"
 )
 
-// MiningConfig holds configuration for mining
+// BlockHeader represents the header of a block
+type BlockHeader struct {
+	PreviousHash []byte
+	MerkleRoot   []byte
+	Timestamp    int64
+	Difficulty   uint32
+}
+
+// MiningConfig holds mining configuration parameters
 type MiningConfig struct {
-	TargetBlockTime  time.Duration
+	// Number of worker goroutines
+	NumWorkers int
+	// Target difficulty
+	TargetDifficulty *big.Int
+	// Block time target in seconds
+	BlockTimeTarget int64
+	// Maximum nonce value
+	MaxNonce uint64
+	// Target block time
+	TargetBlockTime time.Duration
+	// Difficulty window
 	DifficultyWindow int
-	MaxDifficulty    int
-	MinDifficulty    int
+	// Maximum difficulty
+	MaxDifficulty int
+	// Minimum difficulty
+	MinDifficulty int
+	// Adjustment factor
 	AdjustmentFactor float64
-	PoolShare        float64
-	PoolFee          float64
-	PoolMinPayout    float64
+	// Pool share
+	PoolShare float64
+	// Pool fee
+	PoolFee float64
+	// Pool minimum payout
+	PoolMinPayout float64
 }
 
 // MiningPool represents a mining pool
@@ -32,13 +59,43 @@ type MiningPool struct {
 	mu            sync.RWMutex
 }
 
-// Miner represents a miner in the pool
+// MiningStats tracks mining statistics
+type MiningStats struct {
+	// Total hashes computed
+	TotalHashes uint64
+	// Current hash rate (hashes per second)
+	HashRate float64
+	// Time spent mining
+	MiningTime time.Duration
+	// Number of blocks found
+	BlocksFound uint64
+	// Last block found time
+	LastBlockTime time.Time
+}
+
+// Miner represents a mining worker
 type Miner struct {
-	ID            string
-	Address       string
-	Hashrate      float64
-	Shares        float64
-	LastShare     time.Time
+	// Mining configuration
+	config MiningConfig
+	// Mining statistics
+	stats MiningStats
+	// Channel for stopping mining
+	stopChan chan struct{}
+	// Wait group for worker synchronization
+	wg sync.WaitGroup
+	// Mutex for thread-safe stats updates
+	mu sync.RWMutex
+	// ID of the miner
+	ID string
+	// Address of the miner
+	Address string
+	// Hashrate of the miner
+	Hashrate float64
+	// Shares mined by the miner
+	Shares float64
+	// Last share time
+	LastShare time.Time
+	// Pending payout for the miner
 	PendingPayout float64
 }
 
@@ -182,9 +239,9 @@ func (p *MiningPool) ProcessPayouts() {
 	defer p.mu.Unlock()
 
 	for _, miner := range p.Miners {
-		if miner.PendingPayout >= p.PoolMinPayout {
-			// TODO: Implement actual payout transaction
-			miner.PendingPayout = 0
+		if miner.Shares > 0 {
+			miner.PendingPayout += miner.Shares * p.PoolShare
+			miner.Shares = 0
 		}
 	}
 	p.LastPayout = time.Now()
@@ -220,4 +277,142 @@ func (p *MiningPool) GetMinerStats(minerID string) map[string]interface{} {
 		"last_share":     miner.LastShare,
 		"pending_payout": miner.PendingPayout,
 	}
+}
+
+// NewMiner creates a new miner instance
+func NewMiner(config MiningConfig) *Miner {
+	return &Miner{
+		config:   config,
+		stopChan: make(chan struct{}),
+	}
+}
+
+// Start begins the mining process
+func (m *Miner) Start(block *Block) {
+	m.wg.Add(m.config.NumWorkers)
+	startTime := time.Now()
+
+	// Start worker goroutines
+	for i := 0; i < m.config.NumWorkers; i++ {
+		go m.worker(i, block, startTime)
+	}
+}
+
+// Stop halts the mining process
+func (m *Miner) Stop() {
+	close(m.stopChan)
+	m.wg.Wait()
+}
+
+// GetStats returns current mining statistics
+func (m *Miner) GetStats() MiningStats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.stats
+}
+
+// worker performs the actual mining work
+func (m *Miner) worker(id int, block *Block, startTime time.Time) {
+	defer m.wg.Done()
+
+	// Calculate nonce range for this worker
+	startNonce := uint64(id) * m.config.MaxNonce / uint64(m.config.NumWorkers)
+	endNonce := startNonce + m.config.MaxNonce/uint64(m.config.NumWorkers)
+
+	// Create a copy of the block for this worker
+	workerBlock := block.Copy()
+	workerBlock.Nonce = startNonce
+
+	// Pre-compute block header hash
+	headerHash := workerBlock.HeaderHash()
+
+	for {
+		select {
+		case <-m.stopChan:
+			return
+		default:
+			// Update nonce
+			workerBlock.Nonce++
+
+			// Check if we've reached the end of our nonce range
+			if workerBlock.Nonce >= endNonce {
+				return
+			}
+
+			// Compute hash
+			hash := sha256.Sum256(append(headerHash, binary.BigEndian.AppendUint64(nil, workerBlock.Nonce)...))
+			hashInt := new(big.Int).SetBytes(hash[:])
+
+			// Update statistics
+			m.mu.Lock()
+			m.stats.TotalHashes++
+			m.stats.HashRate = float64(m.stats.TotalHashes) / time.Since(startTime).Seconds()
+			m.mu.Unlock()
+
+			// Check if we found a valid block
+			if hashInt.Cmp(m.config.TargetDifficulty) <= 0 {
+				m.mu.Lock()
+				m.stats.BlocksFound++
+				m.stats.LastBlockTime = time.Now()
+				m.stats.MiningTime = time.Since(startTime)
+				m.mu.Unlock()
+
+				// Update the original block
+				block.Nonce = workerBlock.Nonce
+				block.Hash = hash[:]
+				return
+			}
+		}
+	}
+}
+
+// AdjustDifficulty adjusts the mining difficulty based on block time
+func (m *Miner) AdjustDifficulty(actualBlockTime time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Calculate difficulty adjustment factor
+	targetTime := time.Duration(m.config.BlockTimeTarget) * time.Second
+	adjustmentFactor := float64(actualBlockTime) / float64(targetTime)
+
+	// Adjust difficulty
+	if adjustmentFactor > 1.1 {
+		// Block time too high, decrease difficulty
+		m.config.TargetDifficulty.Mul(m.config.TargetDifficulty, big.NewInt(9))
+		m.config.TargetDifficulty.Div(m.config.TargetDifficulty, big.NewInt(10))
+	} else if adjustmentFactor < 0.9 {
+		// Block time too low, increase difficulty
+		m.config.TargetDifficulty.Mul(m.config.TargetDifficulty, big.NewInt(10))
+		m.config.TargetDifficulty.Div(m.config.TargetDifficulty, big.NewInt(9))
+	}
+}
+
+// Copy creates a deep copy of a block
+func (b *Block) Copy() *Block {
+	return &Block{
+		Timestamp:    b.Timestamp,
+		Transactions: b.Transactions,
+		PrevHash:     b.PrevHash,
+		Hash:         b.Hash,
+		Nonce:        b.Nonce,
+		BlockType:    b.BlockType,
+		Difficulty:   b.Difficulty,
+	}
+}
+
+// HeaderHash computes the hash of the block header
+func (b *Block) HeaderHash() []byte {
+	data := make([]byte, 0)
+	data = append(data, b.PrevHash...)
+	data = append(data, b.Hash...)
+	data = append(data, []byte(b.BlockType)...)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(b.Timestamp))
+	data = append(data, buf...)
+	binary.BigEndian.PutUint64(buf, b.Nonce)
+	data = append(data, buf...)
+	binary.BigEndian.PutUint32(buf[:4], uint32(b.Difficulty))
+	data = append(data, buf[:4]...)
+	hash := sha256.Sum256(data)
+	return hash[:]
 }
