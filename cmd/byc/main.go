@@ -3,14 +3,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/mining"
@@ -271,9 +274,68 @@ func handleWalletMenu(bc *blockchain.Blockchain) {
 
 func handleDashboardMenu(bc *blockchain.Blockchain) {
 	fmt.Println("\n=== Dashboard ===")
-	fmt.Println("Loading dashboard...")
-	// TODO: Implement dashboard functionality
-	fmt.Println("Dashboard not implemented yet")
+
+	// Get mining wallet info
+	walletsDir := "wallets"
+	walletFile := filepath.Join(walletsDir, "mining_wallet.json")
+
+	// Network Status
+	fmt.Println("\nNetwork Status:")
+	fmt.Printf("Blockchain Height: %d\n", bc.GetCurrentHeight())
+
+	// Safely get latest block
+	latestBlock := bc.GetLatestBlock()
+	if latestBlock != nil {
+		fmt.Printf("Latest Block: %x\n", latestBlock.Hash)
+	} else {
+		fmt.Println("Latest Block: None (Genesis block not created)")
+	}
+
+	// Mining Stats
+	fmt.Println("\nMining Statistics:")
+	if _, err := os.Stat(walletFile); err == nil {
+		data, err := os.ReadFile(walletFile)
+		if err == nil {
+			var walletInfo struct {
+				Address string
+				Rewards map[string]float64
+			}
+			if err := json.Unmarshal(data, &walletInfo); err == nil {
+				fmt.Printf("Mining Address: %s\n", walletInfo.Address)
+				fmt.Println("\nMining Rewards:")
+				for coinType, amount := range walletInfo.Rewards {
+					fmt.Printf("%s: %.2f\n", coinType, amount)
+				}
+			}
+		}
+	} else {
+		fmt.Println("No mining wallet found")
+	}
+
+	// Recent Blocks
+	fmt.Println("\nRecent Blocks:")
+	blocks := bc.Blocks
+	if len(blocks) > 0 {
+		// Show last 5 blocks
+		start := len(blocks) - 5
+		if start < 0 {
+			start = 0
+		}
+		for i := len(blocks) - 1; i >= start; i-- {
+			block := blocks[i]
+			fmt.Printf("Block %d: %x\n", i, block.Hash)
+			fmt.Printf("  Timestamp: %s\n", time.Unix(block.Timestamp, 0).Format("2006-01-02 15:04:05"))
+			fmt.Printf("  Transactions: %d\n", len(block.Transactions))
+			fmt.Printf("  Block Type: %s\n", block.BlockType)
+			fmt.Println()
+		}
+	} else {
+		fmt.Println("No blocks found")
+	}
+
+	fmt.Println("\nPress Enter to return to main menu...")
+	reader := bufio.NewReader(os.Stdin)
+	reader.ReadString('\n')
 }
 
 func handleMiningMenu() {
@@ -509,8 +571,38 @@ func runWallet(bc *blockchain.Blockchain, action string) {
 		fmt.Printf("Created new wallet with address: %s\n", w.Address)
 
 	case "balance":
-		// TODO: Implement balance checking
-		fmt.Println("Balance checking not implemented yet")
+		// Get the mining wallet
+		walletsDir := "wallets"
+		walletFile := filepath.Join(walletsDir, "mining_wallet.json")
+
+		if _, err := os.Stat(walletFile); err != nil {
+			fmt.Println("No wallet found. Please mine some coins first.")
+			return
+		}
+
+		// Read wallet file
+		data, err := os.ReadFile(walletFile)
+		if err != nil {
+			fmt.Printf("Error reading wallet file: %v\n", err)
+			return
+		}
+
+		var walletInfo struct {
+			Address string
+			Rewards map[string]float64
+		}
+		if err := json.Unmarshal(data, &walletInfo); err != nil {
+			fmt.Printf("Error parsing wallet file: %v\n", err)
+			return
+		}
+
+		fmt.Println("\n=== Wallet Balance ===")
+		fmt.Printf("Address: %s\n", walletInfo.Address)
+		fmt.Println("\nRewards:")
+		for coinType, amount := range walletInfo.Rewards {
+			fmt.Printf("%s: %.2f\n", coinType, amount)
+		}
+		fmt.Println("=====================\n")
 
 	case "send":
 		// TODO: Implement sending coins
