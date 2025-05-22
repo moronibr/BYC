@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -554,6 +555,10 @@ func (bc *Blockchain) DisplayGenesisBlock() {
 		fmt.Printf("Difficulty: %d\n", genesis.Difficulty)
 		fmt.Printf("Block Type: %s\n", genesis.BlockType)
 		fmt.Printf("Number of Transactions: %d\n", len(genesis.Transactions))
+		fmt.Printf("Nonce: %d\n", genesis.Nonce)
+		fmt.Printf("Block Size: %d bytes\n", bc.calculateBlockSize(genesis))
+		fmt.Printf("Merkle Root: %x\n", genesis.HeaderHash())
+		fmt.Printf("Initial Supply: %.2f Leah\n", bc.GetTotalSupply(Leah))
 	}
 
 	fmt.Println("\n=== Silver Chain Genesis Block ===")
@@ -565,5 +570,53 @@ func (bc *Blockchain) DisplayGenesisBlock() {
 		fmt.Printf("Difficulty: %d\n", genesis.Difficulty)
 		fmt.Printf("Block Type: %s\n", genesis.BlockType)
 		fmt.Printf("Number of Transactions: %d\n", len(genesis.Transactions))
+		fmt.Printf("Nonce: %d\n", genesis.Nonce)
+		fmt.Printf("Block Size: %d bytes\n", bc.calculateBlockSize(genesis))
+		fmt.Printf("Merkle Root: %x\n", genesis.HeaderHash())
+		fmt.Printf("Initial Supply: %.2f Senum\n", bc.GetTotalSupply(Senum))
 	}
+}
+
+// SaveGenesisBlockInfo saves Genesis block information to a file
+func (bc *Blockchain) SaveGenesisBlockInfo(filename string) error {
+	// Create or open file
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %v", err)
+	}
+	defer file.Close()
+
+	// Write Golden Chain Genesis Block info
+	fmt.Fprintf(file, "=== Golden Chain Genesis Block ===\n")
+	if len(bc.GoldenBlocks) > 0 {
+		genesis := bc.GoldenBlocks[0]
+		fmt.Fprintf(file, "Timestamp: %s\n", time.Unix(genesis.Timestamp, 0).Format(time.RFC3339))
+		fmt.Fprintf(file, "Hash: %x\n", genesis.Hash)
+		fmt.Fprintf(file, "Previous Hash: %x\n", genesis.PrevHash)
+		fmt.Fprintf(file, "Difficulty: %d\n", genesis.Difficulty)
+		fmt.Fprintf(file, "Block Type: %s\n", genesis.BlockType)
+		fmt.Fprintf(file, "Number of Transactions: %d\n", len(genesis.Transactions))
+		fmt.Fprintf(file, "Nonce: %d\n", genesis.Nonce)
+		fmt.Fprintf(file, "Block Size: %d bytes\n", bc.calculateBlockSize(genesis))
+		fmt.Fprintf(file, "Merkle Root: %x\n", genesis.HeaderHash())
+		fmt.Fprintf(file, "Initial Supply: %.2f Leah\n", bc.GetTotalSupply(Leah))
+	}
+
+	// Write Silver Chain Genesis Block info
+	fmt.Fprintf(file, "\n=== Silver Chain Genesis Block ===\n")
+	if len(bc.SilverBlocks) > 0 {
+		genesis := bc.SilverBlocks[0]
+		fmt.Fprintf(file, "Timestamp: %s\n", time.Unix(genesis.Timestamp, 0).Format(time.RFC3339))
+		fmt.Fprintf(file, "Hash: %x\n", genesis.Hash)
+		fmt.Fprintf(file, "Previous Hash: %x\n", genesis.PrevHash)
+		fmt.Fprintf(file, "Difficulty: %d\n", genesis.Difficulty)
+		fmt.Fprintf(file, "Block Type: %s\n", genesis.BlockType)
+		fmt.Fprintf(file, "Number of Transactions: %d\n", len(genesis.Transactions))
+		fmt.Fprintf(file, "Nonce: %d\n", genesis.Nonce)
+		fmt.Fprintf(file, "Block Size: %d bytes\n", bc.calculateBlockSize(genesis))
+		fmt.Fprintf(file, "Merkle Root: %x\n", genesis.HeaderHash())
+		fmt.Fprintf(file, "Initial Supply: %.2f Senum\n", bc.GetTotalSupply(Senum))
+	}
+
+	return nil
 }
