@@ -203,12 +203,20 @@ func handleNetworkMenu(bc *blockchain.Blockchain) {
 		address = strings.TrimSpace(address)
 		if address == "" {
 			address = "localhost:3000"
+		} else if !strings.Contains(address, ":") {
+			// If only port is provided, add localhost
+			address = "localhost:" + address
 		}
 
 		fmt.Print("Enter peer address (optional, format: host:port): ")
 		peer, _ := reader.ReadString('\n')
 		peer = strings.TrimSpace(peer)
+		if peer != "" && !strings.Contains(peer, ":") {
+			fmt.Println("Invalid peer address format. Please use host:port format.")
+			return
+		}
 
+		fmt.Printf("Starting node on %s...\n", address)
 		runNode(bc, address, peer)
 
 	case 2:
@@ -219,7 +227,9 @@ func handleNetworkMenu(bc *blockchain.Blockchain) {
 			interval = "5"
 		}
 
-		runNode(bc, "localhost:3000", "")
+		address := "localhost:3000"
+		fmt.Printf("Starting node on %s with monitoring...\n", address)
+		runNode(bc, address, "")
 
 	case 3:
 		return
