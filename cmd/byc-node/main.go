@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/moroni/BYC/internal/api"
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/network"
 )
@@ -16,6 +17,10 @@ func main() {
 	peer := flag.String("peer", "", "Peer address to connect to")
 	flag.Parse()
 
+	// Create blockchain instance
+	bc := blockchain.NewBlockchain()
+
+	// Create node
 	node, err := network.NewNode(&network.Config{
 		Address:        *address,
 		BlockType:      blockchain.GoldenBlock,
@@ -23,6 +28,18 @@ func main() {
 	})
 	if err != nil {
 		fmt.Printf("Failed to create node: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create API server config
+	config := api.NewConfig(*address, blockchain.GoldenBlock, []string{})
+
+	// Create API server with the node instance
+	server := api.NewServer(bc, config)
+
+	// Start the API server
+	if err := server.Start(); err != nil {
+		fmt.Printf("Failed to start API server: %v\n", err)
 		os.Exit(1)
 	}
 

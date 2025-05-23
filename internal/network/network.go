@@ -10,8 +10,7 @@ import (
 	"net"
 	"time"
 
-	"encoding/binary"
-
+	"github.com/google/uuid"
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/logger"
 	"go.uber.org/zap"
@@ -54,20 +53,28 @@ func (n *Node) acceptConnections() {
 
 // handleConnection handles a new connection
 func (n *Node) handleConnection(conn net.Conn) {
-	defer conn.Close()
 	peer := &Peer{
-		Address:    conn.RemoteAddr().String(),
-		LastSeen:   time.Now(),
-		Connection: conn,
-		Node:       n,
+		ID:       uuid.New().String(),
+		Address:  conn.RemoteAddr().String(),
+		LastSeen: time.Now(),
+		conn:     conn,
+		Node:     n,
+		handlers: make(map[MessageType]MessageHandler),
 	}
-	peer.registerHandlers()
-
 	n.mu.Lock()
-	n.Peers[peer.Address] = peer
+	n.Peers[peer.ID] = peer
 	n.mu.Unlock()
-
 	go peer.handleMessages()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := peer.sendPing(); err != nil {
+				logger.Error("Failed to send ping", zap.Error(err))
+				return
+			}
+		}
+	}()
 }
 
 // connectToPeer connects to a peer
@@ -79,9 +86,11 @@ func (n *Node) connectToPeer(address string) {
 	}
 
 	peer := &Peer{
-		Address:    address,
-		LastSeen:   time.Now(),
-		Connection: conn,
+		Address:  address,
+		LastSeen: time.Now(),
+		conn:     conn,
+		Node:     n,
+		handlers: make(map[MessageType]MessageHandler),
 	}
 
 	n.mu.Lock()
@@ -108,13 +117,13 @@ func (n *Node) sendMessage(peer *Peer, msgType MessageType, payload interface{})
 		To:      peer.Address,
 		Payload: buf.Bytes(),
 	}
-	return gob.NewEncoder(peer.Connection.(net.Conn)).Encode(msg)
+	return gob.NewEncoder(peer.conn).Encode(msg)
 }
 
 // receiveMessage receives a message from a peer
 func (n *Node) receiveMessage(peer *Peer) (*NetworkMessage, error) {
 	var msg NetworkMessage
-	if err := gob.NewDecoder(peer.Connection.(net.Conn)).Decode(&msg); err != nil {
+	if err := gob.NewDecoder(peer.conn).Decode(&msg); err != nil {
 		return nil, fmt.Errorf("failed to decode message: %v", err)
 	}
 	return &msg, nil
@@ -340,7 +349,7 @@ func (n *Node) Close() error {
 
 	// Close all peer connections
 	for _, peer := range n.Peers {
-		conn := peer.Connection.(net.Conn)
+		conn := peer.conn
 		conn.Close()
 	}
 
@@ -365,20 +374,25 @@ func (p *Peer) registerHandlers() {
 
 // handleMessages handles incoming messages
 func (p *Peer) handleMessages() {
+	defer p.conn.Close()
 	for {
-		msg, err := p.receiveMessage()
+		message, err := p.receiveMessage()
 		if err != nil {
-			logger.Error("Failed to receive message", zap.Error(err))
+			if err == io.EOF {
+				logger.Info("Peer disconnected", zap.String("peer", p.ID))
+			} else {
+				logger.Error("Error reading message", zap.Error(err))
+			}
 			return
 		}
 
-		handler, ok := p.handlers[msg.Type]
+		handler, ok := p.handlers[message.Type]
 		if !ok {
-			logger.Error("Unknown message type", zap.String("type", string(msg.Type)))
+			logger.Error("Unknown message type", zap.String("type", string(message.Type)))
 			continue
 		}
 
-		if err := handler(p, msg.Payload); err != nil {
+		if err := handler(p, message.Payload); err != nil {
 			logger.Error("Failed to handle message", zap.Error(err))
 			return
 		}
@@ -402,43 +416,16 @@ func (p *Peer) sendVersion() error {
 
 // receiveMessage receives a message from the peer
 func (p *Peer) receiveMessage() (*NetworkMessage, error) {
-	conn := p.Connection.(net.Conn)
-	// Read message header
-	header := make([]byte, 24)
-	if _, err := io.ReadFull(conn, header); err != nil {
-		return nil, err
+	var msg NetworkMessage
+	if err := gob.NewDecoder(p.conn).Decode(&msg); err != nil {
+		return nil, fmt.Errorf("failed to decode message: %v", err)
 	}
-	// Parse message header (assume first 4 bytes are not used for type conversion)
-	msg := &NetworkMessage{}
-	// Read message payload
-	length := binary.LittleEndian.Uint32(header[4:8])
-	if length > 0 {
-		msg.Payload = make([]byte, length)
-		if _, err := io.ReadFull(conn, msg.Payload); err != nil {
-			return nil, err
-		}
-	}
-	return msg, nil
+	return &msg, nil
 }
 
 // sendMessage sends a message to the peer
 func (p *Peer) sendMessage(msg NetworkMessage) error {
-	conn := p.Connection.(net.Conn)
-	// Create message header (skip type conversion for type)
-	header := make([]byte, 24)
-	// Set message length
-	binary.LittleEndian.PutUint32(header[4:8], uint32(len(msg.Payload)))
-	// Send message header
-	if _, err := conn.Write(header); err != nil {
-		return err
-	}
-	// Send message payload
-	if len(msg.Payload) > 0 {
-		if _, err := conn.Write(msg.Payload); err != nil {
-			return err
-		}
-	}
-	return nil
+	return gob.NewEncoder(p.conn).Encode(msg)
 }
 
 func handlePing(p *Peer, payload []byte) error      { return nil }
@@ -459,9 +446,11 @@ func (n *Node) ConnectToPeer(address string) error {
 	}
 
 	peer := &Peer{
-		Address:    address,
-		LastSeen:   time.Now(),
-		Connection: conn,
+		Address:  address,
+		LastSeen: time.Now(),
+		conn:     conn,
+		Node:     n,
+		handlers: make(map[MessageType]MessageHandler),
 	}
 
 	n.mu.Lock()
@@ -496,8 +485,8 @@ func (n *Node) Stop() {
 
 	// Close all peer connections
 	for _, peer := range n.Peers {
-		if peer.Connection != nil {
-			peer.Connection.Close()
+		if peer.conn != nil {
+			peer.conn.Close()
 		}
 	}
 }
@@ -505,8 +494,8 @@ func (n *Node) Stop() {
 // handlePeer handles messages from a peer
 func (n *Node) handlePeer(peer *Peer) {
 	defer func() {
-		if peer.Connection != nil {
-			peer.Connection.Close()
+		if peer.conn != nil {
+			peer.conn.Close()
 		}
 		n.mu.Lock()
 		delete(n.Peers, peer.Address)
@@ -649,9 +638,11 @@ func (nm *NetworkManager) SendMessage(msg *NetworkMessage) error {
 func (nm *NetworkManager) connectBootstrapPeers() error {
 	for _, addr := range nm.config.BootstrapPeers {
 		peer := Peer{
-			Address:    addr,
-			LastSeen:   time.Now(),
-			Connection: nil,
+			Address:  addr,
+			LastSeen: time.Now(),
+			conn:     nil,
+			Node:     nil,
+			handlers: make(map[MessageType]MessageHandler),
 		}
 		if err := nm.connectToPeer(addr); err != nil {
 			return fmt.Errorf("failed to connect to bootstrap peer %s: %v", addr, err)
@@ -868,4 +859,12 @@ func (nm *NetworkManager) HasReceivedPong(peerAddr string) bool {
 // ConnectToPeer connects to a peer at the given address
 func (nm *NetworkManager) ConnectToPeer(address string) error {
 	return nm.connectToPeer(address)
+}
+
+func (p *Peer) sendPing() error {
+	msg := NetworkMessage{
+		Type:    MessageTypePing,
+		Payload: []byte("ping"),
+	}
+	return p.sendMessage(msg)
 }

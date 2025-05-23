@@ -38,13 +38,10 @@ func NewBlockchain() *Blockchain {
 		Blocks:       make([]*Block, 0),
 	}
 
-	// Create and add Genesis blocks
-	goldenGenesis := createGenesisBlock(GoldenBlock)
-	silverGenesis := createGenesisBlock(SilverBlock)
-
-	bc.GoldenBlocks = append(bc.GoldenBlocks, goldenGenesis)
-	bc.SilverBlocks = append(bc.SilverBlocks, silverGenesis)
-	bc.Blocks = append(bc.Blocks, &goldenGenesis, &silverGenesis)
+	// Use the hardcoded genesis blocks
+	bc.GoldenBlocks = append(bc.GoldenBlocks, GoldenGenesisBlock)
+	bc.SilverBlocks = append(bc.SilverBlocks, SilverGenesisBlock)
+	bc.Blocks = append(bc.Blocks, &GoldenGenesisBlock, &SilverGenesisBlock)
 
 	return bc
 }

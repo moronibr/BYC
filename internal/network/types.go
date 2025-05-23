@@ -59,13 +59,13 @@ type NetworkConfig struct {
 
 // Peer represents a network peer
 type Peer struct {
-	ID         string
-	Address    string
-	LastSeen   time.Time
-	Connection net.Conn
-	Node       *Node
-	handlers   map[MessageType]MessageHandler
-	Height     int64
+	ID       string
+	Address  string
+	LastSeen time.Time
+	conn     net.Conn
+	Node     *Node
+	handlers map[MessageType]MessageHandler
+	Height   int64
 }
 
 // NetworkManager manages the P2P network

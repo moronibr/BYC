@@ -77,6 +77,9 @@ func (s *Server) registerRoutes() {
 
 	// Node info route
 	s.router.HandleFunc("/node/info", s.handleGetNodeInfo).Methods("GET")
+
+	// Mine route
+	s.router.HandleFunc("/mine", s.mine).Methods("POST")
 }
 
 // Start starts the API server
@@ -388,6 +391,15 @@ func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sendResponse(w, http.StatusOK, info, nil)
+}
+
+// mine starts mining
+func (s *Server) mine(w http.ResponseWriter, r *http.Request) {
+	if err := s.node.StartMining(blockchain.Leah); err != nil {
+		s.sendResponse(w, http.StatusBadRequest, nil, err)
+		return
+	}
+	s.sendResponse(w, http.StatusOK, nil, nil)
 }
 
 // ServeHTTP allows Server to be used as an http.Handler in tests

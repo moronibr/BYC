@@ -312,15 +312,15 @@ func (snm *SecureNetworkManager) handleConnection(conn *tls.Conn) {
 
 	// Create peer
 	peer := common.NewPeer(state.PeerCertificates[0].Subject.CommonName, conn.RemoteAddr().String(), 0)
-	peer.SetConnection(conn)
+	peer.Conn = conn
 
 	// Add peer
 	snm.mu.Lock()
 	snm.peers[peer.Address] = &Peer{
-		ID:         peer.ID,
-		Address:    peer.Address,
-		LastSeen:   peer.LastSeen,
-		Connection: peer.GetConnection(),
+		ID:       peer.ID,
+		Address:  peer.Address,
+		LastSeen: peer.LastSeen,
+		conn:     conn,
 	}
 	snm.mu.Unlock()
 
@@ -356,7 +356,7 @@ func (snm *SecureNetworkManager) SendSecureMessage(msg *common.NetworkMessage) e
 
 	// Convert Peer to common.Peer
 	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
-	commonPeer.SetConnection(peer.Connection)
+	commonPeer.Conn = peer.conn
 
 	securePeer, err := NewSecurePeer(commonPeer)
 	if err != nil {
@@ -394,7 +394,7 @@ func (snm *SecureNetworkManager) HandleSecureMessage(data []byte) error {
 
 	// Convert Peer to common.Peer
 	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
-	commonPeer.SetConnection(peer.Connection)
+	commonPeer.Conn = peer.conn
 
 	securePeer, err := NewSecurePeer(commonPeer)
 	if err != nil {
