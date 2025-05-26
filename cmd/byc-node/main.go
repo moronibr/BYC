@@ -9,22 +9,30 @@ import (
 
 	"github.com/moroni/BYC/internal/api"
 	"github.com/moroni/BYC/internal/blockchain"
+	"github.com/moroni/BYC/internal/config"
 	"github.com/moroni/BYC/internal/network"
 )
 
 func main() {
-	address := flag.String("address", "localhost:3000", "Node address")
-	peer := flag.String("peer", "", "Peer address to connect to")
+	// Command line flags
+	configPath := flag.String("config", "config/config.yaml", "Path to config file")
 	flag.Parse()
+
+	// Load configuration
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Printf("Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Create blockchain instance
 	bc := blockchain.NewBlockchain()
 
-	// Create node
+	// Create node with P2P address
 	node, err := network.NewNode(&network.Config{
-		Address:        *address,
-		BlockType:      blockchain.GoldenBlock,
-		BootstrapPeers: []string{},
+		Address:        cfg.P2P.Address,
+		BlockType:      cfg.Blockchain.BlockType,
+		BootstrapPeers: cfg.P2P.BootstrapPeers,
 	})
 	if err != nil {
 		fmt.Printf("Failed to create node: %v\n", err)
@@ -32,10 +40,10 @@ func main() {
 	}
 
 	// Create API server config
-	config := api.NewConfig(*address, blockchain.GoldenBlock, []string{})
+	apiConfig := api.NewConfig(cfg.API.Address, cfg.Blockchain.BlockType, cfg.P2P.BootstrapPeers)
 
-	// Create API server with the node instance
-	server := api.NewServer(bc, config)
+	// Create API server
+	server := api.NewServer(bc, apiConfig)
 
 	// Start the API server
 	if err := server.Start(); err != nil {
@@ -43,13 +51,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *peer != "" {
-		node.ConnectToPeer(*peer)
+	// Start mining if configured
+	if cfg.Mining.Enabled && cfg.Mining.AutoStart {
+		coinType := blockchain.CoinType(cfg.Mining.CoinType)
+		if err := node.StartMining(coinType); err != nil {
+			fmt.Printf("Failed to start mining: %v\n", err)
+		} else {
+			fmt.Printf("Started mining %s coins\n", cfg.Mining.CoinType)
+		}
 	}
 
-	fmt.Printf("Node running at %s. Press Ctrl+C to exit.\n", *address)
+	fmt.Printf("Node running at:\n")
+	fmt.Printf("  API: %s\n", cfg.API.Address)
+	fmt.Printf("  P2P: %s\n", cfg.P2P.Address)
+	fmt.Printf("Press Ctrl+C to exit.\n")
+
+	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
+
 	fmt.Println("Shutting down node...")
+
+	// Graceful shutdown
+	if err := server.Stop(); err != nil {
+		fmt.Printf("Error during server shutdown: %v\n", err)
+	}
+	if err := node.Stop(); err != nil {
+		fmt.Printf("Error during node shutdown: %v\n", err)
+	}
 }

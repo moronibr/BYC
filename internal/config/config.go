@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/moroni/BYC/internal/blockchain"
 )
 
 // NetworkType represents different blockchain networks
@@ -67,101 +69,175 @@ type EnvironmentConfig struct {
 	EnableProfiling bool   `json:"enable_profiling"`
 }
 
-// Config represents the complete wallet configuration
+// Config represents the complete configuration
 type Config struct {
-	Network     NetworkConfig     `json:"network"`
-	Fee         FeeConfig         `json:"fee"`
-	Security    SecurityConfig    `json:"security"`
-	Environment EnvironmentConfig `json:"environment"`
+	API struct {
+		Address string `json:"address"`
+		CORS    struct {
+			AllowedOrigins []string `json:"allowed_origins"`
+		} `json:"cors"`
+		RateLimit struct {
+			RequestsPerSecond int `json:"requests_per_second"`
+			Burst             int `json:"burst"`
+		} `json:"rate_limit"`
+		TLS struct {
+			Enabled  bool   `json:"enabled"`
+			CertFile string `json:"cert_file"`
+			KeyFile  string `json:"key_file"`
+		} `json:"tls"`
+	} `json:"api"`
+
+	P2P struct {
+		Address        string        `json:"address"`
+		BootstrapPeers []string      `json:"bootstrap_peers"`
+		MaxPeers       int           `json:"max_peers"`
+		PingInterval   time.Duration `json:"ping_interval"`
+		PingTimeout    time.Duration `json:"ping_timeout"`
+	} `json:"p2p"`
+
+	Logging struct {
+		Level  string `json:"level"`
+		Format string `json:"format"`
+		Output string `json:"output"`
+	} `json:"logging"`
+
+	Blockchain struct {
+		BlockType    blockchain.BlockType `json:"block_type"`
+		Difficulty   int                  `json:"difficulty"`
+		MaxBlockSize int64                `json:"max_block_size"`
+		MiningReward float64              `json:"mining_reward"`
+	} `json:"blockchain"`
+
+	Mining struct {
+		Enabled               bool   `json:"enabled"`
+		CoinType              string `json:"coin_type"`
+		AutoStart             bool   `json:"auto_start"`
+		MaxThreads            int    `json:"max_threads"`
+		TargetBlocksPerMinute int    `json:"target_blocks_per_minute"`
+	} `json:"mining"`
 }
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Network: NetworkConfig{
-			Type:           Mainnet,
-			RPCURL:         "http://localhost:8545",
-			P2PPort:        30303,
-			BootstrapNodes: []string{},
-			BlockTime:      15 * time.Second,
-			Difficulty:     2,
-			MaxBlockSize:   1024 * 1024, // 1MB
-			MaxConnections: 50,
-			SyncTimeout:    5 * time.Minute,
-			ReconnectDelay: 30 * time.Second,
+		API: struct {
+			Address string `json:"address"`
+			CORS    struct {
+				AllowedOrigins []string `json:"allowed_origins"`
+			} `json:"cors"`
+			RateLimit struct {
+				RequestsPerSecond int `json:"requests_per_second"`
+				Burst             int `json:"burst"`
+			} `json:"rate_limit"`
+			TLS struct {
+				Enabled  bool   `json:"enabled"`
+				CertFile string `json:"cert_file"`
+				KeyFile  string `json:"key_file"`
+			} `json:"tls"`
+		}{
+			Address: "localhost:3000",
+			CORS: struct {
+				AllowedOrigins []string `json:"allowed_origins"`
+			}{
+				AllowedOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+			},
+			RateLimit: struct {
+				RequestsPerSecond int `json:"requests_per_second"`
+				Burst             int `json:"burst"`
+			}{
+				RequestsPerSecond: 100,
+				Burst:             1000,
+			},
+			TLS: struct {
+				Enabled  bool   `json:"enabled"`
+				CertFile string `json:"cert_file"`
+				KeyFile  string `json:"key_file"`
+			}{
+				Enabled:  true,
+				CertFile: "cert.pem",
+				KeyFile:  "key.pem",
+			},
 		},
-		Fee: FeeConfig{
-			BaseFee:            0.001,
-			SizeMultiplier:     0.0001,
-			PriorityMultiplier: 0.01,
-			MinFee:             0.0001,
-			MaxFee:             1.0,
-			FeeUpdateInterval:  1 * time.Hour,
+		P2P: struct {
+			Address        string        `json:"address"`
+			BootstrapPeers []string      `json:"bootstrap_peers"`
+			MaxPeers       int           `json:"max_peers"`
+			PingInterval   time.Duration `json:"ping_interval"`
+			PingTimeout    time.Duration `json:"ping_timeout"`
+		}{
+			Address:        "localhost:3001",
+			BootstrapPeers: []string{},
+			MaxPeers:       100,
+			PingInterval:   30 * time.Second,
+			PingTimeout:    10 * time.Second,
 		},
-		Security: SecurityConfig{
-			EncryptionAlgorithm: "aes-256-gcm",
-			KeyDerivationCost:   32768,
-			KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
-			MaxLoginAttempts:    5,
-			SessionTimeout:      30 * time.Minute,
-			PasswordMinLength:   12,
-			RequireSpecialChars: true,
-			RequireNumbers:      true,
-			RequireUppercase:    true,
+		Logging: struct {
+			Level  string `json:"level"`
+			Format string `json:"format"`
+			Output string `json:"output"`
+		}{
+			Level:  "info",
+			Format: "json",
+			Output: "stdout",
 		},
-		Environment: EnvironmentConfig{
-			LogLevel:        "info",
-			DataDir:         "data",
-			BackupDir:       "backups",
-			TempDir:         "temp",
-			MaxLogSize:      100 * 1024 * 1024, // 100MB
-			MaxLogFiles:     5,
-			DebugMode:       false,
-			MetricsPort:     9090,
-			EnableProfiling: false,
+		Blockchain: struct {
+			BlockType    blockchain.BlockType `json:"block_type"`
+			Difficulty   int                  `json:"difficulty"`
+			MaxBlockSize int64                `json:"max_block_size"`
+			MiningReward float64              `json:"mining_reward"`
+		}{
+			BlockType:    blockchain.GoldenBlock,
+			Difficulty:   4,
+			MaxBlockSize: 1048576, // 1MB
+			MiningReward: 50,
+		},
+		Mining: struct {
+			Enabled               bool   `json:"enabled"`
+			CoinType              string `json:"coin_type"`
+			AutoStart             bool   `json:"auto_start"`
+			MaxThreads            int    `json:"max_threads"`
+			TargetBlocksPerMinute int    `json:"target_blocks_per_minute"`
+		}{
+			Enabled:               true,
+			CoinType:              "BTC",
+			AutoStart:             true,
+			MaxThreads:            4,
+			TargetBlocksPerMinute: 6,
 		},
 	}
 }
 
-// LoadConfig loads configuration from a file
+// LoadConfig loads the configuration from a file
 func LoadConfig(path string) (*Config, error) {
-	// Create default config
-	config := DefaultConfig()
-
-	// Read config file
+	// Read the config file
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %v", err)
 	}
 
-	// Parse config file
-	if err := json.Unmarshal(data, config); err != nil {
+	// Parse the config
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %v", err)
 	}
 
-	// Validate config
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %v", err)
-	}
-
-	return config, nil
+	return &config, nil
 }
 
-// SaveConfig saves configuration to a file
-func (c *Config) SaveConfig(path string) error {
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+// SaveConfig saves the configuration to a file
+func SaveConfig(config *Config, path string) error {
+	// Create the directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
-	// Marshal config
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Marshal the config
+	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %v", err)
 	}
 
-	// Write config file
+	// Write the config file
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
 	}
@@ -171,56 +247,49 @@ func (c *Config) SaveConfig(path string) error {
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
-	// Validate network config
-	if c.Network.P2PPort <= 0 || c.Network.P2PPort > 65535 {
-		return fmt.Errorf("invalid P2P port: %d", c.Network.P2PPort)
+	// Validate API config
+	if c.API.RateLimit.RequestsPerSecond <= 0 {
+		return fmt.Errorf("invalid requests per second: %d", c.API.RateLimit.RequestsPerSecond)
 	}
 
-	if c.Network.BlockTime <= 0 {
-		return fmt.Errorf("invalid block time: %v", c.Network.BlockTime)
+	if c.API.RateLimit.Burst <= 0 {
+		return fmt.Errorf("invalid burst: %d", c.API.RateLimit.Burst)
 	}
 
-	if c.Network.Difficulty <= 0 {
-		return fmt.Errorf("invalid difficulty: %d", c.Network.Difficulty)
+	// Validate P2P config
+	if c.P2P.MaxPeers <= 0 || c.P2P.MaxPeers > 1000 {
+		return fmt.Errorf("invalid max peers: %d", c.P2P.MaxPeers)
 	}
 
-	// Validate fee config
-	if c.Fee.BaseFee < 0 {
-		return fmt.Errorf("invalid base fee: %f", c.Fee.BaseFee)
+	if c.P2P.PingInterval <= 0 {
+		return fmt.Errorf("invalid ping interval: %v", c.P2P.PingInterval)
 	}
 
-	if c.Fee.MinFee < 0 {
-		return fmt.Errorf("invalid minimum fee: %f", c.Fee.MinFee)
+	if c.P2P.PingTimeout <= 0 {
+		return fmt.Errorf("invalid ping timeout: %v", c.P2P.PingTimeout)
 	}
 
-	if c.Fee.MaxFee < c.Fee.MinFee {
-		return fmt.Errorf("maximum fee must be greater than minimum fee")
+	// Validate Blockchain config
+	if c.Blockchain.Difficulty <= 0 {
+		return fmt.Errorf("invalid difficulty: %d", c.Blockchain.Difficulty)
 	}
 
-	// Validate security config
-	if c.Security.KeyDerivationCost < 32768 {
-		return fmt.Errorf("key derivation cost must be at least 32768")
+	if c.Blockchain.MaxBlockSize <= 0 {
+		return fmt.Errorf("invalid max block size: %d", c.Blockchain.MaxBlockSize)
 	}
 
-	if c.Security.MaxLoginAttempts <= 0 {
-		return fmt.Errorf("invalid maximum login attempts: %d", c.Security.MaxLoginAttempts)
+	if c.Blockchain.MiningReward <= 0 {
+		return fmt.Errorf("invalid mining reward: %f", c.Blockchain.MiningReward)
 	}
 
-	if c.Security.PasswordMinLength < 8 {
-		return fmt.Errorf("password minimum length must be at least 8")
-	}
-
-	// Validate environment config
-	if c.Environment.MaxLogSize <= 0 {
-		return fmt.Errorf("invalid maximum log size: %d", c.Environment.MaxLogSize)
-	}
-
-	if c.Environment.MaxLogFiles <= 0 {
-		return fmt.Errorf("invalid maximum log files: %d", c.Environment.MaxLogFiles)
-	}
-
-	if c.Environment.MetricsPort <= 0 || c.Environment.MetricsPort > 65535 {
-		return fmt.Errorf("invalid metrics port: %d", c.Environment.MetricsPort)
+	// Validate Mining config
+	if c.Mining.Enabled {
+		if c.Mining.MaxThreads <= 0 {
+			return fmt.Errorf("invalid max threads: %d", c.Mining.MaxThreads)
+		}
+		if c.Mining.TargetBlocksPerMinute <= 0 {
+			return fmt.Errorf("invalid target blocks per minute: %d", c.Mining.TargetBlocksPerMinute)
+		}
 	}
 
 	return nil

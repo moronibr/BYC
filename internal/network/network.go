@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,16 @@ import (
 	"github.com/moroni/BYC/internal/logger"
 	"go.uber.org/zap"
 )
+
+// Node represents a P2P node
+type Node struct {
+	Config     *Config
+	Blockchain *blockchain.Blockchain
+	Peers      map[string]*Peer
+	server     net.Listener
+	mu         sync.RWMutex
+	isMining   bool
+}
 
 // NewNode creates a new P2P node
 func NewNode(config *Config) (*Node, error) {
@@ -313,11 +324,16 @@ func (n *Node) StartMining(coinType blockchain.CoinType) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.Config.BlockType != "" {
+	if n.isMining {
 		return fmt.Errorf("already mining")
 	}
 
+	n.isMining = true
 	n.Config.BlockType = blockchain.GetBlockType(coinType)
+
+	// Start mining in a goroutine
+	go n.mineBlocks()
+
 	return nil
 }
 
@@ -326,7 +342,48 @@ func (n *Node) StopMining() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	n.isMining = false
 	n.Config.BlockType = ""
+}
+
+// mineBlocks continuously mines new blocks
+func (n *Node) mineBlocks() {
+	for {
+		n.mu.RLock()
+		if !n.isMining {
+			n.mu.RUnlock()
+			return
+		}
+		blockType := n.Config.BlockType
+		n.mu.RUnlock()
+
+		// Get pending transactions
+		pendingTxs := n.Blockchain.PendingTxs
+
+		// Determine coin type based on block type
+		var coinType blockchain.CoinType
+		if blockType == blockchain.GoldenBlock {
+			coinType = blockchain.Leah
+		} else {
+			coinType = blockchain.Senum
+		}
+
+		// Mine the block
+		block, err := n.Blockchain.MineBlock(pendingTxs, blockType, coinType)
+		if err != nil {
+			logger.Error("Failed to mine block", zap.Error(err))
+			continue
+		}
+
+		// Add the mined block
+		if err := n.Blockchain.AddBlock(block); err != nil {
+			logger.Error("Failed to add mined block", zap.Error(err))
+			continue
+		}
+
+		// Broadcast the new block to peers
+		n.broadcastMessage(MessageTypeBlock, &block)
+	}
 }
 
 // GetPeers returns the list of connected peers
@@ -477,18 +534,12 @@ func (n *Node) BroadcastMessage(msg NetworkMessage) error {
 	return nil
 }
 
-// Stop stops the node and closes all connections
-func (n *Node) Stop() {
+// Stop gracefully shuts down the node
+func (n *Node) Stop() error {
 	if n.server != nil {
-		n.server.Close()
+		return n.server.Close()
 	}
-
-	// Close all peer connections
-	for _, peer := range n.Peers {
-		if peer.conn != nil {
-			peer.conn.Close()
-		}
-	}
+	return nil
 }
 
 // handlePeer handles messages from a peer
