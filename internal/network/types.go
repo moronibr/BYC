@@ -1,7 +1,6 @@
 package network
 
 import (
-	"context"
 	"net"
 	"sync"
 	"time"
@@ -57,37 +56,30 @@ type NetworkConfig struct {
 	BootstrapPeers []string
 }
 
-// Peer represents a network peer
-type Peer struct {
-	ID       string
-	Address  string
-	LastSeen time.Time
-	conn     net.Conn
-	Node     *Node
-	handlers map[MessageType]MessageHandler
-	Height   int64
-}
-
-// NetworkManager manages the P2P network
-type NetworkManager struct {
-	config         *NetworkConfig
-	peers          map[string]*Peer
-	bootstrapPeers []*Peer
-	connections    map[string]net.Conn
-	messageChan    chan *NetworkMessage
-	stopChan       chan struct{}
-	ctx            context.Context
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
-}
-
-// Node represents a P2P node
+// Node represents a network node
 type Node struct {
 	Config     *Config
 	Blockchain *blockchain.Blockchain
 	Peers      map[string]*Peer
 	server     net.Listener
 	mu         sync.RWMutex
+	isMining   bool
+}
+
+// Peer represents a network peer
+type Peer struct {
+	ID          string
+	Address     string
+	LastSeen    time.Time
+	Latency     time.Duration
+	Version     string
+	IsActive    bool
+	IsBootstrap bool
+	conn        net.Conn
+	Node        *Node
+	handlers    map[MessageType]MessageHandler
+	Height      int64
+	mu          sync.RWMutex
 }
 
 // Config represents the node configuration
@@ -125,4 +117,38 @@ func NewNetworkConfig(nodeID, listenAddr string, listenPort, maxPeers int) *Netw
 		WriteTimeout:   30 * time.Second,
 		BootstrapPeers: make([]string, 0),
 	}
+}
+
+// NewPeer creates a new peer instance
+func NewPeer(id, address string, port int) *Peer {
+	return &Peer{
+		ID:       id,
+		Address:  address,
+		LastSeen: time.Now(),
+		IsActive: true,
+		handlers: make(map[MessageType]MessageHandler),
+		Height:   0,
+		mu:       sync.RWMutex{},
+	}
+}
+
+// UpdateLastSeen updates the last seen timestamp
+func (p *Peer) UpdateLastSeen() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.LastSeen = time.Now()
+}
+
+// SetConnection sets the peer's connection
+func (p *Peer) SetConnection(conn net.Conn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.conn = conn
+}
+
+// GetConnection returns the peer's connection
+func (p *Peer) GetConnection() net.Conn {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.conn
 }

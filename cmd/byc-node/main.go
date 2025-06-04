@@ -10,10 +10,17 @@ import (
 	"github.com/moroni/BYC/internal/api"
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/config"
+	"github.com/moroni/BYC/internal/logger"
 	"github.com/moroni/BYC/internal/network"
 )
 
 func main() {
+	// Initialize logger
+	if err := logger.Init(); err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Command line flags
 	configPath := flag.String("config", "config/config.yaml", "Path to config file")
 	flag.Parse()

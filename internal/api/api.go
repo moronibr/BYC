@@ -117,6 +117,23 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Stop stops the API server
+func (s *Server) Stop() error {
+	if s.server != nil {
+		if err := s.server.Close(); err != nil {
+			return fmt.Errorf("failed to close server: %v", err)
+		}
+	}
+
+	if s.node != nil {
+		if err := s.node.Close(); err != nil {
+			return fmt.Errorf("failed to close node: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // Response represents a generic API response
 type Response struct {
 	Success bool        `json:"success"`

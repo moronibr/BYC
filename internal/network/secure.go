@@ -13,9 +13,8 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"sync"
 	"time"
-
-	"github.com/moroni/BYC/internal/network/common"
 )
 
 // SecureConfig holds configuration for secure networking
@@ -30,15 +29,16 @@ type SecureConfig struct {
 
 // SecurePeer represents a secure peer connection
 type SecurePeer struct {
-	*common.Peer
+	*Peer
 	cert    *x509.Certificate
 	privKey *ecdsa.PrivateKey
 	conn    *tls.Conn
+	config  *SecureConfig
 }
 
 // SecureMessage represents a signed and encrypted message
 type SecureMessage struct {
-	*common.NetworkMessage
+	*NetworkMessage
 	Signature []byte
 	Nonce     []byte
 }
@@ -133,56 +133,45 @@ func SaveCertificate(cert *x509.Certificate, privKey *ecdsa.PrivateKey, certFile
 }
 
 // NewSecurePeer creates a new secure peer
-func NewSecurePeer(peer *common.Peer) (*SecurePeer, error) {
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %v", err)
-	}
-
+func NewSecurePeer(peer *Peer, config *SecureConfig) *SecurePeer {
 	return &SecurePeer{
-		Peer:    peer,
-		privKey: privKey,
-	}, nil
+		Peer:   peer,
+		config: config,
+	}
 }
 
-// SignMessage signs a message using the peer's private key
-func (sp *SecurePeer) SignMessage(msg *common.NetworkMessage) (*common.NetworkMessage, error) {
+// SignMessage signs a message with the peer's certificate
+func (sp *SecurePeer) SignMessage(msg *NetworkMessage) error {
+	if sp.cert == nil {
+		return fmt.Errorf("peer has no certificate")
+	}
 	// TODO: Implement message signing
-	return msg, nil
+	return nil
 }
 
-// VerifyMessage verifies a signed message
-func (sp *SecurePeer) VerifyMessage(msg *common.NetworkMessage) bool {
+// VerifyMessage verifies a message signature
+func (sp *SecurePeer) VerifyMessage(msg *NetworkMessage) error {
+	if sp.cert == nil {
+		return fmt.Errorf("peer has no certificate")
+	}
 	// TODO: Implement message verification
-	return true
+	return nil
 }
 
-// SecureNetworkManager extends NetworkManager with security features
+// SecureNetworkManager manages secure network connections
 type SecureNetworkManager struct {
 	*NetworkManager
 	config *SecureConfig
+	mu     sync.RWMutex
 	server net.Listener
 }
 
 // NewSecureNetworkManager creates a new secure network manager
-func NewSecureNetworkManager(netConfig *common.NetworkConfig, secureConfig *SecureConfig) (*SecureNetworkManager, error) {
-	// Convert common.NetworkConfig to NetworkConfig
-	config := &NetworkConfig{
-		NodeID:         netConfig.NodeID,
-		ListenPort:     netConfig.ListenPort,
-		MaxPeers:       netConfig.MaxPeers,
-		BootstrapPeers: netConfig.BootstrapPeers,
-		PingInterval:   netConfig.PingInterval,
-		DialTimeout:    netConfig.DialTimeout,
-		ReadTimeout:    netConfig.ReadTimeout,
-		WriteTimeout:   netConfig.WriteTimeout,
-	}
-
-	nm := NewNetworkManager(config)
+func NewSecureNetworkManager(networkConfig *NetworkConfig, secureConfig *SecureConfig) *SecureNetworkManager {
 	return &SecureNetworkManager{
-		NetworkManager: nm,
+		NetworkManager: NewNetworkManager(networkConfig),
 		config:         secureConfig,
-	}, nil
+	}
 }
 
 // Start starts the secure network manager
@@ -311,36 +300,22 @@ func (snm *SecureNetworkManager) handleConnection(conn *tls.Conn) {
 	}
 
 	// Create peer
-	peer := common.NewPeer(state.PeerCertificates[0].Subject.CommonName, conn.RemoteAddr().String(), 0)
-	peer.Conn = conn
+	peer := NewPeer(state.PeerCertificates[0].Subject.CommonName, conn.RemoteAddr().String(), 0)
+	peer.conn = conn
 
 	// Add peer
 	snm.mu.Lock()
-	snm.peers[peer.Address] = &Peer{
-		ID:       peer.ID,
-		Address:  peer.Address,
-		LastSeen: peer.LastSeen,
-		conn:     conn,
-	}
+	snm.peers[peer.Address] = peer
 	snm.mu.Unlock()
 
 	// Handle messages
 	for {
-		var msg common.NetworkMessage
+		var msg NetworkMessage
 		if err := json.NewDecoder(conn).Decode(&msg); err != nil {
 			break
 		}
 
-		// Convert common.NetworkMessage to NetworkMessage
-		networkMsg := &NetworkMessage{
-			Type:      MessageType(msg.Type),
-			From:      msg.From,
-			To:        msg.To,
-			Payload:   msg.Payload,
-			Timestamp: msg.Timestamp,
-		}
-
-		if err := snm.handleMessage(networkMsg); err != nil {
+		if err := snm.handleMessage(&msg); err != nil {
 			// TODO: Handle error
 			continue
 		}
@@ -348,80 +323,27 @@ func (snm *SecureNetworkManager) handleConnection(conn *tls.Conn) {
 }
 
 // SendSecureMessage sends a signed and encrypted message
-func (snm *SecureNetworkManager) SendSecureMessage(msg *common.NetworkMessage) error {
+func (snm *SecureNetworkManager) SendSecureMessage(msg *NetworkMessage) error {
 	peer, ok := snm.peers[msg.To]
 	if !ok {
 		return fmt.Errorf("peer %s not found", msg.To)
 	}
 
-	// Convert Peer to common.Peer
-	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
-	commonPeer.Conn = peer.conn
-
-	securePeer, err := NewSecurePeer(commonPeer)
-	if err != nil {
-		return fmt.Errorf("failed to create secure peer: %v", err)
+	if peer.conn == nil {
+		return fmt.Errorf("peer has no connection")
 	}
 
-	signedMsg, err := securePeer.SignMessage(msg)
-	if err != nil {
+	securePeer := NewSecurePeer(peer, snm.config)
+
+	if err := securePeer.SignMessage(msg); err != nil {
 		return fmt.Errorf("failed to sign message: %v", err)
 	}
 
-	// Convert common.NetworkMessage to NetworkMessage
-	networkMsg := &NetworkMessage{
-		Type:      MessageType(signedMsg.Type),
-		From:      signedMsg.From,
-		To:        signedMsg.To,
-		Payload:   signedMsg.Payload,
-		Timestamp: signedMsg.Timestamp,
-	}
-
-	return snm.SendMessage(networkMsg)
+	return snm.SendMessage(msg)
 }
 
-// HandleSecureMessage handles a received secure message
-func (snm *SecureNetworkManager) HandleSecureMessage(data []byte) error {
-	var smsg SecureMessage
-	if err := json.Unmarshal(data, &smsg); err != nil {
-		return fmt.Errorf("failed to unmarshal secure message: %v", err)
-	}
-
-	peer, ok := snm.peers[smsg.From]
-	if !ok {
-		return fmt.Errorf("peer %s not found", smsg.From)
-	}
-
-	// Convert Peer to common.Peer
-	commonPeer := common.NewPeer(peer.ID, peer.Address, 0)
-	commonPeer.Conn = peer.conn
-
-	securePeer, err := NewSecurePeer(commonPeer)
-	if err != nil {
-		return fmt.Errorf("failed to create secure peer: %v", err)
-	}
-
-	// Convert NetworkMessage to common.NetworkMessage
-	commonMsg := &common.NetworkMessage{
-		Type:      common.MessageType(smsg.Type),
-		From:      smsg.From,
-		To:        smsg.To,
-		Payload:   smsg.Payload,
-		Timestamp: smsg.Timestamp,
-	}
-
-	if !securePeer.VerifyMessage(commonMsg) {
-		return fmt.Errorf("invalid message signature")
-	}
-
-	// Convert common.NetworkMessage to NetworkMessage
-	networkMsg := &NetworkMessage{
-		Type:      MessageType(smsg.Type),
-		From:      smsg.From,
-		To:        smsg.To,
-		Payload:   smsg.Payload,
-		Timestamp: smsg.Timestamp,
-	}
-
-	return snm.handleMessage(networkMsg)
+// HandleSecureMessage handles a secure message
+func (snm *SecureNetworkManager) HandleSecureMessage(msg *NetworkMessage) error {
+	// TODO: Implement secure message handling
+	return nil
 }
