@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -11,6 +12,7 @@ import (
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/logger"
 	"github.com/moroni/BYC/internal/network"
+	"github.com/moroni/BYC/internal/utils"
 	"github.com/moroni/BYC/internal/wallet"
 	"go.uber.org/zap"
 )
@@ -84,9 +86,23 @@ func (s *Server) registerRoutes() {
 
 // Start starts the API server
 func (s *Server) Start() error {
-	// Start the node
+	// Find available port for API server (use port range 8000-8999)
+	apiAddress, err := utils.FindAvailableAddress(s.config.NodeAddress)
+	if err != nil {
+		return fmt.Errorf("failed to find available port for API server: %v", err)
+	}
+	s.config.NodeAddress = apiAddress
+
+	// Start the node with P2P port (use port range 3000-3999)
+	p2pAddress := s.config.NodeAddress
+	host, _, err := net.SplitHostPort(p2pAddress)
+	if err != nil {
+		return fmt.Errorf("invalid address format: %v", err)
+	}
+	p2pAddress = fmt.Sprintf("%s:3000", host)
+
 	node, err := network.NewNode(&network.Config{
-		Address:        s.config.NodeAddress,
+		Address:        p2pAddress,
 		BlockType:      s.config.BlockType,
 		BootstrapPeers: s.config.BootstrapPeers,
 	})
@@ -114,6 +130,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	logger.Info("API server started", zap.String("address", s.config.NodeAddress))
 	return nil
 }
 

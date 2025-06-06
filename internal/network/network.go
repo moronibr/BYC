@@ -12,11 +12,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/logger"
+	"github.com/moroni/BYC/internal/utils"
 	"go.uber.org/zap"
 )
 
 // NewNode creates a new P2P node
 func NewNode(config *Config) (*Node, error) {
+	// Find available port for P2P server
+	p2pAddress, err := utils.FindAvailableAddress(config.Address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find available port for P2P server: %v", err)
+	}
+	config.Address = p2pAddress
+
 	bc := blockchain.NewBlockchain()
 	node := &Node{
 		Config:     config,
@@ -34,6 +42,7 @@ func NewNode(config *Config) (*Node, error) {
 	// Start accepting connections
 	go node.acceptConnections()
 
+	logger.Info("P2P server started", zap.String("address", config.Address))
 	return node, nil
 }
 

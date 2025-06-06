@@ -1,10 +1,10 @@
 {
   "api": {
-    "address": "localhost:8080",
+    "address": "localhost:8000",
     "cors": {
       "allowed_origins": [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080"
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
       ]
     },
     "rate_limit": {
@@ -18,7 +18,7 @@
     }
   },
   "p2p": {
-    "address": "localhost:3001",
+    "address": "localhost:3000",
     "bootstrap_peers": [],
     "max_peers": 100,
     "ping_interval": 30000000000,
