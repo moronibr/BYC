@@ -17,7 +17,6 @@ import (
 
 	"github.com/moroni/BYC/internal/blockchain"
 	"github.com/moroni/BYC/internal/mining"
-	"github.com/moroni/BYC/internal/network"
 	"github.com/moroni/BYC/internal/wallet"
 	"golang.org/x/term"
 )
@@ -29,8 +28,9 @@ func displayMenu() {
 	fmt.Println("3. Dashboard")
 	fmt.Println("4. Mining")
 	fmt.Println("5. View Genesis Block")
-	fmt.Println("6. Exit")
-	fmt.Print("\nEnter your choice (1-6): ")
+	fmt.Println("6. Peer Management")
+	fmt.Println("7. Exit")
+	fmt.Print("\nEnter your choice (1-7): ")
 }
 
 func main() {
@@ -92,6 +92,9 @@ func main() {
 			fmt.Print("\nPress Enter to continue...")
 			reader.ReadString('\n')
 		case 6:
+			// Peer Management
+			handlePeerMenu(bc)
+		case 7:
 			// Exit
 			fmt.Println("Exiting...")
 			return
@@ -187,8 +190,9 @@ func handleNetworkMenu(bc *blockchain.Blockchain) {
 	fmt.Println("\n=== Network Operations ===")
 	fmt.Println("1. Start Node")
 	fmt.Println("2. Monitor Network")
-	fmt.Println("3. Back to Main Menu")
-	fmt.Print("\nEnter your choice (1-3): ")
+	fmt.Println("3. Node Management")
+	fmt.Println("4. Back to Main Menu")
+	fmt.Print("\nEnter your choice (1-4): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
@@ -230,11 +234,30 @@ func handleNetworkMenu(bc *blockchain.Blockchain) {
 			interval = "5"
 		}
 
-		address := "localhost:3000"
-		fmt.Printf("Starting node on %s with monitoring...\n", address)
-		runNode(bc, address, "")
+		node, err := getNode()
+		if err != nil {
+			fmt.Printf("Error getting node: %v\n", err)
+			return
+		}
+
+		fmt.Printf("Starting node with monitoring...\n")
+		// Start monitoring in a goroutine
+		go func() {
+			for {
+				peers := node.GetPeers()
+				fmt.Printf("\nConnected peers: %d\n", len(peers))
+				for _, peer := range peers {
+					fmt.Printf("- %s (Last seen: %s)\n", peer.Address, peer.LastSeen.Format(time.RFC3339))
+				}
+				time.Sleep(time.Duration(5) * time.Second)
+			}
+		}()
 
 	case 3:
+		// Node Management
+		handleNodeManagement(bc)
+
+	case 4:
 		return
 	default:
 		fmt.Println("Invalid choice")
@@ -453,25 +476,18 @@ func handleMiningMenu() {
 }
 
 func runNode(bc *blockchain.Blockchain, address, peerAddress string) {
-	// Create node
-	node, err := network.NewNode(&network.Config{
-		Address:        address,
-		BlockType:      blockchain.GoldenBlock,
-		BootstrapPeers: []string{},
-	})
+	// Get or create node instance
+	node, err := getNode()
 	if err != nil {
-		log.Fatalf("Failed to create node: %v", err)
+		log.Fatalf("Failed to get node: %v", err)
 	}
 
 	// Connect to peer if specified
 	if peerAddress != "" {
-		node.ConnectToPeer(peerAddress)
+		if err := node.ConnectToPeer(peerAddress); err != nil {
+			log.Printf("Failed to connect to peer: %v", err)
+		}
 	}
-
-	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
 }
 
 func runMining(bc *blockchain.Blockchain, coinType, blockType string) {
