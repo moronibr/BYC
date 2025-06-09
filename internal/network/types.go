@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
 )
 
 // MessageType represents the type of network message

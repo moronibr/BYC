@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/moroni/BYC/internal/api"
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/config"
-	"github.com/moroni/BYC/internal/logger"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/api"
+	"byc/internal/blockchain"
+	"byc/internal/config"
+	"byc/internal/logger"
+	"byc/internal/network"
 )
 
 func main() {

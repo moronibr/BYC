@@ -4,8 +4,9 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/blockchain"
+	"byc/internal/network"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/crypto"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/blockchain"
+	"byc/internal/crypto"
+	"byc/internal/network"
+
 	"github.com/tyler-smith/go-bip39"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/scrypt"
@@ -871,7 +872,7 @@ func (w *Wallet) CreateEphraimCoin(bc *blockchain.Blockchain) error {
 	}
 
 	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
+	if err := bc.AddTransaction(*tx); err != nil {
 		return fmt.Errorf("failed to add conversion transaction: %v", err)
 	}
 
@@ -893,7 +894,7 @@ func (w *Wallet) CreateManassehCoin(bc *blockchain.Blockchain) error {
 	}
 
 	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
+	if err := bc.AddTransaction(*tx); err != nil {
 		return fmt.Errorf("failed to add conversion transaction: %v", err)
 	}
 
@@ -915,7 +916,7 @@ func (w *Wallet) CreateJosephCoin(bc *blockchain.Blockchain) error {
 	}
 
 	// Add transaction to the blockchain
-	if err := bc.AddTransaction(tx); err != nil {
+	if err := bc.AddTransaction(*tx); err != nil {
 		return fmt.Errorf("failed to add conversion transaction: %v", err)
 	}
 

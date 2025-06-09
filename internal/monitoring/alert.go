@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/logger"
+	"byc/internal/logger"
+
 	"go.uber.org/zap"
 )
 

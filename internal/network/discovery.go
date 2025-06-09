@@ -13,8 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/logger"
+	"byc/internal/blockchain"
+	"byc/internal/logger"
+
 	"go.uber.org/zap"
 )
 

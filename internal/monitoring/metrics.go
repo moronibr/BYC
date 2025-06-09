@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/blockchain"
+	"byc/internal/network"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )

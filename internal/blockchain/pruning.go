@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/storage"
+	"byc/internal/storage"
 )
 
 // PruningConfig holds configuration for block pruning

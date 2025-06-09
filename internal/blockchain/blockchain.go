@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"byc/internal/interfaces"
 )
 
 // Blockchain represents the BYC blockchain
@@ -165,8 +167,8 @@ func (bc *Blockchain) validateBlock(block Block) error {
 		// Skip validation for coinbase transaction
 		if !tx.IsCoinbase() {
 			// Validate transaction against UTXO set
-			if !tx.Validate(bc.UTXOSet) {
-				return fmt.Errorf("invalid transaction: %x", tx.ID)
+			if err := tx.Validate(bc.UTXOSet); err != nil {
+				return fmt.Errorf("invalid transaction: %x: %v", tx.ID, err)
 			}
 
 			// Check for double spending
@@ -357,25 +359,25 @@ func (bc *Blockchain) CreateTransaction(from, to string, amount float64, coinTyp
 	return tx, nil
 }
 
+// GetPendingTransactions returns the list of pending transactions
+func (bc *Blockchain) GetPendingTransactions() []Transaction {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.PendingTxs
+}
+
 // AddTransaction adds a transaction to the pending transactions
-func (bc *Blockchain) AddTransaction(tx *Transaction) error {
-	// Validate transaction
-	if !tx.Verify() {
-		return errors.New("invalid transaction signature")
-	}
-
-	// Validate transaction against UTXO set
-	if !tx.Validate(bc.UTXOSet) {
-		return errors.New("invalid transaction")
-	}
-
-	// Add transaction to pending transactions
+func (bc *Blockchain) AddTransaction(tx Transaction) error {
 	bc.mu.Lock()
-	bc.PendingTxs = append(bc.PendingTxs, *tx)
-	bc.mu.Unlock()
+	defer bc.mu.Unlock()
 
-	// Update UTXO set
-	return bc.UTXOSet.UpdateWithTransaction(tx)
+	// Validate transaction
+	if err := tx.Validate(bc.UTXOSet); err != nil {
+		return err
+	}
+
+	bc.PendingTxs = append(bc.PendingTxs, tx)
+	return nil
 }
 
 // GetBlock retrieves a block by its hash
@@ -626,4 +628,146 @@ func (bc *Blockchain) SaveGenesisBlockInfo(filename string) error {
 	}
 
 	return nil
+}
+
+// MaintenanceLog represents a maintenance log entry
+type MaintenanceLog struct {
+	Timestamp time.Time
+	Message   string
+}
+
+// SpecialCoin represents a special coin type
+type SpecialCoin struct {
+	Type   string
+	Amount int64
+}
+
+// Update represents a version update
+type Update struct {
+	Version     string
+	Description string
+}
+
+// VersionInfo represents version information
+type VersionInfo struct {
+	Number string
+	Date   time.Time
+}
+
+// Backup methods
+func (bc *Blockchain) CreateBackup(name string) error {
+	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
+		BackupDir: "./backups",
+		Encrypt:   true,
+		Compress:  true,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = backupManager.CreateBackup()
+	return err
+}
+
+func (bc *Blockchain) RestoreBackup(name string) error {
+	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
+		BackupDir: "./backups",
+		Encrypt:   true,
+		Compress:  true,
+	})
+	if err != nil {
+		return err
+	}
+	return backupManager.RestoreBackup(name)
+}
+
+func (bc *Blockchain) ListBackups() []string {
+	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
+		BackupDir: "./backups",
+		Encrypt:   true,
+		Compress:  true,
+	})
+	if err != nil {
+		return nil
+	}
+	return backupManager.ListBackups()
+}
+
+func (bc *Blockchain) DeleteBackup(name string) error {
+	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
+		BackupDir: "./backups",
+		Encrypt:   true,
+		Compress:  true,
+	})
+	if err != nil {
+		return err
+	}
+	return backupManager.DeleteBackup(name)
+}
+
+// Maintenance methods
+func (bc *Blockchain) CheckSystemHealth() *interfaces.SystemHealth {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.GetHealth()
+}
+
+func (bc *Blockchain) RunMaintenance() error {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.Start()
+}
+
+func (bc *Blockchain) GetMaintenanceLog() []interfaces.MaintenanceLog {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.GetLogs()
+}
+
+func (bc *Blockchain) SetMaintenanceSchedule(schedule string) error {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.SetSchedule(schedule)
+}
+
+func (bc *Blockchain) GetMaintenanceTasks() []interfaces.MaintenanceTask {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.GetTasks()
+}
+
+func (bc *Blockchain) SetMaintenanceAlert(email string) error {
+	maintenanceManager := interfaces.NewMaintenanceManager()
+	return maintenanceManager.SetAlert(email)
+}
+
+// Special coin methods
+func (bc *Blockchain) CreateEphraimCoin() error {
+	wallet := interfaces.NewWallet()
+	return wallet.CreateEphraimCoin(bc)
+}
+
+func (bc *Blockchain) CreateManassehCoin() error {
+	wallet := interfaces.NewWallet()
+	return wallet.CreateManassehCoin(bc)
+}
+
+func (bc *Blockchain) CreateJosephCoin() error {
+	wallet := interfaces.NewWallet()
+	return wallet.CreateJosephCoin(bc)
+}
+
+func (bc *Blockchain) GetSpecialCoins() []interfaces.SpecialCoin {
+	wallet := interfaces.NewWallet()
+	return wallet.GetSpecialCoins(bc)
+}
+
+// Version methods
+func (bc *Blockchain) GetCurrentVersion() string {
+	versionManager := interfaces.NewVersionManager()
+	return versionManager.GetCurrentVersion()
+}
+
+func (bc *Blockchain) GetVersionHistory() []interfaces.VersionInfo {
+	versionManager := interfaces.NewVersionManager()
+	return versionManager.GetVersionHistory()
+}
+
+func (bc *Blockchain) UpgradeVersion(targetVersion string) error {
+	versionManager := interfaces.NewVersionManager()
+	return versionManager.Upgrade(targetVersion)
 }

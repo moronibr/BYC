@@ -7,13 +7,14 @@ import (
 	"net"
 	"net/http"
 
+	"byc/internal/blockchain"
+	"byc/internal/logger"
+	"byc/internal/network"
+	"byc/internal/utils"
+	"byc/internal/wallet"
+
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/logger"
-	"github.com/moroni/BYC/internal/network"
-	"github.com/moroni/BYC/internal/utils"
-	"github.com/moroni/BYC/internal/wallet"
 	"go.uber.org/zap"
 )
 

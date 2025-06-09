@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/blockchain"
+	"byc/internal/network"
+
 	"github.com/stretchr/testify/assert"
 )
 

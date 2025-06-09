@@ -96,9 +96,21 @@ func Verify(message []byte, signature []byte, publicKeyBytes []byte) bool {
 	return ecdsa.Verify(publicKey, message, sig.R, sig.S)
 }
 
+// SerializePublicKey serializes an ECDSA public key to bytes
+func SerializePublicKey(pub *ecdsa.PublicKey) []byte {
+	if pub == nil {
+		return nil
+	}
+	return elliptic.Marshal(pub.Curve, pub.X, pub.Y)
+}
+
 // HashPublicKey hashes a public key
-func HashPublicKey(publicKey []byte) []byte {
-	hash := sha256.Sum256(publicKey)
+func HashPublicKey(pub *ecdsa.PublicKey) []byte {
+	if pub == nil {
+		return nil
+	}
+	serialized := SerializePublicKey(pub)
+	hash := sha256.Sum256(serialized)
 	return hash[:]
 }
 

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/wallet"
+	"byc/internal/blockchain"
+	"byc/internal/wallet"
 )
 
 func handleWallet(cmd *flag.FlagSet) {
@@ -162,7 +162,7 @@ func handleSendCoins() {
 	}
 
 	// Add transaction to blockchain
-	if err := bc.AddTransaction(tx); err != nil {
+	if err := bc.AddTransaction(*tx); err != nil {
 		fmt.Printf("Error adding transaction: %v\n", err)
 		return
 	}

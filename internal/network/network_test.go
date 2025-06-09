@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moroni/BYC/internal/network/common"
+	"byc/internal/network/common"
 )
 
 func TestNetworkManager(t *testing.T) {

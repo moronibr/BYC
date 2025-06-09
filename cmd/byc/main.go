@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,9 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/mining"
-	"github.com/moroni/BYC/internal/wallet"
+	"byc/internal/blockchain"
+	"byc/internal/logger"
+	"byc/internal/mining"
+	"byc/internal/wallet"
+
 	"golang.org/x/term"
 )
 
@@ -29,73 +30,64 @@ func displayMenu() {
 	fmt.Println("4. Mining")
 	fmt.Println("5. View Genesis Block")
 	fmt.Println("6. Peer Management")
-	fmt.Println("7. Exit")
-	fmt.Print("\nEnter your choice (1-7): ")
+	fmt.Println("7. Backup & Restore")
+	fmt.Println("8. System Maintenance")
+	fmt.Println("9. Advanced Wallet")
+	fmt.Println("10. Version Management")
+	fmt.Println("11. Exit")
+	fmt.Print("\nEnter your choice (1-11): ")
 }
 
 func main() {
-	// Parse command line flags
-	viewGenesis := flag.Bool("view-genesis", false, "View Genesis block information")
-	saveGenesis := flag.String("save-genesis", "", "Save Genesis block information to file")
-	flag.Parse()
+	// Initialize logger first
+	if err := logger.Init(); err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Create new blockchain instance
 	bc := blockchain.NewBlockchain()
 
-	// If view-genesis flag is set, display Genesis block
-	if *viewGenesis {
-		bc.DisplayGenesisBlock()
-	}
-
-	// If save-genesis flag is set, save Genesis block info to file
-	if *saveGenesis != "" {
-		if err := bc.SaveGenesisBlockInfo(*saveGenesis); err != nil {
-			fmt.Printf("Error saving Genesis block info: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Genesis block information saved to %s\n", *saveGenesis)
-	}
-
-	// Exit if only viewing or saving Genesis block
-	if *viewGenesis || *saveGenesis != "" {
-		return
-	}
-
-	// Interactive menu loop
+	reader := bufio.NewReader(os.Stdin)
 	for {
-		displayMenu()
-		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("\n=== BYC CLI Menu ===")
+		fmt.Println("1. Network Operations")
+		fmt.Println("2. Wallet Operations")
+		fmt.Println("3. Dashboard")
+		fmt.Println("4. Mining")
+		fmt.Println("5. View Genesis Block")
+		fmt.Println("6. Peer Management")
+		fmt.Println("7. Backup & Restore")
+		fmt.Println("8. System Maintenance")
+		fmt.Println("9. Advanced Wallet")
+		fmt.Println("10. Version Management")
+		fmt.Println("11. Exit")
+
+		fmt.Print("\nEnter your choice (1-11): ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
-		choice, err := strconv.Atoi(input)
-		if err != nil {
-			fmt.Println("Invalid choice. Please try again.")
-			continue
-		}
 
-		switch choice {
-		case 1:
-			// Network Operations
+		switch input {
+		case "1":
 			handleNetworkMenu(bc)
-		case 2:
-			// Wallet Operations
+		case "2":
 			handleWalletMenu(bc)
-		case 3:
-			// Dashboard
+		case "3":
 			handleDashboardMenu(bc)
-		case 4:
-			// Mining
+		case "4":
 			handleMiningMenu()
-		case 5:
-			// View Genesis Block
+		case "5":
 			bc.DisplayGenesisBlock()
-			fmt.Print("\nPress Enter to continue...")
-			reader.ReadString('\n')
-		case 6:
-			// Peer Management
+		case "6":
 			handlePeerMenu(bc)
-		case 7:
-			// Exit
+		case "7":
+			handleBackupMenu(bc)
+		case "8":
+			handleMaintenanceMenu(bc)
+		case "9":
+			handleAdvancedWalletMenu(bc)
+		case "10":
+			handleVersionMenu(bc)
+		case "11":
 			fmt.Println("Exiting...")
 			return
 		default:
@@ -585,5 +577,231 @@ func runWallet(bc *blockchain.Blockchain, action string) {
 	default:
 		fmt.Printf("Unknown wallet action: %s\n", action)
 		os.Exit(1)
+	}
+}
+
+func handleBackupMenu(bc *blockchain.Blockchain) {
+	fmt.Println("\n=== Backup & Restore ===")
+	fmt.Println("1. Create Backup")
+	fmt.Println("2. Restore from Backup")
+	fmt.Println("3. List Backups")
+	fmt.Println("4. Delete Backup")
+	fmt.Println("5. Back to Main Menu")
+	fmt.Print("\nEnter your choice (1-5): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	choice, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("Invalid choice")
+		return
+	}
+
+	switch choice {
+	case 1:
+		fmt.Print("Enter backup name: ")
+		name, _ := reader.ReadString('\n')
+		name = strings.TrimSpace(name)
+		if err := bc.CreateBackup(name); err != nil {
+			fmt.Printf("Error creating backup: %v\n", err)
+		} else {
+			fmt.Println("Backup created successfully")
+		}
+	case 2:
+		fmt.Print("Enter backup name to restore: ")
+		name, _ := reader.ReadString('\n')
+		name = strings.TrimSpace(name)
+		if err := bc.RestoreBackup(name); err != nil {
+			fmt.Printf("Error restoring backup: %v\n", err)
+		} else {
+			fmt.Println("Backup restored successfully")
+		}
+	case 3:
+		backups := bc.ListBackups()
+		fmt.Println("\nAvailable Backups:")
+		for _, backup := range backups {
+			fmt.Printf("- %s\n", backup)
+		}
+	case 4:
+		fmt.Print("Enter backup name to delete: ")
+		name, _ := reader.ReadString('\n')
+		name = strings.TrimSpace(name)
+		if err := bc.DeleteBackup(name); err != nil {
+			fmt.Printf("Error deleting backup: %v\n", err)
+		} else {
+			fmt.Println("Backup deleted successfully")
+		}
+	case 5:
+		return
+	default:
+		fmt.Println("Invalid choice")
+	}
+}
+
+func handleMaintenanceMenu(bc *blockchain.Blockchain) {
+	fmt.Println("\n=== System Maintenance ===")
+	fmt.Println("1. Check System Health")
+	fmt.Println("2. Run Maintenance Tasks")
+	fmt.Println("3. View Maintenance Log")
+	fmt.Println("4. Configure Maintenance")
+	fmt.Println("5. Back to Main Menu")
+	fmt.Print("\nEnter your choice (1-5): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	choice, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("Invalid choice")
+		return
+	}
+
+	switch choice {
+	case 1:
+		health := bc.CheckSystemHealth()
+		fmt.Println("\nSystem Health Status:")
+		fmt.Printf("Status: %s\n", health.Status)
+		fmt.Printf("Last Check: %s\n", health.LastCheck.Format(time.RFC3339))
+		fmt.Println("\nComponents:")
+		for name, comp := range health.Components {
+			fmt.Printf("- %s: %s\n", name, comp.Status)
+		}
+	case 2:
+		fmt.Println("Running maintenance tasks...")
+		if err := bc.RunMaintenance(); err != nil {
+			fmt.Printf("Error running maintenance: %v\n", err)
+		} else {
+			fmt.Println("Maintenance completed successfully")
+		}
+	case 3:
+		logs := bc.GetMaintenanceLog()
+		fmt.Println("\nMaintenance Log:")
+		for _, log := range logs {
+			fmt.Printf("[%s] %s\n", log.Timestamp.Format(time.RFC3339), log.Message)
+		}
+	case 4:
+		fmt.Println("\nMaintenance Configuration:")
+		fmt.Println("1. Set Schedule")
+		fmt.Println("2. Configure Tasks")
+		fmt.Println("3. Set Alerts")
+		fmt.Print("\nEnter your choice (1-3): ")
+		configChoice, _ := reader.ReadString('\n')
+		configChoice = strings.TrimSpace(configChoice)
+		switch configChoice {
+		case "1":
+			fmt.Print("Enter schedule (e.g., 'daily', 'weekly'): ")
+			schedule, _ := reader.ReadString('\n')
+			schedule = strings.TrimSpace(schedule)
+			bc.SetMaintenanceSchedule(schedule)
+		case "2":
+			fmt.Println("Available Tasks:")
+			tasks := bc.GetMaintenanceTasks()
+			for _, task := range tasks {
+				fmt.Printf("- %s: %s\n", task.Name, task.Description)
+			}
+		case "3":
+			fmt.Print("Enter alert email: ")
+			email, _ := reader.ReadString('\n')
+			email = strings.TrimSpace(email)
+			bc.SetMaintenanceAlert(email)
+		}
+	case 5:
+		return
+	default:
+		fmt.Println("Invalid choice")
+	}
+}
+
+func handleAdvancedWalletMenu(bc *blockchain.Blockchain) {
+	fmt.Println("\n=== Advanced Wallet ===")
+	fmt.Println("1. Create Ephraim Coin")
+	fmt.Println("2. Create Manasseh Coin")
+	fmt.Println("3. Create Joseph Coin")
+	fmt.Println("4. View Special Coins")
+	fmt.Println("5. Back to Main Menu")
+	fmt.Print("\nEnter your choice (1-5): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	choice, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("Invalid choice")
+		return
+	}
+
+	switch choice {
+	case 1:
+		if err := bc.CreateEphraimCoin(); err != nil {
+			fmt.Printf("Error creating Ephraim coin: %v\n", err)
+		} else {
+			fmt.Println("Ephraim coin created successfully")
+		}
+	case 2:
+		if err := bc.CreateManassehCoin(); err != nil {
+			fmt.Printf("Error creating Manasseh coin: %v\n", err)
+		} else {
+			fmt.Println("Manasseh coin created successfully")
+		}
+	case 3:
+		if err := bc.CreateJosephCoin(); err != nil {
+			fmt.Printf("Error creating Joseph coin: %v\n", err)
+		} else {
+			fmt.Println("Joseph coin created successfully")
+		}
+	case 4:
+		coins := bc.GetSpecialCoins()
+		fmt.Println("\nSpecial Coins:")
+		for _, coin := range coins {
+			fmt.Printf("- %s: %d\n", coin.Type, coin.Amount)
+		}
+	case 5:
+		return
+	default:
+		fmt.Println("Invalid choice")
+	}
+}
+
+func handleVersionMenu(bc *blockchain.Blockchain) {
+	fmt.Println("\n=== Version Management ===")
+	fmt.Println("1. Check Current Version")
+	fmt.Println("2. View Version History")
+	fmt.Println("3. Upgrade Version")
+	fmt.Println("4. Back to Main Menu")
+	fmt.Print("\nEnter your choice (1-4): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	choice, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("Invalid choice")
+		return
+	}
+
+	switch choice {
+	case 1:
+		version := bc.GetCurrentVersion()
+		fmt.Printf("\nCurrent Version: %s\n", version)
+	case 2:
+		history := bc.GetVersionHistory()
+		fmt.Println("\nVersion History:")
+		for _, version := range history {
+			fmt.Printf("- %s (%s)\n", version.Number, version.Date.Format("2006-01-02"))
+		}
+	case 3:
+		fmt.Print("Enter version to upgrade to: ")
+		version, _ := reader.ReadString('\n')
+		version = strings.TrimSpace(version)
+		if err := bc.UpgradeVersion(version); err != nil {
+			fmt.Printf("Error upgrading version: %v\n", err)
+		} else {
+			fmt.Println("Version upgraded successfully")
+		}
+	case 4:
+		return
+	default:
+		fmt.Println("Invalid choice")
 	}
 }

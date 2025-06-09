@@ -9,10 +9,11 @@ import (
 	"net"
 	"time"
 
+	"byc/internal/blockchain"
+	"byc/internal/logger"
+	"byc/internal/utils"
+
 	"github.com/google/uuid"
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/logger"
-	"github.com/moroni/BYC/internal/utils"
 	"go.uber.org/zap"
 )
 
@@ -39,28 +40,56 @@ func NewNode(config *Config) (*Node, error) {
 	}
 	node.server = listener
 
-	// Start accepting connections
-	go node.acceptConnections()
+	// Start accepting connections in a goroutine
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+					logger.Error("Temporary error accepting connection", zap.Error(err))
+					time.Sleep(time.Second)
+					continue
+				}
+				if err != io.EOF {
+					logger.Error("Failed to accept connection", zap.Error(err))
+				}
+				return
+			}
+
+			go node.handleConnection(conn)
+		}
+	}()
 
 	logger.Info("P2P server started", zap.String("address", config.Address))
 	return node, nil
 }
 
-// acceptConnections accepts incoming connections
-func (n *Node) acceptConnections() {
-	for {
-		conn, err := n.server.Accept()
-		if err != nil {
-			logger.Error("Failed to accept connection", zap.Error(err))
-			continue
+// Stop stops the node and closes all connections
+func (n *Node) Stop() error {
+	if n.server != nil {
+		if err := n.server.Close(); err != nil {
+			logger.Error("Error closing server", zap.Error(err))
 		}
-
-		go n.handleConnection(conn)
+		n.server = nil
 	}
+
+	// Close all peer connections
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, peer := range n.Peers {
+		if peer.conn != nil {
+			peer.conn.Close()
+		}
+	}
+	n.Peers = make(map[string]*Peer)
+
+	return nil
 }
 
 // handleConnection handles a new connection
 func (n *Node) handleConnection(conn net.Conn) {
+	defer conn.Close()
+
 	peer := NewPeer(uuid.New().String(), conn.RemoteAddr().String(), 0)
 	peer.conn = conn
 	peer.Node = n
@@ -245,7 +274,7 @@ func (n *Node) handleTx(peer *Peer, msg *NetworkMessage) error {
 		return fmt.Errorf("failed to decode transaction: %v", err)
 	}
 
-	if err := n.Blockchain.AddTransaction(tx); err != nil {
+	if err := n.Blockchain.AddTransaction(*tx); err != nil {
 		return fmt.Errorf("failed to add transaction: %v", err)
 	}
 
@@ -529,28 +558,6 @@ func (n *Node) BroadcastMessage(msg NetworkMessage) error {
 	return nil
 }
 
-// Stop gracefully shuts down the node
-func (n *Node) Stop() error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	// Stop mining if active
-	n.isMining = false
-
-	// Close all peer connections
-	for _, peer := range n.Peers {
-		if peer.conn != nil {
-			peer.conn.Close()
-		}
-	}
-
-	// Close server
-	if n.server != nil {
-		return n.server.Close()
-	}
-	return nil
-}
-
 // handlePeer handles messages from a peer
 func (n *Node) handlePeer(peer *Peer) {
 	defer func() {
@@ -585,4 +592,38 @@ func (p *Peer) sendPing() error {
 		Payload: []byte("ping"),
 	}
 	return p.sendMessage(msg)
+}
+
+// GetAddress returns the node's address
+func (n *Node) GetAddress() string {
+	return n.Config.Address
+}
+
+// GetPeerAddresses returns a list of peer addresses
+func (n *Node) GetPeerAddresses() []string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	addresses := make([]string, 0, len(n.Peers))
+	for _, peer := range n.Peers {
+		addresses = append(addresses, peer.Address)
+	}
+	return addresses
+}
+
+// DisconnectPeer disconnects from a peer
+func (n *Node) DisconnectPeer(address string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	peer, exists := n.Peers[address]
+	if !exists {
+		return fmt.Errorf("peer %s not found", address)
+	}
+
+	if peer.conn != nil {
+		peer.conn.Close()
+	}
+	delete(n.Peers, address)
+	return nil
 }

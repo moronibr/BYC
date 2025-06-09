@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
 )
 
 func main() {

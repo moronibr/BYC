@@ -5,7 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
+
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )

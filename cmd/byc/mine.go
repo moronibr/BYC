@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/mining"
+	"byc/internal/blockchain"
+	"byc/internal/mining"
 )
 
 func handleMining(cmd *flag.FlagSet) {
@@ -57,8 +57,12 @@ func handleMining(cmd *flag.FlagSet) {
 		log.Fatalf("Failed to create miner: %v", err)
 	}
 
-	fmt.Printf("\nStarting mining for %s coins using %s blocks...\n", coinType, blockType)
+	// Clear screen and show header
+	fmt.Print("\033[H\033[2J")
+	fmt.Println("=== BYC Mining Dashboard ===")
+	fmt.Printf("Mining %s coins using %s blocks\n", coinType, blockType)
 	fmt.Printf("Connected to node at %s\n", nodeAddress)
+	fmt.Println("===========================")
 	fmt.Println("Press Ctrl+C to stop mining and return to the main menu")
 	fmt.Println("--------------------------------------------------------")
 
@@ -84,10 +88,15 @@ func handleMining(cmd *flag.FlagSet) {
 	ctx := context.Background()
 	miner.Start(ctx)
 
-	// Display mining status
+	// Track start time
+	startTime := time.Now()
+
+	// Display mining status with enhanced formatting
 	go func() {
 		lastUpdate := time.Now()
 		lastShares := int64(0)
+		lastBlocks := int64(0)
+
 		for {
 			select {
 			case <-done:
@@ -95,22 +104,51 @@ func handleMining(cmd *flag.FlagSet) {
 			case status := <-statusChan:
 				now := time.Now()
 				elapsed := now.Sub(lastUpdate).Seconds()
+				runtime := now.Sub(startTime)
+
+				// Calculate rates
 				sharesPerSecond := float64(status.Shares-lastShares) / elapsed
+				blocksPerHour := float64(status.BlocksFound-lastBlocks) / (runtime.Hours())
 
-				// Clear previous line
-				fmt.Print("\033[2K\r")
+				// Clear previous lines
+				fmt.Print("\033[H\033[2J")
+				fmt.Println("=== BYC Mining Dashboard ===")
+				fmt.Printf("Runtime: %s\n", formatDuration(runtime))
+				fmt.Println("===========================")
 
-				// Display mining status with better formatting
-				fmt.Printf("Mining Status | Hash Rate: %d H/s | Shares: %d (%.1f/s) | Blocks: %d | Difficulty: %d",
-					status.HashRate,
-					status.Shares,
-					sharesPerSecond,
-					status.BlocksFound,
-					status.Difficulty)
+				// Mining Status
+				fmt.Println("\nMining Status:")
+				fmt.Println("-------------")
+				fmt.Printf("Status: %s\n", getMiningStatus(status))
+				fmt.Printf("Hash Rate: %s\n", formatHashRate(status.HashRate))
+				fmt.Printf("Difficulty: %d\n", status.Difficulty)
+				fmt.Printf("Current Block: %d\n", status.CurrentBlock)
+
+				// Performance Metrics
+				fmt.Println("\nPerformance Metrics:")
+				fmt.Println("-------------------")
+				fmt.Printf("Shares: %d (%.1f/s)\n", status.Shares, sharesPerSecond)
+				fmt.Printf("Blocks Found: %d (%.2f/hour)\n", status.BlocksFound, blocksPerHour)
+				fmt.Printf("Efficiency: %.1f%%\n", calculateEfficiency(status))
+
+				// Rewards
+				fmt.Println("\nRewards:")
+				fmt.Println("--------")
+				fmt.Printf("Current Block Reward: %.2f %s\n", status.CurrentReward, coinType)
+				fmt.Printf("Total Rewards: %.2f %s\n", status.TotalRewards, coinType)
+				fmt.Printf("Estimated Daily: %.2f %s\n", calculateDailyEstimate(status), coinType)
+
+				// Network Status
+				fmt.Println("\nNetwork Status:")
+				fmt.Println("--------------")
+				fmt.Printf("Connected Peers: %d\n", status.ConnectedPeers)
+				fmt.Printf("Network Hash Rate: %s\n", formatHashRate(status.NetworkHashRate))
+				fmt.Printf("Block Time: %.1f seconds\n", status.AverageBlockTime)
 
 				// Update last values
 				lastUpdate = now
 				lastShares = status.Shares
+				lastBlocks = status.BlocksFound
 			}
 		}
 	}()
@@ -129,12 +167,59 @@ func handleMining(cmd *flag.FlagSet) {
 	stats := miner.GetMiningStats()
 	fmt.Println("\nMining Statistics:")
 	fmt.Println("-----------------")
+	fmt.Printf("Total Runtime: %s\n", formatDuration(time.Since(startTime)))
 	fmt.Printf("Total Blocks Found: %d\n", stats["blocks"])
 	fmt.Printf("Total Shares: %d\n", stats["shares"])
-	fmt.Printf("Final Hash Rate: %d H/s\n", stats["hash_rate"])
+	fmt.Printf("Average Hash Rate: %s\n", formatHashRate(stats["hash_rate"].(int64)))
 	fmt.Printf("Mining Address: %s\n", stats["address"])
 	fmt.Printf("Total Rewards: %.2f %s\n", stats["rewards"], coinType)
 
 	fmt.Println("\nReturning to main menu...")
-	time.Sleep(1 * time.Second) // Give user time to read the message
+	time.Sleep(1 * time.Second)
+}
+
+// Helper functions for formatting
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
+}
+
+func formatHashRate(rate int64) string {
+	if rate >= 1000000000 {
+		return fmt.Sprintf("%.2f GH/s", float64(rate)/1000000000)
+	} else if rate >= 1000000 {
+		return fmt.Sprintf("%.2f MH/s", float64(rate)/1000000)
+	} else if rate >= 1000 {
+		return fmt.Sprintf("%.2f KH/s", float64(rate)/1000)
+	}
+	return fmt.Sprintf("%d H/s", rate)
+}
+
+func getMiningStatus(status mining.Status) string {
+	if status.IsRunning {
+		return "\033[32mRunning\033[0m"
+	}
+	return "\033[31mStopped\033[0m"
+}
+
+func calculateEfficiency(status mining.Status) float64 {
+	if status.NetworkHashRate == 0 {
+		return 0
+	}
+	return float64(status.HashRate) / float64(status.NetworkHashRate) * 100
+}
+
+func calculateDailyEstimate(status mining.Status) float64 {
+	if status.AverageBlockTime == 0 {
+		return 0
+	}
+	blocksPerDay := 86400 / status.AverageBlockTime
+	return status.CurrentReward * blocksPerDay
 }

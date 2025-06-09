@@ -4,7 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
+
 	"github.com/stretchr/testify/assert"
 )
 

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/crypto"
+	"byc/internal/crypto"
 )
 
 // TransactionError represents a transaction-related error
@@ -35,102 +35,168 @@ func (e *ValidationError) Error() string {
 }
 
 // Validate validates a transaction with improved error handling
-func (tx *Transaction) Validate(utxoSet *UTXOSet) bool {
+func (tx *Transaction) Validate(utxoSet *UTXOSet) error {
 	// Check if transaction is empty
 	if len(tx.Inputs) == 0 && len(tx.Outputs) == 0 {
-		return false
+		return &ValidationError{
+			Field:  "transaction",
+			Reason: "empty transaction",
+		}
 	}
 
 	// Verify transaction signature
 	if !tx.Verify() {
-		return false
+		return &ValidationError{
+			Field:  "signature",
+			Reason: "invalid signature",
+		}
 	}
 
 	// Check if the transaction is a coinbase transaction
 	if tx.IsCoinbase() {
-		return true
+		return nil
 	}
 
 	// Validate inputs
-	for _, input := range tx.Inputs {
+	for i, input := range tx.Inputs {
 		if len(input.TxID) == 0 {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("input[%d].TxID", i),
+				Reason: "empty transaction ID",
+			}
 		}
 
 		if input.OutputIndex < 0 {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("input[%d].OutputIndex", i),
+				Reason: "invalid output index",
+			}
 		}
 
 		// Check if input exists in UTXO set
 		utxo := utxoSet.GetUTXO(input.TxID, input.OutputIndex)
 		if len(utxo.TxID) == 0 {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("input[%d]", i),
+				Reason: "UTXO not found",
+			}
 		}
 
 		// Verify input ownership
-		if !bytes.Equal(utxo.PublicKeyHash, crypto.HashPublicKey(input.PublicKey)) {
-			return false
+		pubKey, err := crypto.BytesToPublicKey(input.PublicKey)
+		if err != nil {
+			return &ValidationError{
+				Field:  fmt.Sprintf("input[%d]", i),
+				Reason: "invalid public key",
+			}
+		}
+		if !bytes.Equal(utxo.PublicKeyHash, crypto.HashPublicKey(pubKey)) {
+			return &ValidationError{
+				Field:  fmt.Sprintf("input[%d]", i),
+				Reason: "unauthorized input",
+			}
 		}
 	}
 
 	// Validate outputs
-	for _, output := range tx.Outputs {
+	for i, output := range tx.Outputs {
 		if output.Value <= 0 {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("output[%d].Value", i),
+				Reason: "invalid amount",
+			}
 		}
 
 		if len(output.PublicKeyHash) == 0 {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("output[%d].PublicKeyHash", i),
+				Reason: "empty public key hash",
+			}
 		}
 
 		if output.CoinType == "" {
-			return false
+			return &ValidationError{
+				Field:  fmt.Sprintf("output[%d].CoinType", i),
+				Reason: "invalid coin type",
+			}
 		}
 	}
 
-	// Check input/output balance
-	totalInput := tx.GetTotalInput()
-	totalOutput := tx.GetTotalOutput()
+	// Check input/output balance for each coin type
+	inputBalances := make(map[CoinType]float64)
+	outputBalances := make(map[CoinType]float64)
 
-	if totalInput < totalOutput {
-		return false
+	// Calculate input balances
+	for _, input := range tx.Inputs {
+		utxo := utxoSet.GetUTXO(input.TxID, input.OutputIndex)
+		inputBalances[utxo.CoinType] += utxo.Amount
 	}
 
-	return true
+	// Calculate output balances
+	for _, output := range tx.Outputs {
+		outputBalances[output.CoinType] += output.Value
+	}
+
+	// Validate balances and handle coin conversions
+	for coinType, outputAmount := range outputBalances {
+		inputAmount := inputBalances[coinType]
+
+		// Check if we need to convert from other coins
+		if inputAmount < outputAmount {
+			// Try to convert from lower denomination coins
+			switch coinType {
+			case Shiblum:
+				leahAmount := inputBalances[Leah]
+				if leahAmount >= (outputAmount-inputAmount)*2 {
+					continue
+				}
+			case Shiblon:
+				shiblumAmount := inputBalances[Shiblum]
+				if shiblumAmount >= (outputAmount-inputAmount)*2 {
+					continue
+				}
+			case Senum:
+				shiblonAmount := inputBalances[Shiblon]
+				if shiblonAmount >= (outputAmount-inputAmount)/2 {
+					continue
+				}
+			}
+
+			return &ValidationError{
+				Field:  "balance",
+				Reason: fmt.Sprintf("insufficient balance for %s", coinType),
+			}
+		}
+	}
+
+	// Validate cross-block transfers
+	if tx.BlockType != "" {
+		for _, output := range tx.Outputs {
+			if !CanTransferBetweenBlocks(output.CoinType) {
+				return &ValidationError{
+					Field:  "block_type",
+					Reason: fmt.Sprintf("coin type %s cannot be transferred between blocks", output.CoinType),
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
-// Verify verifies the transaction signature with improved error handling
+// Verify verifies the transaction signature
 func (tx *Transaction) Verify() bool {
-	if len(tx.Inputs) == 0 {
-		return false
-	}
+	txCopy := tx.TrimmedCopy()
 
-	// For coinbase transactions, skip signature verification
-	if tx.IsCoinbase() {
-		return true
-	}
-
-	// Verify each input's signature
 	for i, input := range tx.Inputs {
-		if len(input.Signature) == 0 {
-			return false
-		}
+		// Set the public key for this input
+		txCopy.Inputs[i].PublicKey = input.PublicKey
 
-		// Create transaction copy for signing
-		txCopy := tx.TrimmedCopy()
-
-		// Set the signature to nil for verification
-		txCopy.Inputs[i].Signature = nil
-
-		// Hash the transaction
-		serializedData, err := txCopy.Serialize()
-		if err != nil {
-			return false
-		}
-		hash := sha256.Sum256(serializedData)
+		// Calculate the hash of the transaction
+		hash := txCopy.CalculateHash()
 
 		// Verify the signature
-		if !crypto.Verify(hash[:], input.Signature, input.PublicKey) {
+		if !crypto.Verify(hash, input.Signature, input.PublicKey) {
 			return false
 		}
 	}
@@ -222,8 +288,8 @@ func (b *TransactionBatch) ValidateBatch(utxoSet *UTXOSet) error {
 		}
 
 		// Validate transaction
-		if !tx.Validate(utxoSet) {
-			return fmt.Errorf("invalid transaction %d", i)
+		if err := tx.Validate(utxoSet); err != nil {
+			return fmt.Errorf("invalid transaction %d: %v", i, err)
 		}
 	}
 

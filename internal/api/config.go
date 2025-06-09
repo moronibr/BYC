@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
 )
 
 // Config represents the API server configuration

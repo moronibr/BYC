@@ -4,56 +4,83 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/network"
+	"byc/internal/blockchain"
+	"byc/internal/network"
 )
 
 var (
-	nodeInstance *network.Node
-	nodeMutex    sync.RWMutex
+	currentNode *network.Node
+	nodeMutex   sync.RWMutex
 )
 
-// getNode returns the singleton node instance, creating it if necessary
+// getNode returns the current node instance
 func getNode() (*network.Node, error) {
 	nodeMutex.RLock()
-	if nodeInstance != nil {
-		nodeMutex.RUnlock()
-		return nodeInstance, nil
-	}
-	nodeMutex.RUnlock()
+	defer nodeMutex.RUnlock()
 
+	if currentNode == nil {
+		return nil, fmt.Errorf("node not initialized. Please start the node first")
+	}
+	return currentNode, nil
+}
+
+// setNode sets the current node instance
+func setNode(node *network.Node) {
 	nodeMutex.Lock()
 	defer nodeMutex.Unlock()
+	currentNode = node
+}
 
-	// Double-check after acquiring write lock
-	if nodeInstance != nil {
-		return nodeInstance, nil
+// findAvailablePort finds an available port for the node
+func findAvailablePort() (string, error) {
+	// Try ports starting from 3000
+	for port := 3000; port < 4000; port++ {
+		addr := fmt.Sprintf("localhost:%d", port)
+		config := &network.Config{
+			Address:        addr,
+			BlockType:      blockchain.GoldenBlock,
+			BootstrapPeers: []string{},
+		}
+
+		node, err := network.NewNode(config)
+		if err == nil {
+			// Port is available
+			node.Stop() // Close the test node
+			return addr, nil
+		}
+	}
+	return "", fmt.Errorf("no available ports found")
+}
+
+// initializeNode initializes a new node with an available port
+func initializeNode() (*network.Node, error) {
+	addr, err := findAvailablePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find available port: %v", err)
 	}
 
-	// Create new node instance
-	node, err := network.NewNode(&network.Config{
-		Address:        "localhost:3000",
+	config := &network.Config{
+		Address:        addr,
 		BlockType:      blockchain.GoldenBlock,
 		BootstrapPeers: []string{},
-	})
+	}
+
+	node, err := network.NewNode(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node: %v", err)
 	}
 
-	nodeInstance = node
+	setNode(node)
 	return node, nil
 }
 
-// stopNode stops the node instance
-func stopNode() error {
-	nodeMutex.Lock()
-	defer nodeMutex.Unlock()
-
-	if nodeInstance != nil {
-		if err := nodeInstance.Stop(); err != nil {
-			return fmt.Errorf("failed to stop node: %v", err)
-		}
-		nodeInstance = nil
+// ensureNode ensures a node is initialized
+func ensureNode() (*network.Node, error) {
+	node, err := getNode()
+	if err == nil {
+		return node, nil
 	}
-	return nil
+
+	// Node not initialized, create a new one
+	return initializeNode()
 }

@@ -6,48 +6,107 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
+	"byc/internal/network"
 )
 
 // handleNodeManagement handles node management operations
 func handleNodeManagement(bc *blockchain.Blockchain) {
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Println("\n=== Node Management ===")
-		fmt.Println("1. Stop Node")
-		fmt.Println("2. Reset Node")
-		fmt.Println("3. Backup Node Data")
-		fmt.Println("4. View Node Status")
-		fmt.Println("5. Back to Network Menu")
-		fmt.Print("\nEnter your choice (1-5): ")
-
-		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("1. Start Node")
+		fmt.Println("2. Stop Node")
+		fmt.Println("3. Node Status")
+		fmt.Println("4. Back to Main Menu")
+		fmt.Print("Enter your choice: ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
-		choice, err := strconv.Atoi(input)
-		if err != nil {
-			fmt.Println("Invalid choice")
-			continue
-		}
-
-		switch choice {
-		case 1:
+		switch input {
+		case "1":
+			startNode(reader)
+		case "2":
 			stopNodeOperation()
-		case 2:
-			resetNodeOperation()
-		case 3:
-			backupNodeOperation(bc)
-		case 4:
-			viewNodeStatus(bc)
-		case 5:
+		case "3":
+			showNodeStatus()
+		case "4":
 			return
 		default:
-			fmt.Println("Invalid choice")
+			fmt.Println("Invalid choice. Please try again.")
 		}
 	}
+}
+
+// startNode handles starting the node
+func startNode(reader *bufio.Reader) {
+	node, err := getNode()
+	if err == nil {
+		fmt.Println("Node is already running")
+		return
+	}
+
+	fmt.Print("Enter node address (default: auto): ")
+	address, _ := reader.ReadString('\n')
+	address = strings.TrimSpace(address)
+
+	if address == "" {
+		// Auto-find available port
+		node, err = initializeNode()
+		if err != nil {
+			fmt.Printf("Error initializing node: %v\n", err)
+			return
+		}
+		fmt.Printf("Node started on %s\n", node.GetAddress())
+	} else {
+		config := &network.Config{
+			Address:        address,
+			BlockType:      blockchain.GoldenBlock,
+			BootstrapPeers: []string{},
+		}
+
+		node, err = network.NewNode(config)
+		if err != nil {
+			fmt.Printf("Failed to start node: %v\n", err)
+			return
+		}
+		setNode(node)
+		fmt.Printf("Node started on %s\n", address)
+	}
+}
+
+// stopNode handles stopping the node
+func stopNode() {
+	node, err := getNode()
+	if err != nil {
+		fmt.Println("No node is running")
+		return
+	}
+
+	if err := node.Stop(); err != nil {
+		fmt.Printf("Error stopping node: %v\n", err)
+		return
+	}
+
+	setNode(nil)
+	fmt.Println("Node stopped")
+}
+
+// showNodeStatus displays current node status
+func showNodeStatus() {
+	node, err := getNode()
+	if err != nil {
+		fmt.Println("No node is running")
+		return
+	}
+
+	fmt.Println("\nNode Status:")
+	fmt.Println("------------")
+	fmt.Printf("Address: %s\n", node.GetAddress())
+	fmt.Printf("Connected Peers: %d\n", len(node.GetPeerAddresses()))
+	fmt.Printf("Block Type: %s\n", node.Config.BlockType)
 }
 
 // stopNodeOperation handles stopping the node
@@ -58,11 +117,8 @@ func stopNodeOperation() {
 	confirm = strings.TrimSpace(strings.ToLower(confirm))
 
 	if confirm == "y" || confirm == "yes" {
-		if err := stopNode(); err != nil {
-			fmt.Printf("Error stopping node: %v\n", err)
-		} else {
-			fmt.Println("Node stopped successfully")
-		}
+		stopNode()
+		fmt.Println("Node stopped successfully")
 	} else {
 		fmt.Println("Node stop cancelled")
 	}
@@ -76,14 +132,7 @@ func resetNodeOperation() {
 	confirm = strings.TrimSpace(strings.ToLower(confirm))
 
 	if confirm == "y" || confirm == "yes" {
-		if err := stopNode(); err != nil {
-			fmt.Printf("Error stopping node: %v\n", err)
-			return
-		}
-		// Clear the singleton instance
-		nodeMutex.Lock()
-		nodeInstance = nil
-		nodeMutex.Unlock()
+		stopNode()
 		fmt.Println("Node reset successfully")
 	} else {
 		fmt.Println("Node reset cancelled")
@@ -145,7 +194,7 @@ func backupNodeOperation(bc *blockchain.Blockchain) {
 		return
 	}
 
-	fmt.Printf("Node data backed up successfully to %s\n", backupFile)
+	fmt.Printf("Node backup saved to %s\n", backupFile)
 }
 
 // viewNodeStatus displays current node status

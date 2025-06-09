@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/storage"
+	"byc/internal/blockchain"
+	"byc/internal/storage"
+
 	"github.com/stretchr/testify/assert"
 )
 

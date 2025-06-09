@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/moroni/BYC/internal/crypto"
+	"byc/internal/crypto"
 )
 
 // CoinType represents the different types of coins in the system

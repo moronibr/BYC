@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moroni/BYC/internal/api"
-	"github.com/moroni/BYC/internal/blockchain"
-	"github.com/moroni/BYC/internal/wallet"
+	"byc/internal/api"
+	"byc/internal/blockchain"
+	"byc/internal/wallet"
+
 	"github.com/stretchr/testify/assert"
 )
 

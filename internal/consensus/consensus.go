@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moroni/BYC/internal/blockchain"
+	"byc/internal/blockchain"
 )
 
 // ConsensusType represents the type of consensus mechanism
