@@ -48,33 +48,49 @@ func startNode(reader *bufio.Reader) {
 		return
 	}
 
-	fmt.Print("Enter node address (default: auto): ")
+	fmt.Print("Enter node address (default: localhost:3000): ")
 	address, _ := reader.ReadString('\n')
 	address = strings.TrimSpace(address)
 
 	if address == "" {
-		// Auto-find available port
-		node, err = initializeNode()
-		if err != nil {
-			fmt.Printf("Error initializing node: %v\n", err)
-			return
-		}
-		fmt.Printf("Node started on %s\n", node.GetAddress())
-	} else {
-		config := &network.Config{
-			Address:        address,
-			BlockType:      blockchain.GoldenBlock,
-			BootstrapPeers: []string{},
-		}
-
-		node, err = network.NewNode(config)
-		if err != nil {
-			fmt.Printf("Failed to start node: %v\n", err)
-			return
-		}
-		setNode(node)
-		fmt.Printf("Node started on %s\n", address)
+		address = "localhost:3000"
 	}
+
+	fmt.Print("Enter peer address (optional, format: host:port): ")
+	peerAddress, _ := reader.ReadString('\n')
+	peerAddress = strings.TrimSpace(peerAddress)
+
+	fmt.Printf("Starting node on %s...\n", address)
+	config := &network.Config{
+		Address:        address,
+		BlockType:      blockchain.GoldenBlock,
+		BootstrapPeers: []string{},
+	}
+
+	node, err = network.NewNode(config)
+	if err != nil {
+		fmt.Printf("Failed to start node: %v\n", err)
+		return
+	}
+
+	setNode(node)
+	fmt.Printf("Node started successfully on %s\n", address)
+
+	if peerAddress != "" {
+		fmt.Printf("Connecting to peer %s...\n", peerAddress)
+		if err := node.ConnectToPeer(peerAddress); err != nil {
+			fmt.Printf("Failed to connect to peer: %v\n", err)
+		} else {
+			fmt.Printf("Successfully connected to peer at %s\n", peerAddress)
+		}
+	}
+
+	// Show node status using the local node variable
+	fmt.Println("\nNode Status:")
+	fmt.Println("------------")
+	fmt.Printf("Address: %s\n", node.GetAddress())
+	fmt.Printf("Connected Peers: %d\n", len(node.GetPeerAddresses()))
+	fmt.Printf("Block Type: %s\n", node.Config.BlockType)
 }
 
 // stopNode handles stopping the node
