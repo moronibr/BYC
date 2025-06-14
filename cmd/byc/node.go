@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"sync"
 
-	"byc/internal/blockchain"
 	"byc/internal/network"
 )
 
@@ -17,9 +17,8 @@ var (
 func getNode() (*network.Node, error) {
 	nodeMutex.RLock()
 	defer nodeMutex.RUnlock()
-
 	if currentNode == nil {
-		return nil, fmt.Errorf("node not initialized. Please start the node first")
+		return nil, fmt.Errorf("no node is running")
 	}
 	return currentNode, nil
 }
@@ -31,21 +30,13 @@ func setNode(node *network.Node) {
 	currentNode = node
 }
 
-// findAvailablePort finds an available port for the node
+// findAvailablePort searches for an available port starting from 3000
 func findAvailablePort() (string, error) {
-	// Try ports starting from 3000
 	for port := 3000; port < 4000; port++ {
 		addr := fmt.Sprintf("localhost:%d", port)
-		config := &network.Config{
-			Address:        addr,
-			BlockType:      blockchain.GoldenBlock,
-			BootstrapPeers: []string{},
-		}
-
-		node, err := network.NewNode(config)
+		ln, err := net.Listen("tcp", addr)
 		if err == nil {
-			// Port is available
-			node.Stop() // Close the test node
+			ln.Close()
 			return addr, nil
 		}
 	}
@@ -56,31 +47,28 @@ func findAvailablePort() (string, error) {
 func initializeNode() (*network.Node, error) {
 	addr, err := findAvailablePort()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find available port: %v", err)
+		return nil, err
 	}
 
 	config := &network.Config{
-		Address:        addr,
-		BlockType:      blockchain.GoldenBlock,
-		BootstrapPeers: []string{},
+		Address:   addr,
+		BlockType: "golden",
 	}
 
 	node, err := network.NewNode(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create node: %v", err)
+		return nil, err
 	}
 
 	setNode(node)
 	return node, nil
 }
 
-// ensureNode ensures a node is initialized
+// ensureNode ensures that a node is initialized
 func ensureNode() (*network.Node, error) {
 	node, err := getNode()
 	if err == nil {
 		return node, nil
 	}
-
-	// Node not initialized, create a new one
 	return initializeNode()
 }

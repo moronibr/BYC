@@ -14,13 +14,13 @@ all: clean build
 build:
 	@echo "Building ${BINARY_NAME}..."
 	@mkdir -p ${BUILD_DIR}
-	@go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME} cmd/byc/main.go
+	@go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME} ./cmd/byc/...
 
 # Build the node
 build-node:
 	@echo "Building ${NODE_NAME}..."
 	@mkdir -p ${BUILD_DIR}
-	@go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME} cmd/byc-node/main.go
+	@go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME} ./cmd/byc-node/...
 
 # Build both CLI and node
 build-all: clean build build-node
@@ -30,13 +30,13 @@ release: clean
 	@echo "Building for multiple platforms..."
 	@mkdir -p ${BUILD_DIR}
 	# Build CLI
-	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-linux-amd64 cmd/byc/main.go
-	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-windows-amd64.exe cmd/byc/main.go
-	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-darwin-amd64 cmd/byc/main.go
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-linux-amd64 ./cmd/byc/...
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-windows-amd64.exe ./cmd/byc/...
+	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-darwin-amd64 ./cmd/byc/...
 	# Build Node
-	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-linux-amd64 cmd/byc-node/main.go
-	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-windows-amd64.exe cmd/byc-node/main.go
-	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-darwin-amd64 cmd/byc-node/main.go
+	GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-linux-amd64 ./cmd/byc-node/...
+	GOOS=windows GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-windows-amd64.exe ./cmd/byc-node/...
+	GOOS=darwin GOARCH=amd64 go build ${LDFLAGS} -o ${BUILD_DIR}/${NODE_NAME}-darwin-amd64 ./cmd/byc-node/...
 
 # Clean build directory
 clean:
