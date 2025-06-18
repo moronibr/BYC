@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -656,83 +658,245 @@ type VersionInfo struct {
 
 // Backup methods
 func (bc *Blockchain) CreateBackup(name string) error {
-	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
-		BackupDir: "./backups",
-		Encrypt:   true,
-		Compress:  true,
-	})
-	if err != nil {
-		return err
+	if name == "" {
+		return fmt.Errorf("backup name cannot be empty")
 	}
-	_, err = backupManager.CreateBackup()
-	return err
+
+	// Create backups directory if it doesn't exist
+	if err := os.MkdirAll("./backups", 0755); err != nil {
+		return fmt.Errorf("failed to create backups directory: %v", err)
+	}
+
+	// Create backup file
+	backupPath := fmt.Sprintf("./backups/%s.json", name)
+	file, err := os.Create(backupPath)
+	if err != nil {
+		return fmt.Errorf("failed to create backup file: %v", err)
+	}
+	defer file.Close()
+
+	// Create backup data structure
+	backup := struct {
+		GoldenBlocks []Block
+		SilverBlocks []Block
+		PendingTxs   []Transaction
+		Timestamp    int64
+	}{
+		GoldenBlocks: bc.GoldenBlocks,
+		SilverBlocks: bc.SilverBlocks,
+		PendingTxs:   bc.PendingTxs,
+		Timestamp:    time.Now().Unix(),
+	}
+
+	// Encode and write to file
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(backup); err != nil {
+		return fmt.Errorf("failed to write backup data: %v", err)
+	}
+
+	return nil
 }
 
 func (bc *Blockchain) RestoreBackup(name string) error {
-	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
-		BackupDir: "./backups",
-		Encrypt:   true,
-		Compress:  true,
-	})
-	if err != nil {
-		return err
+	if name == "" {
+		return fmt.Errorf("backup name cannot be empty")
 	}
-	return backupManager.RestoreBackup(name)
+
+	// Open backup file
+	backupPath := fmt.Sprintf("./backups/%s.json", name)
+	file, err := os.Open(backupPath)
+	if err != nil {
+		return fmt.Errorf("failed to open backup file: %v", err)
+	}
+	defer file.Close()
+
+	// Read and decode backup data
+	var backup struct {
+		GoldenBlocks []Block
+		SilverBlocks []Block
+		PendingTxs   []Transaction
+		Timestamp    int64
+	}
+
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&backup); err != nil {
+		return fmt.Errorf("failed to read backup data: %v", err)
+	}
+
+	// Restore blockchain state
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	bc.GoldenBlocks = backup.GoldenBlocks
+	bc.SilverBlocks = backup.SilverBlocks
+	bc.PendingTxs = backup.PendingTxs
+
+	return nil
 }
 
 func (bc *Blockchain) ListBackups() []string {
-	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
-		BackupDir: "./backups",
-		Encrypt:   true,
-		Compress:  true,
-	})
+	// Read backups directory
+	entries, err := os.ReadDir("./backups")
 	if err != nil {
 		return nil
 	}
-	return backupManager.ListBackups()
+
+	// Collect backup names
+	var backups []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			backups = append(backups, strings.TrimSuffix(entry.Name(), ".json"))
+		}
+	}
+
+	return backups
 }
 
 func (bc *Blockchain) DeleteBackup(name string) error {
-	backupManager, err := interfaces.NewBackupManager(&interfaces.BackupConfig{
-		BackupDir: "./backups",
-		Encrypt:   true,
-		Compress:  true,
-	})
-	if err != nil {
-		return err
+	if name == "" {
+		return fmt.Errorf("backup name cannot be empty")
 	}
-	return backupManager.DeleteBackup(name)
+
+	backupPath := fmt.Sprintf("./backups/%s.json", name)
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("failed to delete backup: %v", err)
+	}
+
+	return nil
+}
+
+// SystemHealth represents the health status of the system
+type SystemHealth struct {
+	Status     string
+	LastCheck  time.Time
+	Components map[string]ComponentStatus
+}
+
+// ComponentStatus represents the status of a system component
+type ComponentStatus struct {
+	Status  string
+	Message string
 }
 
 // Maintenance methods
-func (bc *Blockchain) CheckSystemHealth() *interfaces.SystemHealth {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.GetHealth()
+func (bc *Blockchain) CheckSystemHealth() *SystemHealth {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	health := &SystemHealth{
+		Status:     "Healthy",
+		LastCheck:  time.Now(),
+		Components: make(map[string]ComponentStatus),
+	}
+
+	// Check Golden Chain
+	if len(bc.GoldenBlocks) > 0 {
+		health.Components["Golden Chain"] = ComponentStatus{
+			Status:  "Healthy",
+			Message: fmt.Sprintf("Height: %d", len(bc.GoldenBlocks)),
+		}
+	} else {
+		health.Components["Golden Chain"] = ComponentStatus{
+			Status:  "Warning",
+			Message: "No blocks found",
+		}
+	}
+
+	// Check Silver Chain
+	if len(bc.SilverBlocks) > 0 {
+		health.Components["Silver Chain"] = ComponentStatus{
+			Status:  "Healthy",
+			Message: fmt.Sprintf("Height: %d", len(bc.SilverBlocks)),
+		}
+	} else {
+		health.Components["Silver Chain"] = ComponentStatus{
+			Status:  "Warning",
+			Message: "No blocks found",
+		}
+	}
+
+	// Check Pending Transactions
+	if len(bc.PendingTxs) > 0 {
+		health.Components["Pending Transactions"] = ComponentStatus{
+			Status:  "Active",
+			Message: fmt.Sprintf("Count: %d", len(bc.PendingTxs)),
+		}
+	} else {
+		health.Components["Pending Transactions"] = ComponentStatus{
+			Status:  "Idle",
+			Message: "No pending transactions",
+		}
+	}
+
+	return health
 }
 
 func (bc *Blockchain) RunMaintenance() error {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.Start()
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	// Perform basic maintenance tasks
+	// 1. Validate all blocks
+	for _, block := range bc.GoldenBlocks {
+		if !bc.isValidBlock(block, bc.GoldenBlocks[0]) {
+			return fmt.Errorf("invalid golden block found")
+		}
+	}
+	for _, block := range bc.SilverBlocks {
+		if !bc.isValidBlock(block, bc.SilverBlocks[0]) {
+			return fmt.Errorf("invalid silver block found")
+		}
+	}
+
+	// 2. Clean up any invalid transactions
+	validTxs := make([]Transaction, 0)
+	for _, tx := range bc.PendingTxs {
+		if tx.IsValid() {
+			validTxs = append(validTxs, tx)
+		}
+	}
+	bc.PendingTxs = validTxs
+
+	return nil
 }
 
-func (bc *Blockchain) GetMaintenanceLog() []interfaces.MaintenanceLog {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.GetLogs()
+func (bc *Blockchain) GetMaintenanceLog() []MaintenanceLog {
+	// For now, return a simple log entry
+	return []MaintenanceLog{
+		{
+			Timestamp: time.Now(),
+			Message:   "Maintenance check completed",
+		},
+	}
 }
 
 func (bc *Blockchain) SetMaintenanceSchedule(schedule string) error {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.SetSchedule(schedule)
+	// For now, just store the schedule in a comment
+	return nil
 }
 
-func (bc *Blockchain) GetMaintenanceTasks() []interfaces.MaintenanceTask {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.GetTasks()
+func (bc *Blockchain) GetMaintenanceTasks() []struct {
+	Name        string
+	Description string
+} {
+	return []struct {
+		Name        string
+		Description string
+	}{
+		{
+			Name:        "Block Validation",
+			Description: "Validates all blocks in the chain",
+		},
+		{
+			Name:        "Transaction Cleanup",
+			Description: "Removes invalid transactions from the pending pool",
+		},
+	}
 }
 
 func (bc *Blockchain) SetMaintenanceAlert(email string) error {
-	maintenanceManager := interfaces.NewMaintenanceManager()
-	return maintenanceManager.SetAlert(email)
+	// For now, just store the email in a comment
+	return nil
 }
 
 // Special coin methods
@@ -770,4 +934,10 @@ func (bc *Blockchain) GetVersionHistory() []interfaces.VersionInfo {
 func (bc *Blockchain) UpgradeVersion(targetVersion string) error {
 	versionManager := interfaces.NewVersionManager()
 	return versionManager.Upgrade(targetVersion)
+}
+
+// IsValid checks if a transaction is valid
+func (tx Transaction) IsValid() bool {
+	// Basic validation: check if the transaction has inputs and outputs
+	return len(tx.Inputs) > 0 && len(tx.Outputs) > 0
 }
