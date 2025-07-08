@@ -624,7 +624,19 @@ func handleBackupMenu(bc *blockchain.Blockchain) {
 			fmt.Printf("- %s\n", backup)
 		}
 	case 4:
-		fmt.Print("Enter backup name to delete: ")
+		// First display available backups
+		backups := bc.ListBackups()
+		if len(backups) == 0 {
+			fmt.Println("\nNo backups available to delete.")
+			return
+		}
+
+		fmt.Println("\nAvailable Backups:")
+		for _, backup := range backups {
+			fmt.Printf("- %s\n", backup)
+		}
+
+		fmt.Print("\nEnter backup name to delete: ")
 		name, _ := reader.ReadString('\n')
 		name = strings.TrimSpace(name)
 		if err := bc.DeleteBackup(name); err != nil {
@@ -804,133 +816,4 @@ func handleVersionMenu(bc *blockchain.Blockchain) {
 	default:
 		fmt.Println("Invalid choice")
 	}
-}
-
-// handlePeerMenu handles peer management operations
-func handlePeerMenu(bc *blockchain.Blockchain) {
-	fmt.Println("\n=== Peer Management ===")
-	fmt.Println("1. List Connected Peers")
-	fmt.Println("2. Add Peer")
-	fmt.Println("3. Remove Peer")
-	fmt.Println("4. Back to Main Menu")
-	fmt.Print("\nEnter your choice (1-4): ")
-
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	choice, err := strconv.Atoi(input)
-	if err != nil {
-		fmt.Println("Invalid choice")
-		return
-	}
-
-	switch choice {
-	case 1:
-		fmt.Println("Connected Peers:")
-		peers := getMockPeers() // Replace with real peer list in production
-		if len(peers) == 0 {
-			fmt.Println("There are no connected peers.")
-		} else {
-			for i, peer := range peers {
-				fmt.Printf("%d. %s (Last seen: %s)\n", i+1, peer.Address, peer.LastSeen.Format(time.RFC3339))
-			}
-		}
-	case 2:
-		fmt.Print("Enter peer address (host:port): ")
-		peer, _ := reader.ReadString('\n')
-		peer = strings.TrimSpace(peer)
-		fmt.Printf("Adding peer %s...\n", peer)
-		fmt.Println("(Peer management functionality not yet implemented)")
-	case 3:
-		peers := getMockPeers() // Replace with real peer list in production
-		if len(peers) == 0 {
-			fmt.Println("There are no connected peers.")
-			return
-		}
-		fmt.Println("Connected Peers:")
-		for i, peer := range peers {
-			fmt.Printf("%d. %s (Last seen: %s)\n", i+1, peer.Address, peer.LastSeen.Format(time.RFC3339))
-		}
-		fmt.Print("Enter the number of the peer to remove: ")
-		peerInput, _ := reader.ReadString('\n')
-		peerInput = strings.TrimSpace(peerInput)
-		peerIdx, err := strconv.Atoi(peerInput)
-		if err != nil || peerIdx < 1 || peerIdx > len(peers) {
-			fmt.Println("Invalid selection.")
-			return
-		}
-		selectedPeer := peers[peerIdx-1]
-		fmt.Printf("Removing peer %s...\n", selectedPeer.Address)
-		fmt.Println("(Peer removal functionality not yet implemented)")
-	case 4:
-		return
-	default:
-		fmt.Println("Invalid choice")
-	}
-}
-
-// getMockPeers returns a mock list of peers for demonstration
-func getMockPeers() []mockPeer {
-	// You can add mock peers here for testing, or leave empty for 'no peers' case
-	return []mockPeer{
-		{Address: "127.0.0.1:4001", LastSeen: time.Now().Add(-2 * time.Minute)},
-		{Address: "192.168.1.100:4002", LastSeen: time.Now().Add(-5 * time.Minute)},
-		{Address: "10.0.0.50:4003", LastSeen: time.Now().Add(-1 * time.Minute)},
-	}
-}
-
-// getNode returns a mock node for testing purposes
-func getNode() (*mockNode, error) {
-	return &mockNode{}, nil
-}
-
-// handleNodeManagement handles node management operations
-func handleNodeManagement(bc *blockchain.Blockchain) {
-	fmt.Println("\n=== Node Management ===")
-	fmt.Println("1. Node Status")
-	fmt.Println("2. Configure Node")
-	fmt.Println("3. Back to Network Menu")
-	fmt.Print("\nEnter your choice (1-3): ")
-
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	choice, err := strconv.Atoi(input)
-	if err != nil {
-		fmt.Println("Invalid choice")
-		return
-	}
-
-	switch choice {
-	case 1:
-		fmt.Println("Node Status:")
-		fmt.Println("- Status: Running")
-		fmt.Println("- Address: localhost:3000")
-		fmt.Println("- Connected Peers: 0")
-	case 2:
-		fmt.Println("Node Configuration:")
-		fmt.Println("(Node configuration functionality not yet implemented)")
-	case 3:
-		return
-	default:
-		fmt.Println("Invalid choice")
-	}
-}
-
-// mockNode is a mock implementation for testing
-type mockNode struct{}
-
-func (n *mockNode) GetPeers() []mockPeer {
-	return []mockPeer{}
-}
-
-func (n *mockNode) ConnectToPeer(address string) error {
-	// Mock implementation - just log the connection attempt
-	fmt.Printf("Mock: Attempting to connect to peer %s\n", address)
-	return nil
-}
-
-type mockPeer struct {
-	Address  string
-	LastSeen time.Time
 }
