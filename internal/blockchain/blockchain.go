@@ -941,3 +941,44 @@ func (tx Transaction) IsValid() bool {
 	// Basic validation: check if the transaction has inputs and outputs
 	return len(tx.Inputs) > 0 && len(tx.Outputs) > 0
 }
+
+// HasBlock checks if a block exists in the blockchain
+func (bc *Blockchain) HasBlock(hash string, blockType BlockType) bool {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	if blockType == GoldenBlock {
+		for _, block := range bc.GoldenBlocks {
+			if string(block.Hash) == hash {
+				return true
+			}
+		}
+	} else {
+		for _, block := range bc.SilverBlocks {
+			if string(block.Hash) == hash {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// LockForRead locks the blockchain for reading
+func (bc *Blockchain) LockForRead() {
+	bc.mu.RLock()
+}
+
+// UnlockForRead unlocks the blockchain after reading
+func (bc *Blockchain) UnlockForRead() {
+	bc.mu.RUnlock()
+}
+
+// LockForWrite locks the blockchain for writing
+func (bc *Blockchain) LockForWrite() {
+	bc.mu.Lock()
+}
+
+// UnlockForWrite unlocks the blockchain after writing
+func (bc *Blockchain) UnlockForWrite() {
+	bc.mu.Unlock()
+}

@@ -58,12 +58,13 @@ type NetworkConfig struct {
 
 // Node represents a network node
 type Node struct {
-	Config     *Config
-	Blockchain *blockchain.Blockchain
-	Peers      map[string]*Peer
-	server     net.Listener
-	mu         sync.RWMutex
-	isMining   bool
+	Config          *Config
+	Blockchain      *blockchain.Blockchain
+	Peers           map[string]*Peer
+	server          net.Listener
+	mu              sync.RWMutex
+	isMining        bool
+	protocolHandler *ProtocolHandler
 }
 
 // Peer represents a network peer

@@ -33,6 +33,9 @@ func NewNode(config *Config) (*Node, error) {
 		Peers:      make(map[string]*Peer),
 	}
 
+	// Initialize protocol handler
+	node.protocolHandler = NewProtocolHandler(node)
+
 	// Start listening for connections
 	listener, err := net.Listen("tcp", config.Address)
 	if err != nil {
@@ -467,13 +470,8 @@ func (p *Peer) handleMessages() {
 			return
 		}
 
-		handler, ok := p.handlers[message.Type]
-		if !ok {
-			logger.Error("Unknown message type", zap.String("type", string(message.Type)))
-			continue
-		}
-
-		if err := handler(p, message.Payload); err != nil {
+		// Use protocol handler to handle messages
+		if err := p.Node.protocolHandler.HandleMessage(p, message); err != nil {
 			logger.Error("Failed to handle message", zap.Error(err))
 			return
 		}
