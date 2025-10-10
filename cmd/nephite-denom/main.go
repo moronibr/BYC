@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -127,21 +126,16 @@ func main() {
 
 	switch os.Args[1] {
 	case "to-leah":
-		toLeahCmd := flag.NewFlagSet("to-leah", flag.ExitOnError)
-		if err := toLeahCmd.Parse(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if toLeahCmd.NArg() != 2 {
+		if len(os.Args) != 4 {
 			fmt.Fprintln(os.Stderr, "to-leah requires <amount> and <unit>")
 			os.Exit(1)
 		}
-		amount, err := strconv.Atoi(toLeahCmd.Arg(0))
+		amount, err := strconv.Atoi(os.Args[2])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid amount: %v\n", err)
 			os.Exit(1)
 		}
-		unit := toLeahCmd.Arg(1)
+		unit := os.Args[3]
 		result, err := toLeah(amount, unit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -150,22 +144,50 @@ func main() {
 		fmt.Println(result)
 
 	case "breakdown":
-		breakdownCmd := flag.NewFlagSet("breakdown", flag.ExitOnError)
-		preference := breakdownCmd.String("preference", "silver", "prefer gold or silver series when formatting")
-		if err := breakdownCmd.Parse(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if breakdownCmd.NArg() != 1 {
+		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "breakdown requires <value>")
 			os.Exit(1)
 		}
-		value, err := strconv.Atoi(breakdownCmd.Arg(0))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "invalid value: %v\n", err)
+		args := os.Args[2:]
+		preference := "silver"
+		valueSet := false
+		value := 0
+		for i := 0; i < len(args); i++ {
+			arg := args[i]
+			if strings.HasPrefix(arg, "--preference=") {
+				preference = strings.TrimPrefix(arg, "--preference=")
+				continue
+			}
+			if arg == "--preference" {
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "--preference flag requires a value")
+					os.Exit(1)
+				}
+				preference = args[i+1]
+				i++
+				continue
+			}
+			if strings.HasPrefix(arg, "-") && arg != "-" {
+				fmt.Fprintf(os.Stderr, "unknown flag: %s\n", arg)
+				os.Exit(1)
+			}
+			if valueSet {
+				fmt.Fprintln(os.Stderr, "only one value may be provided to breakdown")
+				os.Exit(1)
+			}
+			parsed, err := strconv.Atoi(arg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "invalid value: %v\n", err)
+				os.Exit(1)
+			}
+			value = parsed
+			valueSet = true
+		}
+		if !valueSet {
+			fmt.Fprintln(os.Stderr, "breakdown requires <value>")
 			os.Exit(1)
 		}
-		items, err := fromLeah(value, *preference)
+		items, err := fromLeah(value, preference)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
